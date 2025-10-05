@@ -1,0 +1,4 @@
+* replace db logic with redis
+    - find good redis schema replacement for stuff in models.py
+* replace endpoints for ambient chat
+* deploy

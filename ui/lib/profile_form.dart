@@ -5,6 +5,8 @@ import 'http.dart';
 import 'me_model.dart';
 import 'models.dart';
 
+const maxStatusLength = 80;
+
 class ProfileForm extends StatefulWidget {
   final SessionUser data;
 
@@ -23,7 +25,7 @@ class ProfileFormState extends State<ProfileForm> {
   String? username;
   String? password;
   String? phone;
-  String? aboutMe;
+  String? status;
 
   static const passwordPlaceholder = '********';
 
@@ -71,6 +73,18 @@ class ProfileFormState extends State<ProfileForm> {
             ),
           ),
           TextFormField(
+            initialValue: widget.data.status ?? '',
+            onSaved: (String? value) {
+              status = value?.trim();
+            },
+            maxLines: 1,
+            maxLength: maxStatusLength,
+            decoration: const InputDecoration(
+              hintText: 'Set a short status people see nearby',
+              labelText: 'Status',
+            ),
+          ),
+          TextFormField(
             initialValue: widget.data.phone ?? '',
             onSaved: (String? value) {
               phone = value;
@@ -78,19 +92,6 @@ class ProfileFormState extends State<ProfileForm> {
             decoration: const InputDecoration(
               hintText: 'Set a phone number for quick sharing in messages',
               labelText: 'Phone',
-            ),
-          ),
-          TextFormField(
-            initialValue: widget.data.aboutMe ?? '',
-            onSaved: (String? value) {
-              aboutMe = value;
-            },
-            minLines: 3,
-            maxLines: 8,
-            keyboardType: TextInputType.multiline,
-            decoration: const InputDecoration(
-              hintText: 'Say something about yourself! Use # to create tags.',
-              labelText: 'About me',
             ),
           ),
           const SizedBox(height: 10),
@@ -112,7 +113,7 @@ class ProfileFormState extends State<ProfileForm> {
 
                   final data = {
                     'username': username,
-                    'about_me': aboutMe,
+                    'status': status,
                     'phone': phone,
                   };
                   if (password != null && password != passwordPlaceholder) {

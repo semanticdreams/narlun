@@ -4,7 +4,7 @@ class SessionUser {
   final String? username;
   final String? picture;
   final String? phone;
-  final String? aboutMe;
+  final String? status;
   final bool hasPassword;
 
   const SessionUser({
@@ -13,7 +13,7 @@ class SessionUser {
     this.username,
     this.picture,
     this.phone,
-    this.aboutMe,
+    this.status,
     this.hasPassword = false,
   });
 
@@ -28,7 +28,7 @@ class SessionUser {
       username: json['username'] as String?,
       picture: json['picture'] as String?,
       phone: json['phone'] as String?,
-      aboutMe: json['about_me'] as String?,
+      status: json['status'] as String? ?? json['about_me'] as String?,
       hasPassword: json['has_password'] == true,
     );
   }
@@ -39,7 +39,7 @@ class SessionUser {
     String? username,
     String? picture,
     String? phone,
-    String? aboutMe,
+    String? status,
     bool? hasPassword,
   }) {
     return SessionUser(
@@ -48,7 +48,7 @@ class SessionUser {
       username: username ?? this.username,
       picture: picture ?? this.picture,
       phone: phone ?? this.phone,
-      aboutMe: aboutMe ?? this.aboutMe,
+      status: status ?? this.status,
       hasPassword: hasPassword ?? this.hasPassword,
     );
   }
@@ -189,7 +189,7 @@ class NearbyUser {
   final int id;
   final String username;
   final String? picture;
-  final String? aboutMe;
+  final String? status;
   final int distance;
   final DateTime lastSeen;
 
@@ -199,7 +199,7 @@ class NearbyUser {
     required this.distance,
     required this.lastSeen,
     this.picture,
-    this.aboutMe,
+    this.status,
   });
 
   factory NearbyUser.fromJson(Map<String, dynamic> json) {
@@ -207,7 +207,7 @@ class NearbyUser {
       id: json['id'] as int,
       username: json['username'] as String,
       picture: json['picture'] as String?,
-      aboutMe: json['about_me'] as String?,
+      status: json['status'] as String? ?? json['about_me'] as String?,
       distance: json['distance'] as int? ?? 0,
       lastSeen: DateTime.parse(json['last_seen'] as String),
     );

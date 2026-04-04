@@ -5,7 +5,7 @@ import jwt
 from aiohttp import web
 
 import config
-from app.redis_store import UserNotFound, UsernameAlreadyExists
+from app.redis_store import StatusTooLong, UserNotFound, UsernameAlreadyExists
 from app.util import InvalidUsage, authenticated, is_request_secure, jsonify, no_content
 from app.websocket import notify_local_signout
 
@@ -40,6 +40,11 @@ class BadPasswordError(InvalidUsage):
 class InvalidUsernameError(InvalidUsage):
     code = 7
     message = 'Username cannot be empty'
+
+
+class InvalidStatusError(InvalidUsage):
+    code = 9
+    message = 'Status must be 80 characters or fewer'
 
 
 class InvalidAvatarError(InvalidUsage):
@@ -105,11 +110,13 @@ async def update_profile(req):
             req.user['id'],
             username=req.data.get('username'),
             password=password,
-            about_me=req.data.get('about_me'),
+            status=req.data.get('status'),
             phone=req.data.get('phone'),
         )
     except ValueError:
         raise InvalidUsernameError()
+    except StatusTooLong:
+        raise InvalidStatusError()
     except UsernameAlreadyExists:
         raise UsernameExistsError()
     except UserNotFound:

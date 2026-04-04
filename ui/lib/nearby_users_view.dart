@@ -173,9 +173,16 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 4.0),
                   child: ListTile(
+                    key: ValueKey('nearby-user-${user.id}'),
                     leading: AvatarImage(picture: user.picture),
                     title: Text(user.username),
-                    subtitle: Text(user.aboutMe ?? ''),
+                    subtitle: (user.status?.isNotEmpty ?? false)
+                        ? Text(
+                            user.status!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          )
+                        : null,
                     trailing: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.end,

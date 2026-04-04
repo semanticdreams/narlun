@@ -147,7 +147,7 @@ void main() {
           username: 'bob',
           distance: 120,
           lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          aboutMe: 'Nearby',
+          status: 'Nearby',
         ),
       ];
     final locationService = FakeLocationService();
@@ -167,11 +167,46 @@ void main() {
     expect(find.text('bob'), findsOneWidget);
     expect(find.text('Nearby'), findsOneWidget);
     expect(find.text('Tap someone to open a room.'), findsOneWidget);
+    final listTile = tester.widget<ListTile>(
+      find.byKey(const ValueKey('nearby-user-2')),
+    );
+    final subtitle = listTile.subtitle as Text;
+    expect(subtitle.maxLines, 1);
+    expect(subtitle.overflow, TextOverflow.ellipsis);
 
     await tester.tap(find.text('bob'));
     await tester.pumpAndSettle();
 
     expect(joinedRoomId, 99);
+  });
+
+  testWidgets('does not render an empty subtitle when status is missing', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyUsers = [
+        NearbyUser(
+          id: 2,
+          username: 'bob',
+          distance: 120,
+          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        ),
+      ];
+    final locationService = FakeLocationService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        onUserJoined: (_) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final listTile = tester.widget<ListTile>(
+      find.byKey(const ValueKey('nearby-user-2')),
+    );
+    expect(listTile.subtitle, isNull);
   });
 
   testWidgets('shows a clear status when location services are disabled', (

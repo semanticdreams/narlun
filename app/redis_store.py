@@ -20,6 +20,7 @@ MAX_MESSAGE_RESULTS = 20
 AVATAR_SIZE = 256
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
 MAX_AVATAR_PIXELS = 20_000_000
+MAX_STATUS_LENGTH = 80
 
 
 class UsernameAlreadyExists(Exception):
@@ -35,6 +36,10 @@ class RoomNotFound(Exception):
 
 
 class PermissionDenied(Exception):
+    pass
+
+
+class StatusTooLong(Exception):
     pass
 
 
@@ -67,6 +72,13 @@ def avatar_url(user_id, avatar_version):
 
 def room_bool(value):
     return value in {'1', 'true', 'True', True}
+
+
+def normalize_status(status):
+    normalized = ' '.join(status.split())
+    if len(normalized) > MAX_STATUS_LENGTH:
+        raise StatusTooLong()
+    return normalized
 
 
 class RedisStore:
@@ -140,7 +152,7 @@ class RedisStore:
         return {
             'id': user_id,
             'username': raw_user['username'],
-            'about_me': raw_user.get('about_me') or None,
+            'status': raw_user.get('status') or raw_user.get('about_me') or None,
             'phone': raw_user.get('phone') or None,
             'picture': avatar_url(user_id, avatar_version),
             'has_password': password_hash is not None,
@@ -177,7 +189,7 @@ class RedisStore:
             'id': user_id,
             'username': username,
             'username_normalized': normalize_username(username),
-            'about_me': '',
+            'status': '',
             'phone': '',
             'password_hash': '',
             'avatar_seed': secrets.token_hex(16),
@@ -206,12 +218,13 @@ class RedisStore:
             return False
         return self._serialize_user(raw_user, authenticated=True)
 
-    async def update_user(self, user_id, *, username=None, password=None, about_me=None, phone=None):
+    async def update_user(self, user_id, *, username=None, password=None, status=None, phone=None):
         raw_user = await self._load_user_hash(user_id)
         if raw_user is None:
             raise UserNotFound()
 
         updates = {}
+        remove_legacy_about_me = False
         if username is not None:
             username = username.strip()
             if not username:
@@ -222,13 +235,16 @@ class RedisStore:
                 updates['username_normalized'] = normalize_username(username)
         if password is not None:
             updates['password_hash'] = generate_password_hash(password)
-        if about_me is not None:
-            updates['about_me'] = about_me
+        if status is not None:
+            updates['status'] = normalize_status(status)
+            remove_legacy_about_me = True
         if phone is not None:
             updates['phone'] = phone
 
         if updates:
             await self.redis.hset(self._user_key(user_id), mapping=updates)
+        if remove_legacy_about_me:
+            await self.redis.hdel(self._user_key(user_id), 'about_me')
         return await self.get_authenticated_user(user_id)
 
     async def _replace_username(self, user_id, old_username, new_username):

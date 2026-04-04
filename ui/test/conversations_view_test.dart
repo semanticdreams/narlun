@@ -506,4 +506,72 @@ void main() {
 
     expect(find.text('2 requests'), findsOneWidget);
   });
+
+  testWidgets('refreshes room titles when another participant updates profile', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    httpService
+      .._responses.clear()
+      ..queueRoomsResponse([
+        RoomSummary(
+          id: 5,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'bob'),
+          ],
+        ),
+      ])
+      ..queueRoomsResponse([
+        RoomSummary(
+          id: 5,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'robert'),
+          ],
+        ),
+      ]);
+    final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('bob'), findsOneWidget);
+
+    websocketService.emitRoomsChanged();
+    await tester.pumpAndSettle();
+
+    expect(find.text('robert'), findsOneWidget);
+    expect(find.text('bob'), findsNothing);
+  });
 }

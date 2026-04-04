@@ -668,4 +668,111 @@ void main() {
     ]);
     expect(find.text('Pending join requests'), findsNothing);
   });
+
+  testWidgets('refreshes the room title when another participant updates profile', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'renamed'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('other'), findsWidgets);
+
+    websocketService.emitRoomsChanged();
+    await tester.pumpAndSettle();
+
+    expect(find.text('renamed'), findsOneWidget);
+    expect(find.text('other'), findsNothing);
+  });
+
+  testWidgets('refreshes pending join request details when requester updates profile', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueRoomRequests((_) async {
+      return [
+        RoomJoinRequest(
+          user: NearbyUser(
+            id: 7,
+            username: 'newcomer',
+            distance: 0,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Old status',
+          ),
+          createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
+        ),
+      ];
+    });
+    httpService.enqueueRoomRequests((_) async {
+      return [
+        RoomJoinRequest(
+          user: NearbyUser(
+            id: 7,
+            username: 'renamed newcomer',
+            distance: 0,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Updated status',
+          ),
+          createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
+        ),
+      ];
+    });
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('newcomer'), findsOneWidget);
+    expect(find.text('Old status'), findsOneWidget);
+
+    websocketService.emitRoomRequestsChanged(1);
+    await tester.pumpAndSettle();
+
+    expect(find.text('renamed newcomer'), findsOneWidget);
+    expect(find.text('Updated status'), findsOneWidget);
+    expect(find.text('newcomer'), findsNothing);
+    expect(find.text('Old status'), findsNothing);
+  });
 }

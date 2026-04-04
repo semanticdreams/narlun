@@ -11,12 +11,16 @@ from tests.helpers import (
     MADRID,
     auth_headers,
     checkin,
+    create_group_room,
+    create_avatar_bytes,
     get_rooms,
     join_user,
     reject_room_request,
     request_room_join,
     send_message,
     signup,
+    update_profile,
+    upload_avatar,
 )
 
 
@@ -278,6 +282,249 @@ async def test_websocket_query_token_auth_is_rejected(cli):
         assert exc.status == 401
     else:
         raise AssertionError('Expected websocket handshake to reject query-token auth')
+
+
+async def test_profile_update_broadcasts_rooms_changed_to_room_members(cli):
+    users = [await signup(cli) for _ in range(2)]
+    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await update_profile(
+            cli,
+            users[1]['jwt'],
+            username='renamed-user',
+            status='updated status',
+        )
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'rooms-changed',
+            'data': {'type': 'rooms-changed'},
+        }
+
+
+async def test_profile_update_broadcasts_nearby_changed_to_nearby_viewers(cli):
+    users = [await signup(cli) for _ in range(2)]
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await update_profile(
+            cli,
+            users[1]['jwt'],
+            status='nearby status update',
+        )
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_remote_room_member_status_update_does_not_refresh_unrelated_nearby_room_viewers(cli):
+    users = [await signup(cli) for _ in range(3)]
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
+    room = await create_group_room(
+        cli,
+        users[1]['jwt'],
+        'Coffee crew',
+        [users[2]['user']['id']],
+    )
+    assert room['id']
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await update_profile(
+            cli,
+            users[2]['jwt'],
+            status='updated remotely',
+        )
+        assert response.status == 200
+
+        try:
+            async with async_timeout.timeout(0.2):
+                event = await ws.receive_json()
+            raise AssertionError(f'Unexpected websocket event: {event}')
+        except asyncio.TimeoutError:
+            pass
+
+
+async def test_room_creation_broadcasts_nearby_changed_to_nearby_viewers(cli):
+    users = [await signup(cli) for _ in range(3)]
+    for user in users:
+        await checkin(cli, user['jwt'], HAMBURG)
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        room = await create_group_room(
+            cli,
+            users[1]['jwt'],
+            'Coffee crew',
+            [users[2]['user']['id']],
+        )
+        assert room['id']
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_remote_room_member_avatar_upload_broadcasts_nearby_changed_to_room_viewers(cli):
+    users = [await signup(cli) for _ in range(3)]
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
+    room = await create_group_room(
+        cli,
+        users[1]['jwt'],
+        'Coffee crew',
+        [users[2]['user']['id']],
+    )
+    assert room['id']
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await upload_avatar(
+            cli,
+            users[2]['jwt'],
+            create_avatar_bytes(color=(255, 0, 0, 255)),
+        )
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_room_membership_change_broadcasts_nearby_changed_to_room_viewers(cli):
+    users = [await signup(cli) for _ in range(3)]
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
+    room = await create_group_room(
+        cli,
+        users[1]['jwt'],
+        'Coffee crew',
+        [users[2]['user']['id']],
+    )
+    assert room['id']
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await cli.post(
+            '/api/users/signout',
+            headers=auth_headers(users[2]['jwt']),
+        )
+        assert response.status == 204
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_nearby_room_message_broadcasts_nearby_changed_to_nearby_viewers(cli):
+    users = [await signup(cli) for _ in range(3)]
+    for user in users:
+        await checkin(cli, user['jwt'], HAMBURG)
+    room = await create_group_room(
+        cli,
+        users[1]['jwt'],
+        'Coffee crew',
+        [users[2]['user']['id']],
+    )
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await send_message(
+            cli,
+            users[1]['jwt'],
+            room['id'],
+            'Meet us by the window',
+        )
+        assert response['body'] == 'Meet us by the window'
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_requester_profile_update_broadcasts_room_requests_changed(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 200
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        await ws.send_str(json.dumps({'type': 'subscribe-room', 'data': {'room_id': room['id']}}))
+        subscribed = await ws.receive_json()
+        assert subscribed == {
+            'type': 'subscribed-room',
+            'data': {'room_id': room['id']},
+        }
+
+        response = await update_profile(
+            cli,
+            users[2]['jwt'],
+            status='please let me in',
+        )
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'room-requests-changed',
+            'data': {'type': 'room-requests-changed', 'room_id': room['id']},
+        }
+
+
+async def test_avatar_upload_broadcasts_rooms_changed_to_room_members(cli):
+    users = [await signup(cli) for _ in range(2)]
+    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await upload_avatar(
+            cli,
+            users[1]['jwt'],
+            create_avatar_bytes(),
+        )
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'rooms-changed',
+            'data': {'type': 'rooms-changed'},
+        }
 
 
 async def test_room_join_request_broadcasts_room_requests_changed(cli):

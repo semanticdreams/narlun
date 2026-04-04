@@ -180,6 +180,27 @@ class BackendClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> updateProfile(
+    String jwtCookie, {
+    String? username,
+    String? status,
+  }) async {
+    final payload = <String, dynamic>{};
+    if (username != null) {
+      payload['username'] = username;
+    }
+    if (status != null) {
+      payload['status'] = status;
+    }
+    final response = await _client.post(
+      apiBaseUri.resolve('users/update-profile'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode(payload),
+    );
+    expect(response.statusCode, 200);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> joinUser(String jwtCookie, int userId) async {
     final response = await _client.post(
       apiBaseUri.resolve('social/join-user'),
@@ -303,6 +324,10 @@ class BackendSession {
 
   Future<Map<String, dynamic>> joinUser(int userId) {
     return client.joinUser(jwtCookie, userId);
+  }
+
+  Future<Map<String, dynamic>> updateProfile({String? username, String? status}) {
+    return client.updateProfile(jwtCookie, username: username, status: status);
   }
 
   Future<Map<String, dynamic>> createGroupRoom(String name, List<int> userIds) {
@@ -674,6 +699,53 @@ void main() {
       );
 
       await pumpUntilNotFound(tester, find.text('1 request'));
+    },
+  );
+
+  testWidgets(
+    'live backend profile updates refresh room titles for other users',
+    (tester) async {
+      await launchApp(tester, harness);
+      final aliceUsername = randomUsername('alice');
+      await signUpThroughUi(tester, aliceUsername);
+
+      final aliceJwtCookie = await currentFrontendJwtCookie();
+      final alice = await backendClient.getMe(aliceJwtCookie);
+      final bob = await backendClient.signupGuest(randomUsername('bob'));
+
+      await bob.joinUser(alice['id'] as int);
+      await pumpUntilFound(tester, find.text(bob.username));
+
+      await bob.updateProfile(username: 'renamed-bob');
+      await pumpUntilFound(tester, find.text('renamed-bob'));
+      await pumpUntilNotFound(tester, find.text(bob.username));
+    },
+  );
+
+  testWidgets(
+    'live backend requester profile updates refresh the pending request panel',
+    (tester) async {
+      await launchApp(tester, harness);
+      final aliceUsername = randomUsername('alice');
+      await signUpThroughUi(tester, aliceUsername);
+
+      final aliceJwtCookie = await currentFrontendJwtCookie();
+      final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final charlie = await backendClient.signupGuest(randomUsername('charlie'));
+      final room = await backendClient.createGroupRoom(
+        aliceJwtCookie,
+        'Coffee crew',
+        [bob.user['id'] as int],
+      );
+
+      await charlie.updateProfile(status: 'Old status');
+      await charlie.requestRoomJoin(room['id'] as int);
+      await openRoomFromList(tester, 'Coffee crew');
+      await pumpUntilFound(tester, find.text('Old status'));
+
+      await charlie.updateProfile(status: 'Updated status');
+      await pumpUntilFound(tester, find.text('Updated status'));
+      await pumpUntilNotFound(tester, find.text('Old status'));
     },
   );
 }

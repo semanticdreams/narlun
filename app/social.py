@@ -82,6 +82,7 @@ async def join_user(req):
         raise InvalidRoomError(message=str(exc))
     await req.store.publish_rooms_changed([req.user['id'], req.data['user_id']])
     if room.get('created') is True:
+        await _publish_room_nearby_changes(req, room['id'])
         req.push.enqueue_room_created(
             req.user['id'],
             room['id'],
@@ -104,6 +105,7 @@ async def create_room(req):
     except ValueError as exc:
         raise InvalidRoomError(message=str(exc))
     await req.store.publish_rooms_changed([req.user['id'], *req.data.get('user_ids', [])])
+    await _publish_room_nearby_changes(req, room['id'])
     req.push.enqueue_room_created(
         req.user['id'],
         room['id'],
@@ -160,9 +162,9 @@ async def _resolve_room_request_update(req):
     return room_id, user_id
 
 
-async def _publish_pending_requester_nearby_changes(req, room_id, *, include_user_ids=()):
-    requester_ids = await req.store.get_room_join_requester_ids(room_id)
-    changed_user_ids = [*requester_ids, *[int(user_id) for user_id in include_user_ids]]
+async def _publish_room_nearby_changes(req, room_id, *, include_user_ids=()):
+    changed_user_ids = set(await req.store.get_room_nearby_update_targets(room_id))
+    changed_user_ids.update(int(user_id) for user_id in include_user_ids)
     if changed_user_ids:
         await req.store.publish_nearby_changed(changed_user_ids)
 
@@ -182,7 +184,7 @@ async def approve_room_request(req):
     room_members = await req.store.get_room_members(room_id)
     await req.store.publish_room_requests_changed(room_id)
     await req.store.publish_rooms_changed(room_members)
-    await _publish_pending_requester_nearby_changes(
+    await _publish_room_nearby_changes(
         req,
         room_id,
         include_user_ids=[user_id],
@@ -235,7 +237,7 @@ async def send_message(req):
     await req.store.publish_rooms_changed(
         await req.store.get_room_members(req.data['room_id']),
     )
-    await _publish_pending_requester_nearby_changes(req, req.data['room_id'])
+    await _publish_room_nearby_changes(req, req.data['room_id'])
     req.push.enqueue_new_message(req.user['id'], req.data['room_id'], message)
     return jsonify(message)
 
@@ -275,7 +277,11 @@ async def accept_invite(req):
     room_members = await req.store.get_room_members(room['id'])
     await req.store.publish_rooms_changed(room_members)
     if invite_result.get('membership_changed') is True:
-        await _publish_pending_requester_nearby_changes(req, room['id'])
+        await _publish_room_nearby_changes(
+            req,
+            room['id'],
+            include_user_ids=[req.user['id']],
+        )
         req.push.enqueue_room_joined(
             req.user['id'],
             room['id'],

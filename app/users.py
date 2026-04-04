@@ -77,6 +77,19 @@ def issue_auth_cookie(req, resp, user):
     return resp
 
 
+async def publish_public_profile_updates(req, user_id, *, include_room_nearby_viewers=False):
+    targets = await req.store.get_public_profile_update_targets(
+        user_id,
+        include_room_nearby_viewers=include_room_nearby_viewers,
+    )
+    if targets['room_member_ids']:
+        await req.store.publish_rooms_changed(targets['room_member_ids'])
+    if targets['nearby_viewer_ids']:
+        await req.store.publish_nearby_changed(targets['nearby_viewer_ids'])
+    for room_id in targets['pending_request_room_ids']:
+        await req.store.publish_room_requests_changed(room_id)
+
+
 @routes.get('/me')
 async def get_me(req):
     return jsonify(req.user)
@@ -131,6 +144,7 @@ async def update_profile(req):
     except UserNotFound:
         raise UnknownUserError(id=req.user['id'])
 
+    await publish_public_profile_updates(req, req.user['id'])
     return jsonify(user)
 
 
@@ -150,6 +164,11 @@ async def upload_profile_picture(req):
     except ValueError as exc:
         raise InvalidAvatarError(str(exc))
 
+    await publish_public_profile_updates(
+        req,
+        req.user['id'],
+        include_room_nearby_viewers=True,
+    )
     return jsonify({'picture': picture})
 
 

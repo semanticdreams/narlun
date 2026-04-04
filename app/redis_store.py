@@ -18,6 +18,7 @@ INVITE_TTL_SECONDS = 24 * 60 * 60
 JOIN_REQUEST_TTL_SECONDS = 7 * 24 * 60 * 60
 REJECTED_JOIN_REQUEST_TTL_SECONDS = 24 * 60 * 60
 WEBSOCKET_PRESENCE_TTL_SECONDS = 45
+NEARBY_RADIUS_KM = 20000
 MAX_NEARBY_RESULTS = 10
 MAX_GEO_RESULTS = 50
 MAX_ROOM_RESULTS = 30
@@ -484,7 +485,7 @@ class RedisStore:
             'geo:active_users',
             lon,
             lat,
-            20000,
+            NEARBY_RADIUS_KM,
             unit='km',
             withdist=True,
             count=MAX_GEO_RESULTS,
@@ -597,6 +598,72 @@ class RedisStore:
             int(room_id)
             for room_id in await self.redis.zrange(self._user_rooms_key(user_id), 0, -1)
         }
+
+    async def _active_nearby_audience_user_ids(self, user_id):
+        user_id = int(user_id)
+        raw_user = await self._load_user_hash(user_id)
+        if raw_user is None:
+            return set()
+
+        cutoff = now_ts() - ACTIVE_WINDOW_SECONDS
+        last_seen = int(raw_user.get('last_seen', 0) or 0)
+        if last_seen < cutoff:
+            return set()
+
+        positions = await self.redis.execute_command('GEOPOS', 'geo:active_users', user_id)
+        if not positions or not positions[0]:
+            return set()
+
+        lon, lat = positions[0]
+        result = await self.redis.georadius(
+            'geo:active_users',
+            float(lon),
+            float(lat),
+            NEARBY_RADIUS_KM,
+            unit='km',
+            withdist=True,
+            sort='ASC',
+            store=None,
+            store_dist=None,
+        )
+        audience = set()
+        for item in result:
+            candidate_id = int(item[0])
+            if candidate_id == user_id:
+                continue
+            candidate = await self._load_user_hash(candidate_id)
+            if candidate is None:
+                continue
+            candidate_last_seen = int(candidate.get('last_seen', 0) or 0)
+            if candidate_last_seen < cutoff:
+                continue
+            audience.add(candidate_id)
+        return audience
+
+    async def get_public_profile_update_targets(self, user_id, *, include_room_nearby_viewers=False):
+        user_id = int(user_id)
+        room_member_ids = await self._shared_room_user_ids(user_id)
+        pending_request_room_ids = await self.get_requested_room_ids(user_id)
+        nearby_viewer_ids = await self._active_nearby_audience_user_ids(user_id)
+        if include_room_nearby_viewers:
+            for room_id in await self._shared_room_ids(user_id):
+                nearby_viewer_ids.update(await self.get_room_nearby_update_targets(room_id))
+        nearby_viewer_ids.discard(user_id)
+
+        return {
+            'room_member_ids': sorted(room_member_ids),
+            'nearby_viewer_ids': sorted(nearby_viewer_ids),
+            'pending_request_room_ids': sorted(int(room_id) for room_id in pending_request_room_ids),
+        }
+
+    async def get_room_nearby_update_targets(self, room_id):
+        room_id = int(room_id)
+        room_member_ids = set(await self.get_room_members(room_id))
+        nearby_viewer_ids = set(await self.get_room_join_requester_ids(room_id))
+        for member_id in room_member_ids:
+            nearby_viewer_ids.update(await self._active_nearby_audience_user_ids(member_id))
+        nearby_viewer_ids.difference_update(room_member_ids)
+        return sorted(nearby_viewer_ids)
 
     async def join_user(self, user_id, other_user_id):
         user_id = int(user_id)
@@ -1165,6 +1232,7 @@ class RedisStore:
         if not meta:
             return
 
+        nearby_viewer_ids = set(await self.get_room_nearby_update_targets(room_id))
         members_key = self._room_members_key(room_id)
         await self.redis.srem(members_key, user_id)
         await self.redis.zrem(self._user_rooms_key(user_id), room_id)
@@ -1179,6 +1247,7 @@ class RedisStore:
 
         if should_delete_room:
             requester_ids = await self._clear_join_requests_for_room(room_id)
+            nearby_viewer_ids.update(requester_ids)
             await self.publish_room_deleted(room_id)
             await self.publish_rooms_changed(remaining_members)
             for member in remaining_members:
@@ -1189,5 +1258,5 @@ class RedisStore:
             await self.redis.delete(meta_key)
             await self.redis.delete(members_key)
             await self.redis.delete(self._room_messages_key(room_id))
-            if requester_ids:
-                await self.publish_nearby_changed(requester_ids)
+        if nearby_viewer_ids:
+            await self.publish_nearby_changed(nearby_viewer_ids)

@@ -54,7 +54,7 @@ async def update_profile(cli, jwt, **payload):
 
 
 async def upload_avatar(cli, jwt, avatar_bytes):
-    data = {'file': avatar_bytes}
+    data = {'file': io.BytesIO(avatar_bytes)}
     response = await cli.post(
         '/api/users/upload-profile-picture',
         data=data,

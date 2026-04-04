@@ -1,5 +1,5 @@
 from app.push import PushService
-from tests.helpers import join_user, send_message, signup
+from tests.helpers import join_user, signup
 
 
 async def test_push_delivery_skips_users_with_active_websocket_presence(
@@ -49,7 +49,11 @@ async def test_push_delivery_skips_users_with_active_websocket_presence(
     monkeypatch.setattr('app.push._send_web_push', fake_send_web_push)
 
     push_service = PushService(cli.app['store'])
-    message = await send_message(cli, users[0]['jwt'], room['id'], 'hello')
+    message = await cli.app['store'].send_message(
+        users[0]['user']['id'],
+        room['id'],
+        'hello',
+    )
     await push_service.notify_new_message(users[0]['user']['id'], room['id'], message)
     assert delivered == []
 

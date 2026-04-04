@@ -1,5 +1,7 @@
 // ignore_for_file: non_constant_identifier_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
@@ -29,8 +31,34 @@ class _FakeWebsocketService extends WebsocketService {
         connector: (uri, {headers}) => throw UnimplementedError(),
       );
 
+  final StreamController<Map<String, dynamic>> _nearbyChangedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _roomsChangedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<String> _connectionController =
+      StreamController<String>.broadcast();
+
   @override
   Future<void> ensureConnected() async {}
+
+  @override
+  Stream<Map<String, dynamic>> nearbyChangedStream() =>
+      _nearbyChangedController.stream;
+
+  @override
+  Stream<Map<String, dynamic>> roomsChangedStream() =>
+      _roomsChangedController.stream;
+
+  @override
+  Stream<String> get connectionEvents => _connectionController.stream;
+
+  void emitNearbyChanged() {
+    _nearbyChangedController.add({'type': 'nearby-changed', 'data': {}});
+  }
+
+  void emitRoomsChanged() {
+    _roomsChangedController.add({'type': 'rooms-changed', 'data': {}});
+  }
 }
 
 class FakeNearbyHttpService extends HttpService {
@@ -46,9 +74,11 @@ class FakeNearbyHttpService extends HttpService {
   bool clearedLocalSession = false;
   Object? checkinError;
   int requestRoomJoinCalls = 0;
+  int checkinCalls = 0;
 
   @override
   Future<List<NearbyItem>> checkin(lat, lon) async {
+    checkinCalls += 1;
     if (checkinError != null) {
       throw checkinError!;
     }
@@ -383,5 +413,132 @@ void main() {
 
     expect(httpService.requestRoomJoinCalls, 1);
     expect(find.text('Requested'), findsOneWidget);
+  });
+
+  testWidgets('refreshes nearby user details when another user updates profile', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'user',
+          distance: 120,
+          user: NearbyUser(
+            id: 2,
+            username: 'bob',
+            distance: 120,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Old status',
+          ),
+        ),
+      ];
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        onUserJoined: (_, __) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Old status'), findsOneWidget);
+
+    httpService.nearbyItems = [
+      NearbyItem(
+        type: 'user',
+        distance: 120,
+        user: NearbyUser(
+          id: 2,
+          username: 'renamed',
+          distance: 120,
+          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          status: 'Updated status',
+        ),
+      ),
+    ];
+
+    websocketService.emitNearbyChanged();
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 2);
+    expect(find.text('renamed'), findsOneWidget);
+    expect(find.text('Updated status'), findsOneWidget);
+    expect(find.text('Old status'), findsNothing);
+  });
+
+  testWidgets('refreshes nearby room details when the room changes', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'room',
+          distance: 80,
+          room: NearbyRoom(
+            distance: 80,
+            joinRequested: false,
+            room: RoomSummary(
+              id: 33,
+              isGroup: true,
+              name: 'Coffee crew',
+              updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              lastMessage: const MessagePreview(body: 'Old message'),
+              participants: const [
+                RoomParticipant(id: 2, username: 'bob'),
+                RoomParticipant(id: 3, username: 'cara'),
+              ],
+            ),
+          ),
+        ),
+      ];
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        onUserJoined: (_, __) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Old message'), findsOneWidget);
+
+    httpService.nearbyItems = [
+      NearbyItem(
+        type: 'room',
+        distance: 80,
+        room: NearbyRoom(
+          distance: 80,
+          joinRequested: false,
+          room: RoomSummary(
+            id: 33,
+            isGroup: true,
+            name: 'Coffee crew',
+            updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
+            lastMessage: const MessagePreview(body: 'Updated message'),
+            participants: const [
+              RoomParticipant(id: 2, username: 'bob'),
+              RoomParticipant(id: 3, username: 'cara'),
+              RoomParticipant(id: 4, username: 'dan'),
+            ],
+          ),
+        ),
+      ),
+    ];
+
+    websocketService.emitNearbyChanged();
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 2);
+    expect(find.text('Updated message'), findsOneWidget);
+    expect(find.text('3 people'), findsOneWidget);
+    expect(find.text('Old message'), findsNothing);
   });
 }

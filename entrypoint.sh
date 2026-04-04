@@ -1,3 +1,3 @@
 #! /bin/sh
 
-python -m app.app
+uv run python -m app.app

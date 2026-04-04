@@ -1,10 +1,10 @@
+import redis.asyncio as redis
 import json
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 
-import aioredis
 from PIL import Image, UnidentifiedImageError
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -47,7 +47,10 @@ def now_ms():
 
 
 def ts_ms_to_iso(timestamp_ms):
-    return datetime.utcfromtimestamp(int(timestamp_ms) / 1000).isoformat(timespec='milliseconds')
+    return datetime.fromtimestamp(
+        int(timestamp_ms) / 1000,
+        timezone.utc,
+    ).isoformat(timespec='milliseconds')
 
 
 def ts_to_iso(timestamp):
@@ -73,13 +76,13 @@ class RedisStore:
 
     @classmethod
     async def create(cls, redis_url):
-        redis = await aioredis.from_url(redis_url, decode_responses=True)
-        redis_bytes = await aioredis.from_url(redis_url, decode_responses=False)
-        return cls(redis, redis_bytes)
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        redis_bytes_client = redis.from_url(redis_url, decode_responses=False)
+        return cls(redis_client, redis_bytes_client)
 
     async def close(self):
-        await self.redis.close()
-        await self.redis_bytes.close()
+        await self.redis.aclose()
+        await self.redis_bytes.aclose()
 
     def _user_key(self, user_id):
         return f'user:{{{user_id}}}:profile'

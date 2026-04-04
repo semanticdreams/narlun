@@ -88,5 +88,5 @@ async def websocket_handler(req):
     sockets.discard(ws)
     if not sockets and user_id in active_sockets:
         del active_sockets[user_id]
-    await channel.close()
+    await channel.aclose()
     return ws

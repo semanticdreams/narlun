@@ -1,16 +1,16 @@
 .PHONY: test run lint cov secret-key
 
 run:
-	poetry run python -m app.app
+	uv run python -m app.app
 
 test:
-	poetry run python -m pytest -svx
+	uv run python -m pytest -svx
 
 lint:
-	flake8 app tests --extend-ignore=E501
+	uv run flake8 app tests --extend-ignore=E501
 
 cov:
-	poetry run coverage run -m pytest -svx && poetry run coverage report -m
+	uv run coverage run -m pytest -svx && uv run coverage report -m
 
 secret-key:
 	python -c 'import secrets; secrets.token_hex(52)'

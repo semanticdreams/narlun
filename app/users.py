@@ -50,7 +50,10 @@ class InvalidAvatarError(InvalidUsage):
 
 def issue_auth_cookie(req, resp, user):
     token = jwt.encode(
-        {'sub': user['id'], 'iat': datetime.datetime.utcnow()},
+        {
+            'sub': str(user['id']),
+            'iat': datetime.datetime.now(datetime.timezone.utc),
+        },
         config.SECRET_KEY,
     )
     resp.set_cookie('jwt', token, path='/api', httponly=True, samesite='Lax', secure=is_request_secure(req))

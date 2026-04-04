@@ -1,3 +1,5 @@
+import io
+
 from tests.helpers import create_avatar_bytes, random_username, signin, signup, update_profile
 
 
@@ -52,7 +54,7 @@ async def test_avatar_upload_and_fetch(cli):
 
     response = await cli.post(
         '/api/users/upload-profile-picture',
-        data={'file': avatar},
+        data={'file': io.BytesIO(avatar)},
         cookies={'jwt': created['jwt']},
     )
     assert response.status == 200
@@ -71,7 +73,7 @@ async def test_invalid_avatar_upload_returns_usage_error(cli):
 
     response = await cli.post(
         '/api/users/upload-profile-picture',
-        data={'file': b'not-an-image'},
+        data={'file': io.BytesIO(b'not-an-image')},
         cookies={'jwt': created['jwt']},
     )
     assert response.status == 400

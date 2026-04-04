@@ -1,2 +1,3 @@
-* replace poetry with uv
 * deploy
+* harden websocket logic
+* update frontend deps and check for design improvements

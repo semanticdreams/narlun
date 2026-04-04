@@ -7,8 +7,9 @@ Redis-only backend for Narlun.
 Run a local Redis server and then start the app:
 
 ```bash
+uv sync
 redis-server
-poetry run python -m app.app
+uv run python -m app.app
 ```
 
 The default API port is `3000`.
@@ -18,5 +19,5 @@ The default API port is `3000`.
 The test suite starts its own disposable Redis instance:
 
 ```bash
-poetry run python -m pytest -svx
+uv run python -m pytest -svx
 ```

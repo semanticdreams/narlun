@@ -2,9 +2,6 @@ import sys
 import logging
 import structlog
 
-import config
-
-
 timestamper = structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S")
 
 shared_processors = [
@@ -28,7 +25,7 @@ structlog.configure(
 )
 
 formatter = structlog.stdlib.ProcessorFormatter(
-    processor=structlog.processors.JSONRenderer(),#structlog.dev.ConsoleRenderer()
+    processor=structlog.processors.JSONRenderer(),  # structlog.dev.ConsoleRenderer()
     foreign_pre_chain=shared_processors,
 )
 

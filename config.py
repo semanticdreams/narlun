@@ -11,7 +11,7 @@ load_dotenv(os.path.join(basedir, '.env'))
 
 SENTRY_DSN = ''
 
-SECRET_KEY = 'hellosecret'
+SECRET_KEY = 'change-me-to-a-long-random-secret-key'
 
 PORT = 3000
 

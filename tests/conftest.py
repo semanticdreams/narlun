@@ -47,7 +47,7 @@ def redis_url(tmp_path_factory):
 
 
 @pytest.fixture
-async def cli(loop, aiohttp_client, redis_url):
+async def cli(aiohttp_client, redis_url):
     app = await create_app(redis_url=redis_url, enable_cors=False)
     await app['redis'].flushdb()
     client = await aiohttp_client(app)

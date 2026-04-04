@@ -4,6 +4,8 @@ import 'package:username_gen/username_gen.dart';
 
 import 'http.dart';
 import 'me_model.dart';
+import 'models.dart';
+import 'route_utils.dart';
 
 class SignupView extends StatefulWidget {
   const SignupView({Key? key}) : super(key: key);
@@ -16,15 +18,21 @@ class SignupView extends StatefulWidget {
 
 class SignupViewState extends State<SignupView> {
   final usernameController = TextEditingController();
-  final HttpService httpService = HttpService();
+  late final HttpService httpService;
 
   bool usernameReadOnly = false;
 
-  void submit(context) async {
+  void submit() async {
     try {
-      final me = await httpService.signup(usernameController.text);
-      Provider.of<MeModel>(context, listen: false).set_data(me);
-      Navigator.pushNamed(context, '/rooms');
+      final SessionUser me = await httpService.signup(usernameController.text);
+      if (!mounted) {
+        return;
+      }
+      Provider.of<MeModel>(context, listen: false).setData(me);
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        nextRouteFromContext(context) ?? '/rooms',
+        (route) => false,
+      );
     } on InvalidUsage {
       usernameController.selection = TextSelection(
         baseOffset: 0,
@@ -34,9 +42,15 @@ class SignupViewState extends State<SignupView> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    httpService = Provider.of<HttpService>(context, listen: false);
+  }
+
+  @override
   void dispose() {
-    super.dispose();
     usernameController.dispose();
+    super.dispose();
   }
 
   @override
@@ -93,7 +107,7 @@ class SignupViewState extends State<SignupView> {
                           ),
                         ),
                         controller: usernameController,
-                        onSubmitted: (_) => submit(context),
+                        onSubmitted: (_) => submit(),
                       ),
                     ),
                     Container(
@@ -103,7 +117,7 @@ class SignupViewState extends State<SignupView> {
                         button: true,
                         child: ElevatedButton(
                           key: const Key('signup-submit-button'),
-                          onPressed: () => submit(context),
+                          onPressed: submit,
                           child: const Text('Sign Up'),
                         ),
                       ),
@@ -117,7 +131,10 @@ class SignupViewState extends State<SignupView> {
                 TextButton(
                   child: const Text('Already have an account? Sign in'),
                   onPressed: () {
-                    Navigator.pushNamed(context, '/signin');
+                    Navigator.pushReplacementNamed(
+                      context,
+                      authRouteWithNext(context, '/signin'),
+                    );
                   },
                 ),
               ],

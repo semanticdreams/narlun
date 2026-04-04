@@ -4,17 +4,15 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 
 import 'package:narlun/dialog_service.dart';
 import 'package:narlun/http.dart';
+import 'package:narlun/locator.dart';
+import 'package:narlun/me_model.dart';
 import 'package:narlun/messages_view.dart';
+import 'package:narlun/models.dart';
 import 'package:narlun/websocket.dart';
-
-class FakeMe {
-  final Map<String, dynamic> data;
-
-  FakeMe(this.data);
-}
 
 class _DummyHttpClient extends http.BaseClient {
   @override
@@ -31,18 +29,24 @@ class FakeHttpService extends HttpService {
         client: _DummyHttpClient(),
       );
 
-  final Queue<Future<dynamic> Function(int roomId)> _messageHandlers =
-      Queue<Future<dynamic> Function(int roomId)>();
+  final Queue<Future<List<ChatMessage>> Function(int roomId)> _messageHandlers =
+      Queue<Future<List<ChatMessage>> Function(int roomId)>();
   var getMessagesCalls = 0;
+  var clearedLocalSession = false;
 
-  void enqueueMessages(Future<dynamic> Function(int roomId) handler) {
+  void enqueueMessages(Future<List<ChatMessage>> Function(int roomId) handler) {
     _messageHandlers.add(handler);
   }
 
   @override
-  Future get_messages(room_id) async {
+  Future<List<ChatMessage>> get_messages(room_id, {bool silentErrors = false}) async {
     getMessagesCalls += 1;
     return _messageHandlers.removeFirst()(room_id as int);
+  }
+
+  @override
+  Future<void> clearLocalSession() async {
+    clearedLocalSession = true;
   }
 }
 
@@ -119,17 +123,20 @@ Widget _buildMessagesApp({
   required FakeHttpService httpService,
   required FakeWebsocketService websocketService,
 }) {
+  final room = RoomSummary(
+    id: 1,
+    isGroup: false,
+    updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+    participants: const [
+      RoomParticipant(id: 1, username: 'me'),
+      RoomParticipant(id: 2, username: 'other'),
+    ],
+  );
+  const me = SessionUser(authenticated: true, id: 1, username: 'me');
   return MaterialApp(
     home: MessagesView(
-      room: {
-        'id': 1,
-        'is_group': false,
-        'participants': [
-          {'id': 1, 'username': 'me'},
-          {'id': 2, 'username': 'other'},
-        ],
-      },
-      me: FakeMe({'id': 1, 'authenticated': true}),
+      room: room,
+      me: me,
       httpService: httpService,
       websocketService: websocketService,
     ),
@@ -137,12 +144,20 @@ Widget _buildMessagesApp({
 }
 
 void main() {
+  setUp(() async {
+    await setupLocator(reset: true, dialogService: DialogService());
+  });
+
+  tearDown(() async {
+    await locator.reset();
+  });
+
   testWidgets(
     'merges initial history with live messages received during room setup',
     (tester) async {
       final websocketService = FakeWebsocketService();
       final httpService = FakeHttpService(websocketService: websocketService);
-      final historyCompleter = Completer<List<dynamic>>();
+      final historyCompleter = Completer<List<ChatMessage>>();
       httpService.enqueueMessages((_) => historyCompleter.future);
 
       await tester.pumpWidget(
@@ -164,12 +179,12 @@ void main() {
       await tester.pump();
 
       historyCompleter.complete([
-        {
-          'id': 'history-1',
-          'body': 'History message',
-          'sender_id': 2,
-          'timestamp': '2026-04-04T10:00:00.000Z',
-        },
+        ChatMessage(
+          id: 'history-1',
+          body: 'History message',
+          senderId: 2,
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        ),
       ]);
       await tester.pumpAndSettle();
 
@@ -185,12 +200,12 @@ void main() {
     httpService.enqueueMessages((_) async => []);
     httpService.enqueueMessages(
       (_) async => [
-        {
-          'id': 'after-reconnect',
-          'body': 'Recovered message',
-          'sender_id': 2,
-          'timestamp': '2026-04-04T10:00:02.000Z',
-        },
+        ChatMessage(
+          id: 'after-reconnect',
+          body: 'Recovered message',
+          senderId: 2,
+          timestamp: DateTime.parse('2026-04-04T10:00:02.000Z'),
+        ),
       ],
     );
 
@@ -224,15 +239,20 @@ void main() {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => MessagesView(
-                        room: {
-                          'id': 1,
-                          'is_group': false,
-                          'participants': [
-                            {'id': 1, 'username': 'me'},
-                            {'id': 2, 'username': 'other'},
+                        room: RoomSummary(
+                          id: 1,
+                          isGroup: false,
+                          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                          participants: const [
+                            RoomParticipant(id: 1, username: 'me'),
+                            RoomParticipant(id: 2, username: 'other'),
                           ],
-                        },
-                        me: FakeMe({'id': 1, 'authenticated': true}),
+                        ),
+                        me: const SessionUser(
+                          authenticated: true,
+                          id: 1,
+                          username: 'me',
+                        ),
                         httpService: httpService,
                         websocketService: websocketService,
                       ),
@@ -275,16 +295,21 @@ void main() {
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => MessagesView(
-                          room: {
-                            'id': 1,
-                            'is_group': false,
-                            'participants': [
-                              {'id': 1, 'username': 'me'},
-                              {'id': 2, 'username': 'other'},
+                      builder: (_) => MessagesView(
+                          room: RoomSummary(
+                            id: 1,
+                            isGroup: false,
+                            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                            participants: const [
+                              RoomParticipant(id: 1, username: 'me'),
+                              RoomParticipant(id: 2, username: 'other'),
                             ],
-                          },
-                          me: FakeMe({'id': 1, 'authenticated': true}),
+                          ),
+                          me: const SessionUser(
+                            authenticated: true,
+                            id: 1,
+                            username: 'me',
+                          ),
                           httpService: httpService,
                           websocketService: websocketService,
                         ),
@@ -308,4 +333,57 @@ void main() {
       expect(websocketService.unsubscribedRooms, [1]);
     },
   );
+
+  testWidgets('expires the session when room refresh returns unauthorized', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueMessages((_) async => throw UnauthorizedResponse());
+
+    await tester.pumpWidget(
+      Provider<HttpService>.value(
+        value: httpService,
+        child: ChangeNotifierProvider(
+          create: (_) => MeModel()
+            ..setData(
+              const SessionUser(authenticated: true, id: 1, username: 'me'),
+            ),
+          child: MaterialApp(
+            initialRoute: '/room',
+            routes: {
+              '/': (_) => const Scaffold(body: Text('Welcome landing')),
+              '/room': (_) => MessagesView(
+                    room: RoomSummary(
+                      id: 1,
+                      isGroup: false,
+                      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                      participants: const [
+                        RoomParticipant(id: 1, username: 'me'),
+                        RoomParticipant(id: 2, username: 'other'),
+                      ],
+                    ),
+                    me: const SessionUser(
+                      authenticated: true,
+                      id: 1,
+                      username: 'me',
+                    ),
+                    httpService: httpService,
+                    websocketService: websocketService,
+                  ),
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state(find.byType(MessagesView)) as dynamic;
+    await state.update_messages(silentErrors: true);
+    await tester.pumpAndSettle();
+
+    expect(httpService.clearedLocalSession, isTrue);
+    expect(find.text('Welcome landing'), findsOneWidget);
+  });
 }

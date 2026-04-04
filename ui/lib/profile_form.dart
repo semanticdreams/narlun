@@ -3,11 +3,12 @@ import 'package:provider/provider.dart';
 
 import 'http.dart';
 import 'me_model.dart';
+import 'models.dart';
 
 class ProfileForm extends StatefulWidget {
-  final dynamic data;
+  final SessionUser data;
 
-  const ProfileForm({Key? key, this.data}) : super(key: key);
+  const ProfileForm({Key? key, required this.data}) : super(key: key);
 
   @override
   ProfileFormState createState() {
@@ -16,7 +17,7 @@ class ProfileForm extends StatefulWidget {
 }
 
 class ProfileFormState extends State<ProfileForm> {
-  final HttpService httpService = HttpService();
+  late final HttpService httpService;
   final _formKey = GlobalKey<FormState>();
 
   String? username;
@@ -27,15 +28,21 @@ class ProfileFormState extends State<ProfileForm> {
   static const passwordPlaceholder = '********';
 
   @override
+  void initState() {
+    super.initState();
+    httpService = Provider.of<HttpService>(context, listen: false);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final hasPassword = widget.data['has_password'] == true;
+    final hasPassword = widget.data.hasPassword;
 
     return Form(
       key: _formKey,
       child: Column(
         children: [
           TextFormField(
-            initialValue: widget.data['username'],
+            initialValue: widget.data.username,
             onSaved: (String? value) {
               username = value;
             },
@@ -64,7 +71,7 @@ class ProfileFormState extends State<ProfileForm> {
             ),
           ),
           TextFormField(
-            initialValue: widget.data['phone'] ?? '',
+            initialValue: widget.data.phone ?? '',
             onSaved: (String? value) {
               phone = value;
             },
@@ -74,7 +81,7 @@ class ProfileFormState extends State<ProfileForm> {
             ),
           ),
           TextFormField(
-            initialValue: widget.data['about_me'] ?? '',
+            initialValue: widget.data.aboutMe ?? '',
             onSaved: (String? value) {
               aboutMe = value;
             },
@@ -113,7 +120,10 @@ class ProfileFormState extends State<ProfileForm> {
                   }
 
                   final me = await httpService.update_profile(data);
-                  Provider.of<MeModel>(context, listen: false).set_data(me);
+                  if (!mounted) {
+                    return;
+                  }
+                  Provider.of<MeModel>(context, listen: false).setData(me);
 
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Profile saved')),

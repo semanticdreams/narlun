@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import 'http.dart';
 import 'me_model.dart';
+import 'models.dart';
+import 'route_utils.dart';
 
 class SigninView extends StatefulWidget {
   const SigninView({Key? key}) : super(key: key);
@@ -16,22 +18,34 @@ class SigninView extends StatefulWidget {
 class SigninState extends State<SigninView> {
   final usernameController = TextEditingController();
   final passwordController = TextEditingController();
-  final HttpService httpService = HttpService();
+  late final HttpService httpService;
 
-  void submit(BuildContext context) async {
+  void submit() async {
     try {
-      final me = await httpService.signin(
+      final SessionUser me = await httpService.signin(
         username: usernameController.text,
         password: passwordController.text,
       );
-      Provider.of<MeModel>(context, listen: false).set_data(me);
-      Navigator.pushNamed(context, '/rooms');
+      if (!mounted) {
+        return;
+      }
+      Provider.of<MeModel>(context, listen: false).setData(me);
+      Navigator.of(context).pushNamedAndRemoveUntil(
+        nextRouteFromContext(context) ?? '/rooms',
+        (route) => false,
+      );
     } on InvalidUsage {
       usernameController.selection = TextSelection(
         baseOffset: 0,
         extentOffset: usernameController.value.text.length,
       );
     }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    httpService = Provider.of<HttpService>(context, listen: false);
   }
 
   @override
@@ -77,7 +91,7 @@ class SigninState extends State<SigninView> {
                       autofocus: true,
                       decoration: const InputDecoration(labelText: 'Username'),
                       controller: usernameController,
-                      onSubmitted: (_) => submit(context),
+                      onSubmitted: (_) => submit(),
                     ),
                   ),
                   Semantics(
@@ -90,7 +104,7 @@ class SigninState extends State<SigninView> {
                       enableSuggestions: false,
                       autocorrect: false,
                       controller: passwordController,
-                      onSubmitted: (_) => submit(context),
+                      onSubmitted: (_) => submit(),
                     ),
                   ),
                   Container(
@@ -100,7 +114,7 @@ class SigninState extends State<SigninView> {
                       button: true,
                       child: ElevatedButton(
                         key: const Key('signin-submit-button'),
-                        onPressed: () => submit(context),
+                        onPressed: submit,
                         child: const Text('Sign In'),
                       ),
                     ),
@@ -111,7 +125,10 @@ class SigninState extends State<SigninView> {
               TextButton(
                 child: const Text('Don\'t have an account? Click to sign up.'),
                 onPressed: () {
-                  Navigator.pushNamed(context, '/signup');
+                  Navigator.pushReplacementNamed(
+                    context,
+                    authRouteWithNext(context, '/signup'),
+                  );
                 },
               ),
             ],

@@ -1,39 +1,48 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'alert_request.dart';
 import 'alert_response.dart';
 
 class DialogService {
-  Function(AlertRequest)? _showDialogListener;
-  Completer<AlertResponse>? _dialogCompleter;
+  GlobalKey<NavigatorState>? _navigatorKey;
 
-  /// Registers a callback function. Typically to show the dialog
-
-  void registerDialogListener(Function(AlertRequest) showDialogListener) {
-    _showDialogListener = showDialogListener;
+  void attachNavigator(GlobalKey<NavigatorState> navigatorKey) {
+    _navigatorKey = navigatorKey;
   }
 
-  /// Calls the dialog listener and returns a Future that will wait for dialogComplete.
-
-  Future<AlertResponse>? showDialog({
+  Future<AlertResponse> showDialog({
     required String title,
     required String description,
     String buttonTitle = 'OK',
-  }) {
-    _dialogCompleter = Completer<AlertResponse>();
-    _showDialogListener?.call(
-      AlertRequest(
-        title: title,
-        description: description,
-        buttonTitle: buttonTitle,
-      ),
+  }) async {
+    final context = _navigatorKey?.currentContext;
+    if (context == null) {
+      return AlertResponse(confirmed: false);
+    }
+    final request = AlertRequest(
+      title: title,
+      description: description,
+      buttonTitle: buttonTitle,
     );
-    return _dialogCompleter?.future;
-  }
-
-  /// Completes the _dialogCompleter to resume the Future's execution call
-
-  void dialogComplete(AlertResponse response) {
-    _dialogCompleter?.complete(response);
-    _dialogCompleter = null;
+    final response = await showGeneralDialog<AlertResponse>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: request.title,
+      pageBuilder: (dialogContext, _, __) {
+        return AlertDialog(
+          title: Text(request.title),
+          content: Text(request.description),
+          actions: [
+            TextButton(
+              child: Text(request.buttonTitle),
+              onPressed: () {
+                Navigator.of(dialogContext).pop(AlertResponse(confirmed: true));
+              },
+            ),
+          ],
+        );
+      },
+    );
+    return response ?? AlertResponse(confirmed: false);
   }
 }

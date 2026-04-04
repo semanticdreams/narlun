@@ -2,40 +2,39 @@ import 'dart:async';
 
 import 'package:chat_bubbles/chat_bubbles.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import 'http.dart';
 import 'locator.dart';
+import 'models.dart';
+import 'session_actions.dart';
 import 'websocket.dart';
 
 class MessagesView extends StatefulWidget {
-  final room;
-  final me;
+  final RoomSummary room;
+  final SessionUser me;
   final HttpService? httpService;
   final WebsocketService? websocketService;
 
   const MessagesView({
     Key? key,
-    this.room,
-    this.me,
+    required this.room,
+    required this.me,
     this.httpService,
     this.websocketService,
   }) : super(key: key);
 
   @override
-  MessagesState createState() {
-    return MessagesState();
-  }
+  State<MessagesView> createState() => MessagesState();
 }
 
 class MessagesState extends State<MessagesView> {
   late final HttpService httpService;
   late final WebsocketService websocketService;
 
-  final messages = [];
-
+  final List<ChatMessage> messages = [];
   final messageController = TextEditingController();
   late FocusNode messageFocusNode;
-
   final ScrollController _scrollController = ScrollController();
 
   StreamSubscription? messagesStreamSubscription;
@@ -45,6 +44,13 @@ class MessagesState extends State<MessagesView> {
   bool _firstAutoscrollExecuted = false;
   bool _shouldAutoscroll = false;
   bool _roomClosed = false;
+
+  void _showRefreshFailure(String message) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -67,9 +73,12 @@ class MessagesState extends State<MessagesView> {
     }
   }
 
-  Future update_messages() async {
+  Future<void> update_messages({bool silentErrors = false}) async {
     try {
-      final resp = await httpService.get_messages(widget.room['id']);
+      final resp = await httpService.get_messages(
+        widget.room.id,
+        silentErrors: silentErrors,
+      );
       if (!mounted || _roomClosed) {
         return;
       }
@@ -77,16 +86,31 @@ class MessagesState extends State<MessagesView> {
         _mergeMessages(resp);
         _scrollToBottom();
       });
+    } on UnauthorizedResponse {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
     } on InvalidUsage catch (e) {
       if (e.code == 1000) {
         await _handleRoomDeleted();
       } else {
         rethrow;
       }
+    } catch (_) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _showRefreshFailure('Could not refresh this room. Trying again soon.');
     }
   }
 
-  Future _handleRoomDeleted() async {
+  Future<void> _handleRoomDeleted() async {
     if (_roomClosed || !mounted) {
       return;
     }
@@ -97,7 +121,7 @@ class MessagesState extends State<MessagesView> {
     Navigator.pop(context, true);
   }
 
-  Future _handleSessionEnded() async {
+  Future<void> _handleSessionEnded() async {
     if (_roomClosed || !mounted) {
       return;
     }
@@ -113,29 +137,32 @@ class MessagesState extends State<MessagesView> {
     super.initState();
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     httpService =
-        widget.httpService ?? HttpService(websocketService: websocketService);
+        widget.httpService ??
+        Provider.of<HttpService>(context, listen: false);
 
     _scrollController.addListener(_scrollListener);
-
-    _initializeRoom();
-
     messageFocusNode = FocusNode();
+    _initializeRoom();
   }
 
   Future<void> _initializeRoom() async {
     messagesStreamSubscription = websocketService
-        .messagesStream(widget.room['id'])
+        .messagesStream(widget.room.id)
         .listen((value) {
           if (!mounted || _roomClosed) {
             return;
           }
           setState(() {
-            _mergeMessages(value['data']['messages']);
+            _mergeMessages(
+              ChatMessage.listFromJson(
+                value['data']['messages'] as List<dynamic>,
+              ),
+            );
             _scrollToBottom();
           });
         });
     roomDeletedSubscription = websocketService
-        .roomDeletedStream(widget.room['id'])
+        .roomDeletedStream(widget.room.id)
         .listen((_) async {
           await _handleRoomDeleted();
         });
@@ -146,7 +173,7 @@ class MessagesState extends State<MessagesView> {
         return;
       }
       if (event == 'reconnected') {
-        await update_messages();
+        await update_messages(silentErrors: true);
       } else if (event == 'signed-out') {
         await _handleSessionEnded();
       }
@@ -158,8 +185,8 @@ class MessagesState extends State<MessagesView> {
         return;
       }
 
-      await websocketService.subscribeRoom(widget.room['id']);
-      await update_messages();
+      await websocketService.subscribeRoom(widget.room.id);
+      await update_messages(silentErrors: true);
     } on RoomUnavailable {
       await _handleRoomDeleted();
     } catch (_) {
@@ -167,29 +194,21 @@ class MessagesState extends State<MessagesView> {
     }
   }
 
-  void _mergeMessages(List<dynamic> incoming) {
-    final mergedById = <String, dynamic>{};
+  void _mergeMessages(List<ChatMessage> incoming) {
+    final mergedById = <String, ChatMessage>{};
     for (final message in messages) {
-      final messageId = message['id'];
-      if (messageId != null) {
-        mergedById['$messageId'] = message;
-      }
+      mergedById[message.id] = message;
     }
     for (final message in incoming) {
-      final messageId = message['id'];
-      if (messageId != null) {
-        mergedById['$messageId'] = message;
-      }
+      mergedById[message.id] = message;
     }
     final merged = mergedById.values.toList();
     merged.sort((a, b) {
-      final timestampComparison = '${b['timestamp']}'.compareTo(
-        '${a['timestamp']}',
-      );
+      final timestampComparison = b.timestamp.compareTo(a.timestamp);
       if (timestampComparison != 0) {
         return timestampComparison;
       }
-      return '${b['id']}'.compareTo('${a['id']}');
+      return b.id.compareTo(a.id);
     });
     messages
       ..clear()
@@ -198,7 +217,7 @@ class MessagesState extends State<MessagesView> {
 
   @override
   void dispose() {
-    websocketService.unsubscribeRoom(widget.room['id']);
+    websocketService.unsubscribeRoom(widget.room.id);
     messagesStreamSubscription?.cancel();
     roomDeletedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
@@ -209,12 +228,22 @@ class MessagesState extends State<MessagesView> {
     super.dispose();
   }
 
-  Future send_message() async {
+  Future<void> send_message() async {
     final body = messageController.text;
-    if (!body.isEmpty) {
+    if (body.isNotEmpty) {
       try {
-        await httpService.send_message(widget.room['id'], body);
+        await httpService.send_message(widget.room.id, body);
         messageController.text = '';
+      } on UnauthorizedResponse {
+        if (_roomClosed || !mounted) {
+          return;
+        }
+        _roomClosed = true;
+        await expireSession(
+          context,
+          httpService: httpService,
+          description: 'Your session has ended. Please sign in again.',
+        );
       } on InvalidUsage catch (e) {
         if (e.code == 1000) {
           await _handleRoomDeleted();
@@ -230,32 +259,24 @@ class MessagesState extends State<MessagesView> {
     return Scaffold(
       backgroundColor: Colors.purple[50],
       appBar: AppBar(
-        title: Text(
-          widget.room['is_group']
-              ? widget.room['name']
-              : widget.room['participants'].singleWhere(
-                  (x) => x['id'] != widget.me.data['id'],
-                )['username'],
-        ),
-        actions: [],
+        title: Text(widget.room.displayTitleFor(widget.me)),
       ),
       body: Column(
         children: [
           Expanded(
             child: ListView.builder(
-              //reverse: true,
               itemCount: messages.length,
               controller: _scrollController,
               itemBuilder: (BuildContext context, int index) {
                 final msg = messages[(messages.length - 1) - index];
-                final is_sender = msg['sender_id'] == widget.me.data['id'];
+                final isSender = msg.senderId == widget.me.id;
                 return Padding(
-                  padding: EdgeInsets.symmetric(vertical: 1),
+                  padding: const EdgeInsets.symmetric(vertical: 1),
                   child: BubbleSpecialOne(
-                    text: msg['body'],
-                    isSender: is_sender,
+                    text: msg.body,
+                    isSender: isSender,
                     tail: true,
-                    color: is_sender ? Colors.purple[500]! : Colors.grey[700]!,
+                    color: isSender ? Colors.purple[500]! : Colors.grey[700]!,
                     textStyle: TextStyle(
                       color: Theme.of(context).colorScheme.onPrimary,
                     ),
@@ -264,8 +285,6 @@ class MessagesState extends State<MessagesView> {
               },
             ),
           ),
-          //Spacer(),
-          //          TextField(),
           Container(
             padding: const EdgeInsets.all(4.0),
             child: Row(
@@ -282,13 +301,13 @@ class MessagesState extends State<MessagesView> {
                       await send_message();
                       messageFocusNode.requestFocus();
                     },
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       hintText: 'Message',
                       border: OutlineInputBorder(),
                     ),
                   ),
                 ),
-                SizedBox(width: 4),
+                const SizedBox(width: 4),
                 CircleAvatar(
                   backgroundColor: Theme.of(context).primaryColor,
                   child: Semantics(

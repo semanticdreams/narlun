@@ -10,7 +10,8 @@ import 'me_model.dart';
 import 'set_page_title.dart';
 import 'conversations_view.dart';
 
-import 'dialog_manager.dart';
+import 'locator.dart';
+import 'dialog_service.dart';
 import 'session_watcher.dart';
 
 class MyApp extends StatelessWidget {
@@ -26,11 +27,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    locator<DialogService>().attachNavigator(navigatorKey);
     return MaterialApp(
       navigatorKey: navigatorKey,
-      builder: (context, widget) => DialogManager(
-        child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
-      ),
+      builder: (context, widget) =>
+          SessionWatcher(navigatorKey: navigatorKey, child: widget!),
       debugShowCheckedModeBanner: false,
       title: 'Narlun',
       theme: theme,
@@ -47,25 +48,30 @@ class MyApp extends StatelessWidget {
         }
 
         const unauthPaths = ['/', '/signin', '/signup'];
+        final requestedLocation = uriData?.toString();
 
         if (me == null && uriData!.path != '/') {
           final newUri = Uri(
             path: '/',
-            queryParameters: {...uriData.queryParameters, 'next': uriData.path},
+            queryParameters: requestedLocation == null
+                ? null
+                : {'next': requestedLocation},
           );
           return MaterialPageRoute(
             settings: RouteSettings(
               name: newUri.toString(),
               arguments: settings.arguments,
             ),
-            builder: (BuildContext context) => WelcomeView(),
+            builder: (BuildContext context) => const WelcomeView(),
           );
         } else if (me != null &&
-            me['authenticated'] == false &&
+            me.authenticated == false &&
             !unauthPaths.contains(uriData!.path)) {
           final newUri = Uri(
             path: '/signup',
-            queryParameters: {...uriData.queryParameters, 'next': uriData.path},
+            queryParameters: requestedLocation == null
+                ? null
+                : {'next': requestedLocation},
           );
           return MaterialPageRoute(
             settings: RouteSettings(
@@ -75,7 +81,7 @@ class MyApp extends StatelessWidget {
             builder: (BuildContext context) => SignupView(),
           );
         } else if (me != null &&
-            me['authenticated'] == true &&
+            me.authenticated == true &&
             unauthPaths.contains(uriData!.path)) {
           return MaterialPageRoute(
             settings: RouteSettings(
@@ -89,10 +95,10 @@ class MyApp extends StatelessWidget {
         if (uriData != null) {
           switch (uriData.path) {
             case '/':
-              pageView = WelcomeView();
+              pageView = const WelcomeView();
               break;
             case '/signup':
-              pageView = SignupView();
+              pageView = const SignupView();
               break;
             case '/home':
               pageView = HomeView();
@@ -104,7 +110,7 @@ class MyApp extends StatelessWidget {
               pageView = ProfileView();
               break;
             case '/signin':
-              pageView = SigninView();
+              pageView = const SigninView();
               break;
           }
         }

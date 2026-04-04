@@ -4,6 +4,7 @@ import 'package:url_strategy/url_strategy.dart';
 
 import 'app.dart';
 import 'config.dart';
+import 'http.dart';
 import 'locator.dart';
 import 'me_model.dart';
 
@@ -39,8 +40,14 @@ Widget buildNarlunApp() {
     seedColor: const Color(0xFF5F4484),
     brightness: Brightness.light,
   );
-  return ChangeNotifierProvider(
-    create: (_) => MeModel(),
+  return MultiProvider(
+    providers: [
+      Provider<HttpService>(
+        create: (_) => HttpService(),
+        dispose: (_, httpService) => httpService.close(),
+      ),
+      ChangeNotifierProvider(create: (_) => MeModel()),
+    ],
     child: MyApp(
       theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
     ),

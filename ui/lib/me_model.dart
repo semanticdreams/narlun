@@ -1,20 +1,22 @@
 import 'package:flutter/material.dart';
 
-class MeModel extends ChangeNotifier {
-  Map<String, dynamic>? data;
+import 'models.dart';
 
-  void set_data(d) {
+class MeModel extends ChangeNotifier {
+  SessionUser? data;
+
+  void setData(SessionUser d) {
     data = d;
     notifyListeners();
   }
 
-  void set_profile_picture(String picture) {
-    data!['picture'] = picture;
+  void setProfilePicture(String picture) {
+    data = data?.copyWith(picture: picture);
     notifyListeners();
   }
 
   void reset() {
-    data = {'authenticated': false};
+    data = SessionUser.unauthenticated();
     notifyListeners();
   }
 }

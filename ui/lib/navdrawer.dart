@@ -5,10 +5,11 @@ import 'http.dart';
 import 'me_model.dart';
 
 class NavDrawer extends StatelessWidget {
-  final HttpService httpService = HttpService();
+  const NavDrawer({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final httpService = Provider.of<HttpService>(context, listen: false);
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
@@ -26,6 +27,9 @@ class NavDrawer extends StatelessWidget {
             title: const Text('Sign Out'),
             onTap: () async {
               await httpService.signout();
+              if (!context.mounted) {
+                return;
+              }
               Provider.of<MeModel>(context, listen: false).reset();
               Navigator.pop(context);
               Navigator.pushReplacementNamed(context, '/');

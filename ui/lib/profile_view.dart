@@ -5,14 +5,14 @@ import 'avatar_image.dart';
 import 'http.dart';
 import 'image_picker.dart';
 import 'me_model.dart';
+import 'models.dart';
 import 'profile_form.dart';
 
 class ProfileView extends StatelessWidget {
-  ProfileView({Key? key}) : super(key: key);
-
-  final HttpService httpService = HttpService();
+  const ProfileView({super.key});
 
   Future<void> _deleteAccount(BuildContext context) async {
+    final httpService = Provider.of<HttpService>(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -35,6 +35,9 @@ class ProfileView extends StatelessWidget {
 
     if (confirmed == true) {
       await httpService.delete_account();
+      if (!context.mounted) {
+        return;
+      }
       Provider.of<MeModel>(context, listen: false).reset();
       Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
     }
@@ -54,6 +57,7 @@ class ProfileView extends StatelessWidget {
       ),
       body: Consumer<MeModel>(
         builder: (context, me, child) {
+          final SessionUser? currentUser = me.data;
           return Container(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -63,7 +67,7 @@ class ProfileView extends StatelessWidget {
                     Container(
                       alignment: Alignment.center,
                       child: AvatarImage(
-                        picture: me.data?['picture'],
+                        picture: currentUser?.picture,
                         radius: 64,
                       ),
                     ),
@@ -72,14 +76,21 @@ class ProfileView extends StatelessWidget {
                       child: TextButton(
                         child: const Text('Upload picture'),
                         onPressed: () async {
+                          final httpService = Provider.of<HttpService>(
+                            context,
+                            listen: false,
+                          );
                           final file = await pickImageBytes();
                           if (file != null) {
-                            final data = await httpService
+                            final picture = await httpService
                                 .upload_profile_picture(file);
+                            if (!context.mounted) {
+                              return;
+                            }
                             Provider.of<MeModel>(
                               context,
                               listen: false,
-                            ).set_profile_picture(data['picture']);
+                            ).setProfilePicture(picture);
 
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
@@ -92,7 +103,7 @@ class ProfileView extends StatelessWidget {
                     ),
                   ],
                 ),
-                ProfileForm(data: me.data),
+                if (currentUser != null) ProfileForm(data: currentUser),
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,

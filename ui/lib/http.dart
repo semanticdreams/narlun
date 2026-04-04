@@ -6,28 +6,46 @@ import 'package:http_interceptor/http_interceptor.dart';
 import 'config.dart';
 import 'locator.dart';
 import 'dialog_service.dart';
+import 'models.dart';
 import 'websocket.dart';
 import 'http_client_default.dart'
     if (dart.library.html) 'http_client_browser.dart'
     as session_http;
 
-Future check_response(data, bodyfunc, DialogService dialogService) async {
+const silentErrorHeader = 'x-narlun-silent-errors';
+
+Future check_response(
+  data,
+  bodyfunc,
+  DialogService dialogService, {
+  bool showDialogs = true,
+}) async {
   if (data.statusCode == 400) {
     final body = await bodyfunc(data);
-    await dialogService.showDialog(
-      title: 'Usage error',
-      description: body['message'],
-    );
+    if (showDialogs) {
+      await dialogService.showDialog(
+        title: 'Usage error',
+        description: body['message'],
+      );
+    }
     throw InvalidUsage(
       status: data.statusCode,
       message: body['message'],
       code: body['code'],
     );
+  } else if (data.statusCode == 401) {
+    throw UnauthorizedResponse();
+  } else if (data.statusCode == 403) {
+    throw ForbiddenResponse();
+  } else if (data.statusCode == 404) {
+    throw NotFoundResponse();
   } else if (data.statusCode == 500) {
-    await dialogService.showDialog(
-      title: 'Server error',
-      description: 'Contact support.',
-    );
+    if (showDialogs) {
+      await dialogService.showDialog(
+        title: 'Server error',
+        description: 'Contact support.',
+      );
+    }
     throw ServerError();
   } else if (data.statusCode == 200 || data.statusCode == 204) {
     return data;
@@ -58,10 +76,11 @@ class ErrorInterceptor implements InterceptorContract {
   Future<http.BaseResponse> interceptResponse({
     required http.BaseResponse response,
   }) async {
+    final showDialogs = response.request?.headers[silentErrorHeader] != '1';
     if (response is http.Response) {
       return await check_response(response, (x) {
         return jsonDecode((x as http.Response).body);
-      }, dialogService);
+      }, dialogService, showDialogs: showDialogs);
     }
     return response;
   }
@@ -86,6 +105,18 @@ class UnexpectedResponse {
   UnexpectedResponse(this.status);
 }
 
+class UnauthorizedResponse extends UnexpectedResponse {
+  UnauthorizedResponse() : super(401);
+}
+
+class ForbiddenResponse extends UnexpectedResponse {
+  ForbiddenResponse() : super(403);
+}
+
+class NotFoundResponse extends UnexpectedResponse {
+  NotFoundResponse() : super(404);
+}
+
 class HttpService {
   final WebsocketService websocketService;
   final DialogService dialogService;
@@ -105,61 +136,85 @@ class HttpService {
     );
   }
 
+  Map<String, String> _requestHeaders({bool silentErrors = false}) {
+    return silentErrors ? {silentErrorHeader: '1'} : const {};
+  }
+
+  Future<void> clearLocalSession() async {
+    await clearSessionCookieForTests();
+    await websocketService.close();
+  }
+
+  void close() {
+    client.close();
+  }
+
   Future signout() async {
     try {
       await client.post(Uri.parse(baseurl + '/users/signout'));
     } finally {
-      await clearSessionCookieForTests();
-      await websocketService.close();
+      await clearLocalSession();
     }
   }
 
-  Future fetch_me() async {
-    final resp = await client.get(Uri.parse(baseurl + '/users/me'));
-    final body = jsonDecode(resp.body);
-    if (body['authenticated']) {
-      await websocketService.reconnect();
-    } else {
-      await clearSessionCookieForTests();
-      await websocketService.close();
+  Future<SessionUser> fetch_me({bool silentErrors = false}) async {
+    try {
+      final resp = await client.get(
+        Uri.parse(baseurl + '/users/me'),
+        headers: _requestHeaders(silentErrors: silentErrors),
+      );
+      final body = SessionUser.fromJson(
+        jsonDecode(resp.body) as Map<String, dynamic>,
+      );
+      if (body.authenticated) {
+        await websocketService.reconnect();
+      } else {
+        await clearLocalSession();
+      }
+      return body;
+    } on UnauthorizedResponse {
+      await clearLocalSession();
+      return SessionUser.unauthenticated();
     }
-    return body;
   }
 
-  Future signup(username) async {
+  Future<SessionUser> signup(username) async {
     final resp = await client.post(
       Uri.parse(baseurl + '/users/signup'),
       body: jsonEncode({'username': username}),
     );
-    final body = jsonDecode(resp.body);
-    if (body['authenticated']) {
+    final body = SessionUser.fromJson(
+      jsonDecode(resp.body) as Map<String, dynamic>,
+    );
+    if (body.authenticated) {
       await websocketService.reconnect();
     }
     return body;
   }
 
-  Future signin({username, password}) async {
+  Future<SessionUser> signin({username, password}) async {
     final resp = await client.post(
       Uri.parse(baseurl + '/users/signin'),
       body: jsonEncode({'username': username, 'password': password}),
     );
-    final body = jsonDecode(resp.body);
-    if (body['authenticated']) {
+    final body = SessionUser.fromJson(
+      jsonDecode(resp.body) as Map<String, dynamic>,
+    );
+    if (body.authenticated) {
       await websocketService.reconnect();
     }
     return body;
   }
 
-  Future update_profile(data) async {
+  Future<SessionUser> update_profile(data) async {
     final resp = await client.post(
       Uri.parse(baseurl + '/users/update-profile'),
       body: jsonEncode(data),
     );
-    final body = jsonDecode(resp.body);
-    return body;
+    return SessionUser.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future upload_profile_picture(data) async {
+  Future<String> upload_profile_picture(data) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse(baseurl + '/users/upload-profile-picture'),
@@ -171,62 +226,65 @@ class HttpService {
       return jsonDecode(await x.stream.bytesToString());
     };
     await check_response(resp, bodyfunc, dialogService);
-    return bodyfunc(resp);
+    final body = await bodyfunc(resp) as Map<String, dynamic>;
+    return body['picture'] as String;
   }
 
   Future delete_account() async {
     try {
       await client.delete(Uri.parse(baseurl + '/users/me'));
     } finally {
-      await clearSessionCookieForTests();
-      await websocketService.close();
+      await clearLocalSession();
     }
   }
 
-  Future checkin(lat, lon) async {
+  Future<List<NearbyUser>> checkin(lat, lon) async {
     final data = {'lat': lat, 'lon': lon};
     final resp = await client.post(
       Uri.parse(baseurl + '/social/checkin'),
       body: jsonEncode(data),
     );
-    final body = jsonDecode(resp.body);
-    return body;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return NearbyUser.listFromJson(body['nearby_users'] as List<dynamic>);
   }
 
-  Future join_user(user_id) async {
+  Future<int> join_user(user_id) async {
     final data = {'user_id': user_id};
     final resp = await client.post(
       Uri.parse(baseurl + '/social/join-user'),
       body: jsonEncode(data),
     );
-    final body = jsonDecode(resp.body);
-    return body;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return body['id'] as int;
   }
 
-  Future get_rooms() async {
-    final resp = await client.get(Uri.parse(baseurl + '/social/get-rooms'));
-    final body = jsonDecode(resp.body);
-    return body;
+  Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
+    final resp = await client.get(
+      Uri.parse(baseurl + '/social/get-rooms'),
+      headers: _requestHeaders(silentErrors: silentErrors),
+    );
+    return RoomSummary.listFromJson(jsonDecode(resp.body) as List<dynamic>);
   }
 
-  Future get_messages(room_id) async {
+  Future<List<ChatMessage>> get_messages(
+    room_id, {
+    bool silentErrors = false,
+  }) async {
     final data = {'room_id': room_id};
     final resp = await client.post(
       Uri.parse(baseurl + '/social/get-messages'),
+      headers: _requestHeaders(silentErrors: silentErrors),
       body: jsonEncode(data),
     );
-    final body = jsonDecode(resp.body);
-    return body;
+    return ChatMessage.listFromJson(jsonDecode(resp.body) as List<dynamic>);
   }
 
-  Future send_message(room_id, message_body) async {
+  Future<void> send_message(room_id, message_body) async {
     final data = {'room_id': room_id, 'body': message_body};
-    final resp = await client.post(
+    await client.post(
       Uri.parse(baseurl + '/social/send-message'),
       body: jsonEncode(data),
     );
-    final body = jsonDecode(resp.body);
-    return body;
   }
 }
 

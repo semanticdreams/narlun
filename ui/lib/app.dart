@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'app_update_banner.dart';
 import 'signin_view.dart';
 import 'signup_view.dart';
 import 'welcome_view.dart';
@@ -32,8 +33,9 @@ class MyApp extends StatelessWidget {
     locator<DialogService>().attachNavigator(navigatorKey);
     return MaterialApp(
       navigatorKey: navigatorKey,
-      builder: (context, widget) =>
-          SessionWatcher(navigatorKey: navigatorKey, child: widget!),
+      builder: (context, widget) => AppUpdateBanner(
+        child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
+      ),
       debugShowCheckedModeBanner: false,
       navigatorObservers: [errorReporter.createNavigatorObserver()],
       title: 'Narlun',

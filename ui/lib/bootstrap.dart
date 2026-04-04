@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:url_strategy/url_strategy.dart';
 
 import 'app.dart';
+import 'app_update_service.dart';
 import 'config.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
@@ -64,6 +65,10 @@ Widget buildNarlunApp() {
       ChangeNotifierProvider<InstallPromptService>(
         lazy: false,
         create: (_) => createInstallPromptService(),
+      ),
+      ChangeNotifierProvider<AppUpdateService>(
+        lazy: false,
+        create: (_) => createAppUpdateService(),
       ),
       ChangeNotifierProvider<PushNotificationsService>(
         lazy: false,

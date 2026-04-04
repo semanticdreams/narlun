@@ -369,6 +369,13 @@ class WebsocketService {
   Stream<Map<String, dynamic>> roomsChangedStream() =>
       eventsStream('rooms-changed');
 
+  Stream<Map<String, dynamic>> nearbyChangedStream() =>
+      eventsStream('nearby-changed');
+
+  Stream<Map<String, dynamic>> roomRequestsChangedStream(roomId) => eventsStream(
+    'room-requests-changed',
+  ).where((event) => event['data']['room_id'] == roomId);
+
   Future<void> ensureConnected() async {
     if (_websocket == null) {
       _shouldReconnect = true;

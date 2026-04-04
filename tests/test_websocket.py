@@ -6,12 +6,15 @@ import aiohttp
 from app.websocket import active_sockets
 
 from tests.helpers import (
+    approve_room_request,
     HAMBURG,
     MADRID,
     auth_headers,
     checkin,
     get_rooms,
     join_user,
+    reject_room_request,
+    request_room_join,
     send_message,
     signup,
 )
@@ -275,3 +278,143 @@ async def test_websocket_query_token_auth_is_rejected(cli):
         assert exc.status == 401
     else:
         raise AssertionError('Expected websocket handshake to reject query-token auth')
+
+
+async def test_room_join_request_broadcasts_room_requests_changed(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        await ws.send_str(json.dumps({'type': 'subscribe-room', 'data': {'room_id': room['id']}}))
+        subscribed = await ws.receive_json()
+        assert subscribed == {
+            'type': 'subscribed-room',
+            'data': {'room_id': room['id']},
+        }
+
+        response = await request_room_join(cli, users[2]['jwt'], room['id'])
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'room-requests-changed',
+            'data': {'type': 'room-requests-changed', 'room_id': room['id']},
+        }
+
+
+async def test_room_join_request_broadcasts_rooms_changed_to_members(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        response = await request_room_join(cli, users[2]['jwt'], room['id'])
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'rooms-changed',
+            'data': {'type': 'rooms-changed'},
+        }
+
+
+async def test_room_join_request_rejection_broadcasts_nearby_changed(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 200
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[2]['jwt']),
+    ) as ws:
+        response = await reject_room_request(
+            cli,
+            users[1]['jwt'],
+            room['id'],
+            users[2]['user']['id'],
+        )
+        assert response.status == 204
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_send_message_broadcasts_nearby_changed_to_pending_requesters(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 200
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[2]['jwt']),
+    ) as ws:
+        await send_message(cli, users[0]['jwt'], room['id'], 'hello from inside')
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }
+
+
+async def test_room_join_request_approval_broadcasts_rooms_changed_and_nearby_changed(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 200
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[2]['jwt']),
+    ) as requester_ws:
+        response = await approve_room_request(
+            cli,
+            users[0]['jwt'],
+            room['id'],
+            users[2]['user']['id'],
+        )
+        assert response.status == 200
+
+        payloads = set()
+        async with async_timeout.timeout(2):
+            while payloads != {'rooms-changed', 'nearby-changed'}:
+                event = await requester_ws.receive_json()
+                payloads.add(event['type'])
+        assert payloads == {'rooms-changed', 'nearby-changed'}
+
+
+async def test_approving_one_request_broadcasts_nearby_changed_to_remaining_requesters(cli):
+    users = [await signup(cli) for _ in range(4)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    first = await request_room_join(cli, users[2]['jwt'], room['id'])
+    second = await request_room_join(cli, users[3]['jwt'], room['id'])
+    assert first.status == 200
+    assert second.status == 200
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[3]['jwt']),
+    ) as requester_ws:
+        response = await approve_room_request(
+            cli,
+            users[0]['jwt'],
+            room['id'],
+            users[2]['user']['id'],
+        )
+        assert response.status == 200
+
+        event = await requester_ws.receive_json()
+        assert event == {
+            'type': 'nearby-changed',
+            'data': {'type': 'nearby-changed'},
+        }

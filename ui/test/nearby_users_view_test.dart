@@ -28,6 +28,9 @@ class _FakeWebsocketService extends WebsocketService {
         baseurl: 'http://example.com/api',
         connector: (uri, {headers}) => throw UnimplementedError(),
       );
+
+  @override
+  Future<void> ensureConnected() async {}
 }
 
 class FakeNearbyHttpService extends HttpService {
@@ -38,22 +41,38 @@ class FakeNearbyHttpService extends HttpService {
         client: _DummyHttpClient(),
       );
 
-  List<NearbyUser> nearbyUsers = const [];
+  List<NearbyItem> nearbyItems = const [];
   int roomId = 99;
   bool clearedLocalSession = false;
   Object? checkinError;
+  int requestRoomJoinCalls = 0;
 
   @override
-  Future<List<NearbyUser>> checkin(lat, lon) async {
+  Future<List<NearbyItem>> checkin(lat, lon) async {
     if (checkinError != null) {
       throw checkinError!;
     }
-    return nearbyUsers;
+    return nearbyItems;
   }
 
   @override
   Future<int> join_user(user_id) async {
     return roomId;
+  }
+
+  @override
+  Future<RoomSummary> request_room_join(room_id) async {
+    requestRoomJoinCalls += 1;
+    return RoomSummary(
+      id: room_id as int,
+      isGroup: true,
+      name: 'Nearby room',
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 2, username: 'bob'),
+        RoomParticipant(id: 3, username: 'cara'),
+      ],
+    );
   }
 
   @override
@@ -120,6 +139,7 @@ class FakeLocationService implements LocationService {
 Widget _buildNearbyApp({
   required FakeNearbyHttpService httpService,
   required FakeLocationService locationService,
+  required _FakeWebsocketService websocketService,
   required Future<void> Function(NearbyUser user, int roomId) onUserJoined,
   bool autoCheckin = true,
   String initialRoute = '/nearby',
@@ -139,6 +159,7 @@ Widget _buildNearbyApp({
                 httpService: httpService,
                 dialogService: DialogService(),
                 locationService: locationService,
+                websocketService: websocketService,
                 autoCheckin: autoCheckin,
                 onUserJoined: onUserJoined,
               ),
@@ -161,16 +182,21 @@ void main() {
     tester,
   ) async {
     final httpService = FakeNearbyHttpService()
-      ..nearbyUsers = [
-        NearbyUser(
-          id: 2,
-          username: 'bob',
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'user',
           distance: 120,
-          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          status: 'Nearby',
+          user: NearbyUser(
+            id: 2,
+            username: 'bob',
+            distance: 120,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Nearby',
+          ),
         ),
       ];
     final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
     int? joinedRoomId;
     NearbyUser? joinedUser;
 
@@ -178,6 +204,7 @@ void main() {
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
+        websocketService: websocketService,
         onUserJoined: (user, roomId) async {
           joinedUser = user;
           joinedRoomId = roomId;
@@ -188,7 +215,10 @@ void main() {
 
     expect(find.text('bob'), findsOneWidget);
     expect(find.text('Nearby'), findsOneWidget);
-    expect(find.text('Tap someone to open a room.'), findsOneWidget);
+    expect(
+      find.text('Tap people to open a room, or rooms to request access.'),
+      findsOneWidget,
+    );
     final listTile = tester.widget<ListTile>(
       find.byKey(const ValueKey('nearby-user-2')),
     );
@@ -207,20 +237,26 @@ void main() {
     tester,
   ) async {
     final httpService = FakeNearbyHttpService()
-      ..nearbyUsers = [
-        NearbyUser(
-          id: 2,
-          username: 'bob',
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'user',
           distance: 120,
-          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          user: NearbyUser(
+            id: 2,
+            username: 'bob',
+            distance: 120,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          ),
         ),
       ];
     final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
 
     await tester.pumpWidget(
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
+        websocketService: websocketService,
         onUserJoined: (_, __) async {},
       ),
     );
@@ -237,29 +273,36 @@ void main() {
   ) async {
     final httpService = FakeNearbyHttpService();
     final locationService = FakeLocationService(enabled: false);
+    final websocketService = _FakeWebsocketService();
 
     await tester.pumpWidget(
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
+        websocketService: websocketService,
         onUserJoined: (_, __) async {},
       ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('Location services are not enabled.'), findsOneWidget);
-    expect(find.text('Nobody nearby right now. Pull to refresh again soon.'), findsNothing);
+    expect(
+      find.text('Nobody nearby right now. Pull to refresh again soon.'),
+      findsNothing,
+    );
   });
 
   testWidgets('unauthorized checkin expires the session cleanly', (tester) async {
     final httpService = FakeNearbyHttpService();
     final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
     httpService.checkinError = UnauthorizedResponse();
 
     await tester.pumpWidget(
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
+        websocketService: websocketService,
         onUserJoined: (_, __) async {},
       ),
     );
@@ -274,11 +317,13 @@ void main() {
   ) async {
     final httpService = FakeNearbyHttpService();
     final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
 
     await tester.pumpWidget(
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
+        websocketService: websocketService,
         autoCheckin: false,
         onUserJoined: (_, __) async {},
       ),
@@ -288,5 +333,55 @@ void main() {
     expect(locationService.isEnabledCalls, 0);
     expect(locationService.checkPermissionCalls, 0);
     expect(locationService.getCurrentPositionCalls, 0);
+  });
+
+  testWidgets('renders nearby rooms and marks them requested after tapping', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'room',
+          distance: 80,
+          room: NearbyRoom(
+            distance: 80,
+            joinRequested: false,
+            room: RoomSummary(
+              id: 33,
+              isGroup: true,
+              name: 'Coffee crew',
+              updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              lastMessage: const MessagePreview(body: 'Meet us by the window'),
+              participants: const [
+                RoomParticipant(id: 2, username: 'bob'),
+                RoomParticipant(id: 3, username: 'cara'),
+                RoomParticipant(id: 4, username: 'dan'),
+              ],
+            ),
+          ),
+        ),
+      ];
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        onUserJoined: (_, __) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('nearby-room-33')), findsOneWidget);
+    expect(find.text('Coffee crew'), findsOneWidget);
+    expect(find.text('Meet us by the window'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('nearby-room-33')));
+    await tester.pumpAndSettle();
+
+    expect(httpService.requestRoomJoinCalls, 1);
+    expect(find.text('Requested'), findsOneWidget);
   });
 }

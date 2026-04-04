@@ -35,10 +35,15 @@ class FakeHttpService extends HttpService {
       Queue<Future<List<RoomSummary>> Function()>();
   final Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>
   _roomSettingsHandlers = Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>();
+  final Queue<Future<List<RoomJoinRequest>> Function(int roomId)>
+  _roomRequestHandlers = Queue<Future<List<RoomJoinRequest>> Function(int roomId)>();
   var getMessagesCalls = 0;
   var getRoomsCalls = 0;
+  var getRoomRequestsCalls = 0;
   var clearedLocalSession = false;
   final updatedRoomSettings = <Map<String, dynamic>>[];
+  final approvedRoomRequests = <Map<String, dynamic>>[];
+  final rejectedRoomRequests = <Map<String, dynamic>>[];
 
   void enqueueMessages(Future<List<ChatMessage>> Function(int roomId) handler) {
     _messageHandlers.add(handler);
@@ -52,6 +57,12 @@ class FakeHttpService extends HttpService {
     Future<RoomSummary> Function(int roomId, bool pushMuted) handler,
   ) {
     _roomSettingsHandlers.add(handler);
+  }
+
+  void enqueueRoomRequests(
+    Future<List<RoomJoinRequest>> Function(int roomId) handler,
+  ) {
+    _roomRequestHandlers.add(handler);
   }
 
   @override
@@ -104,6 +115,39 @@ class FakeHttpService extends HttpService {
       pushMuted: pushMuted,
     );
   }
+
+  @override
+  Future<List<RoomJoinRequest>> get_room_requests(
+    room_id, {
+    bool silentErrors = false,
+  }) async {
+    getRoomRequestsCalls += 1;
+    if (_roomRequestHandlers.isEmpty) {
+      return const [];
+    }
+    return _roomRequestHandlers.removeFirst()(room_id as int);
+  }
+
+  @override
+  Future<RoomSummary> approve_room_request(room_id, user_id) async {
+    approvedRoomRequests.add({'room_id': room_id, 'user_id': user_id});
+    return RoomSummary(
+      id: room_id as int,
+      isGroup: true,
+      name: 'Updated room',
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: [
+        const RoomParticipant(id: 1, username: 'me'),
+        const RoomParticipant(id: 2, username: 'other'),
+        RoomParticipant(id: user_id as int, username: 'requester'),
+      ],
+    );
+  }
+
+  @override
+  Future<void> reject_room_request(room_id, user_id) async {
+    rejectedRoomRequests.add({'room_id': room_id, 'user_id': user_id});
+  }
 }
 
 class FakeWebsocketService extends WebsocketService {
@@ -118,6 +162,8 @@ class FakeWebsocketService extends WebsocketService {
   final StreamController<Map<String, dynamic>> _roomDeletedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _roomsChangedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _roomRequestsChangedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _connectionController =
       StreamController<String>.broadcast();
@@ -160,6 +206,12 @@ class FakeWebsocketService extends WebsocketService {
       _roomsChangedController.stream;
 
   @override
+  Stream<Map<String, dynamic>> roomRequestsChangedStream(roomId) =>
+      _roomRequestsChangedController.stream.where(
+        (event) => event['data']['room_id'] == roomId,
+      );
+
+  @override
   Stream<String> get connectionEvents => _connectionController.stream;
 
   void emitMessage(int roomId, List<dynamic> messages) {
@@ -182,6 +234,13 @@ class FakeWebsocketService extends WebsocketService {
 
   void emitRoomsChanged() {
     _roomsChangedController.add({'type': 'rooms-changed', 'data': {}});
+  }
+
+  void emitRoomRequestsChanged(int roomId) {
+    _roomRequestsChangedController.add({
+      'type': 'room-requests-changed',
+      'data': {'room_id': roomId},
+    });
   }
 }
 
@@ -565,5 +624,48 @@ void main() {
       {'room_id': 1, 'push_muted': true},
     ]);
     expect(find.text('Notifications muted for this room.'), findsOneWidget);
+  });
+
+  testWidgets('shows pending join requests and approves them from the room', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueRoomRequests((_) async {
+      return [
+        RoomJoinRequest(
+          user: NearbyUser(
+            id: 7,
+            username: 'newcomer',
+            distance: 0,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Let me in',
+          ),
+          createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
+        ),
+      ];
+    });
+    httpService.enqueueRoomRequests((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pending join requests'), findsOneWidget);
+    expect(find.text('newcomer'), findsOneWidget);
+
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.approvedRoomRequests, [
+      {'room_id': 1, 'user_id': 7},
+    ]);
+    expect(find.text('Pending join requests'), findsNothing);
   });
 }

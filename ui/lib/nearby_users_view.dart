@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
+import 'avatar_stack.dart';
 import 'avatar_image.dart';
 import 'dialog_service.dart';
 import 'http.dart';
@@ -14,12 +15,14 @@ import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'session_actions.dart';
+import 'websocket.dart';
 
 class NearbyUsersView extends StatefulWidget {
   final FutureOr<void> Function(NearbyUser user, int roomId) onUserJoined;
   final HttpService? httpService;
   final DialogService? dialogService;
   final LocationService? locationService;
+  final WebsocketService? websocketService;
   final bool autoCheckin;
 
   const NearbyUsersView({
@@ -28,6 +31,7 @@ class NearbyUsersView extends StatefulWidget {
     this.httpService,
     this.dialogService,
     this.locationService,
+    this.websocketService,
     this.autoCheckin = true,
   });
 
@@ -39,11 +43,15 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   late final HttpService httpService;
   late final DialogService dialogService;
   late final LocationService locationService;
+  late final WebsocketService websocketService;
 
-  final List<NearbyUser> nearbyUsers = [];
+  final List<NearbyItem> nearbyItems = [];
   bool _loading = false;
   String _statusMessage = 'Checking your location...';
   bool _didInitialCheckin = false;
+  StreamSubscription? _nearbyChangedSubscription;
+  StreamSubscription? _roomsChangedSubscription;
+  StreamSubscription? _connectionEventsSubscription;
 
   @override
   void initState() {
@@ -52,13 +60,30 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
     dialogService = widget.dialogService ?? locator<DialogService>();
     locationService = widget.locationService ?? GeolocatorLocationService();
+    websocketService = widget.websocketService ?? locator<WebsocketService>();
     _maybeStartInitialCheckin();
+    unawaited(websocketService.ensureConnected());
+    _nearbyChangedSubscription = websocketService.nearbyChangedStream().listen((_) {
+      _refreshIfActive();
+    });
+    _roomsChangedSubscription = websocketService.roomsChangedStream().listen((_) {
+      _refreshIfActive();
+    });
+    _connectionEventsSubscription = websocketService.connectionEvents.listen((event) {
+      if (event == 'reconnected') {
+        _refreshIfActive();
+      }
+    });
   }
 
   @override
   void didUpdateWidget(covariant NearbyUsersView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final hadInitialCheckin = _didInitialCheckin;
     _maybeStartInitialCheckin();
+    if (!oldWidget.autoCheckin && widget.autoCheckin && hadInitialCheckin) {
+      unawaited(checkin());
+    }
   }
 
   void _maybeStartInitialCheckin() {
@@ -66,6 +91,13 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       return;
     }
     _didInitialCheckin = true;
+    unawaited(checkin());
+  }
+
+  void _refreshIfActive() {
+    if (!widget.autoCheckin || !mounted) {
+      return;
+    }
     unawaited(checkin());
   }
 
@@ -95,7 +127,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     _setStatus('Checking your location...', loading: true);
 
     if (!(await locationService.isLocationServiceEnabled())) {
-      nearbyUsers.clear();
+      nearbyItems.clear();
       await _showLocationProblem('Location services are not enabled.');
       return;
     }
@@ -104,13 +136,13 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     if (permission == LocationPermission.denied) {
       permission = await locationService.requestPermission();
       if (permission == LocationPermission.denied) {
-        nearbyUsers.clear();
+        nearbyItems.clear();
         await _showLocationProblem('Location access was denied.');
         return;
       }
     }
     if (permission == LocationPermission.deniedForever) {
-      nearbyUsers.clear();
+      nearbyItems.clear();
       await _showLocationProblem(
         'Location access is permanently denied in this browser.',
       );
@@ -124,13 +156,13 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         return;
       }
       setState(() {
-        nearbyUsers
+        nearbyItems
           ..clear()
           ..addAll(resp);
         _loading = false;
-        _statusMessage = nearbyUsers.isEmpty
+        _statusMessage = nearbyItems.isEmpty
             ? 'Nobody nearby right now. Pull to refresh again soon.'
-            : 'Tap someone to open a room.';
+            : 'Tap people to open a room, or rooms to request access.';
       });
     } on UnauthorizedResponse {
       if (!mounted) {
@@ -142,13 +174,16 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         description: 'Your session has ended. Please sign in again.',
       );
     } catch (_) {
-      nearbyUsers.clear();
-      _setStatus('Could not refresh nearby people. Pull to try again.', loading: false);
+      nearbyItems.clear();
+      _setStatus(
+        'Could not refresh nearby activity. Pull to try again.',
+        loading: false,
+      );
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not refresh nearby people.')),
+        const SnackBar(content: Text('Could not refresh nearby activity.')),
       );
     }
   }
@@ -156,6 +191,164 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   Future<void> joinUser(NearbyUser user) async {
     final roomId = await httpService.join_user(user.id);
     await Future.sync(() => widget.onUserJoined(user, roomId));
+  }
+
+  Future<void> requestRoomJoin(NearbyRoom room) async {
+    if (room.joinRequested) {
+      return;
+    }
+    try {
+      await httpService.request_room_join(room.room.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        for (var i = 0; i < nearbyItems.length; i++) {
+          final candidate = nearbyItems[i];
+          if (candidate.type == 'room' && candidate.room?.room.id == room.room.id) {
+            nearbyItems[i] = NearbyItem(
+              type: 'room',
+              distance: candidate.distance,
+              room: candidate.room?.copyWith(joinRequested: true),
+            );
+          }
+        }
+      });
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Join request sent.')),
+      );
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return;
+      }
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Could not send the join request.')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _nearbyChangedSubscription?.cancel();
+    _roomsChangedSubscription?.cancel();
+    _connectionEventsSubscription?.cancel();
+    super.dispose();
+  }
+
+  Widget _buildUserTile(NearbyUser user) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: ListTile(
+        key: ValueKey('nearby-user-${user.id}'),
+        leading: AvatarImage(picture: user.picture),
+        title: Text(user.username),
+        subtitle: (user.status?.isNotEmpty ?? false)
+            ? Text(
+                user.status!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              )
+            : null,
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              '${user.distance}m away',
+              textAlign: TextAlign.right,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'last seen ${timeago.format(user.lastSeen)}',
+              textAlign: TextAlign.right,
+            ),
+          ],
+        ),
+        onTap: () async {
+          await joinUser(user);
+        },
+      ),
+    );
+  }
+
+  Widget _buildRoomTile(NearbyRoom room) {
+    final previewPictures = room.room.participants
+        .map((participant) => participant.picture)
+        .toList();
+    final distanceLabel = room.distance == null
+        ? 'Waiting'
+        : '${room.distance}m away';
+    final subtitleLines = <Widget>[];
+    if ((room.room.lastMessage?.body.isNotEmpty ?? false)) {
+      subtitleLines.add(
+        Text(
+          room.room.lastMessage!.body,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+      subtitleLines.add(const SizedBox(height: 2));
+    }
+    subtitleLines.add(
+      Text(
+        '${room.room.memberCount} people',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: ListTile(
+        key: ValueKey('nearby-room-${room.room.id}'),
+        leading: AvatarStack(
+          pictures: previewPictures,
+          totalCount: room.room.memberCount,
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.groups_rounded, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                room.room.name ?? 'Room with ${room.room.memberCount} people',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: subtitleLines,
+        ),
+        trailing: room.joinRequested
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color:
+                      Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text('Requested'),
+              )
+            : Text(distanceLabel, textAlign: TextAlign.right),
+        onTap: room.joinRequested
+            ? null
+            : () async {
+                await requestRoomJoin(room);
+              },
+      ),
+    );
   }
 
   @override
@@ -186,40 +379,11 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                   ],
                 ),
               ),
-              for (final user in nearbyUsers)
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 4.0),
-                  child: ListTile(
-                    key: ValueKey('nearby-user-${user.id}'),
-                    leading: AvatarImage(picture: user.picture),
-                    title: Text(user.username),
-                    subtitle: (user.status?.isNotEmpty ?? false)
-                        ? Text(
-                            user.status!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          )
-                        : null,
-                    trailing: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '${user.distance}m away',
-                          textAlign: TextAlign.right,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'last seen ${timeago.format(user.lastSeen)}',
-                          textAlign: TextAlign.right,
-                        ),
-                      ],
-                    ),
-                    onTap: () async {
-                      await joinUser(user);
-                    },
-                  ),
-                ),
+              for (final item in nearbyItems)
+                if (item.type == 'user' && item.user != null)
+                  _buildUserTile(item.user!)
+                else if (item.type == 'room' && item.room != null)
+                  _buildRoomTile(item.room!),
             ],
           ),
         ),

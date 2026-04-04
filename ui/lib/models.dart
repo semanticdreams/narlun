@@ -88,6 +88,7 @@ class RoomSummary {
   final List<RoomParticipant> participants;
   final MessagePreview? lastMessage;
   final bool pushMuted;
+  final int pendingJoinRequestCount;
 
   const RoomSummary({
     required this.id,
@@ -98,6 +99,7 @@ class RoomSummary {
     this.picture,
     this.lastMessage,
     this.pushMuted = false,
+    this.pendingJoinRequestCount = 0,
   });
 
   factory RoomSummary.fromJson(Map<String, dynamic> json) {
@@ -115,6 +117,7 @@ class RoomSummary {
           ? MessagePreview.fromJson(json['last_message'] as Map<String, dynamic>)
           : null,
       pushMuted: json['push_muted'] == true,
+      pendingJoinRequestCount: json['pending_join_request_count'] as int? ?? 0,
     );
   }
 
@@ -164,6 +167,8 @@ class RoomSummary {
     }
     return otherParticipantFor(me)?.picture;
   }
+
+  int get memberCount => participants.length;
 }
 
 class InviteLink {
@@ -234,13 +239,16 @@ class NearbyUser {
   });
 
   factory NearbyUser.fromJson(Map<String, dynamic> json) {
+    final rawLastSeen = json['last_seen'];
     return NearbyUser(
       id: json['id'] as int,
       username: json['username'] as String,
       picture: json['picture'] as String?,
       status: json['status'] as String? ?? json['about_me'] as String?,
       distance: json['distance'] as int? ?? 0,
-      lastSeen: DateTime.parse(json['last_seen'] as String),
+      lastSeen: rawLastSeen is String
+          ? DateTime.parse(rawLastSeen)
+          : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     );
   }
 
@@ -248,6 +256,98 @@ class NearbyUser {
     return jsonList
         .cast<Map<String, dynamic>>()
         .map(NearbyUser.fromJson)
+        .toList();
+  }
+}
+
+class NearbyRoom {
+  final RoomSummary room;
+  final int? distance;
+  final bool joinRequested;
+
+  const NearbyRoom({
+    required this.room,
+    required this.joinRequested,
+    this.distance,
+  });
+
+  factory NearbyRoom.fromJson(Map<String, dynamic> json) {
+    return NearbyRoom(
+      room: RoomSummary.fromJson(json['room'] as Map<String, dynamic>),
+      distance: json['distance'] as int?,
+      joinRequested: (json['room'] as Map<String, dynamic>)['join_requested'] == true,
+    );
+  }
+
+  NearbyRoom copyWith({
+    RoomSummary? room,
+    int? distance,
+    bool? joinRequested,
+  }) {
+    return NearbyRoom(
+      room: room ?? this.room,
+      distance: distance ?? this.distance,
+      joinRequested: joinRequested ?? this.joinRequested,
+    );
+  }
+}
+
+class NearbyItem {
+  final String type;
+  final int? distance;
+  final NearbyUser? user;
+  final NearbyRoom? room;
+
+  const NearbyItem({
+    required this.type,
+    this.distance,
+    this.user,
+    this.room,
+  });
+
+  factory NearbyItem.fromJson(Map<String, dynamic> json) {
+    final type = json['type'] as String? ?? 'user';
+    return NearbyItem(
+      type: type,
+      distance: json['distance'] as int?,
+      user: type == 'user'
+          ? NearbyUser.fromJson(json['user'] as Map<String, dynamic>)
+          : null,
+      room: type == 'room' ? NearbyRoom.fromJson(json) : null,
+    );
+  }
+
+  static List<NearbyItem> listFromJson(List<dynamic> jsonList) {
+    return jsonList
+        .cast<Map<String, dynamic>>()
+        .map(NearbyItem.fromJson)
+        .toList();
+  }
+}
+
+class RoomJoinRequest {
+  final NearbyUser user;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+
+  const RoomJoinRequest({
+    required this.user,
+    required this.createdAt,
+    required this.expiresAt,
+  });
+
+  factory RoomJoinRequest.fromJson(Map<String, dynamic> json) {
+    return RoomJoinRequest(
+      user: NearbyUser.fromJson(json['user'] as Map<String, dynamic>),
+      createdAt: DateTime.parse(json['created_at'] as String),
+      expiresAt: DateTime.parse(json['expires_at'] as String),
+    );
+  }
+
+  static List<RoomJoinRequest> listFromJson(List<dynamic> jsonList) {
+    return jsonList
+        .cast<Map<String, dynamic>>()
+        .map(RoomJoinRequest.fromJson)
         .toList();
   }
 }

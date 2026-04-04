@@ -71,12 +71,12 @@ class FakeNearbyHttpService extends HttpService {
 
   int checkinCalls = 0;
   int joinUserCalls = 0;
-  List<NearbyUser> nearbyUsers = const [];
+  List<NearbyItem> nearbyItems = const [];
 
   @override
-  Future<List<NearbyUser>> checkin(lat, lon) async {
+  Future<List<NearbyItem>> checkin(lat, lon) async {
     checkinCalls += 1;
-    return nearbyUsers;
+    return nearbyItems;
   }
 
   @override
@@ -138,7 +138,11 @@ class FakeLocationService implements LocationService {
 
 void main() {
   setUp(() async {
-    await setupLocator(reset: true, dialogService: DialogService());
+    await setupLocator(
+      reset: true,
+      dialogService: DialogService(),
+      websocketService: _FakeWebsocketService(),
+    );
     clearStoredHomeTabIndexForTests();
   });
 
@@ -235,13 +239,17 @@ void main() {
     tester,
   ) async {
     final httpService = FakeNearbyHttpService()
-      ..nearbyUsers = [
-        NearbyUser(
-          id: 2,
-          username: 'bob',
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'user',
           distance: 120,
-          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          status: 'Nearby',
+          user: NearbyUser(
+            id: 2,
+            username: 'bob',
+            distance: 120,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Nearby',
+          ),
         ),
       ];
     final locationService = FakeLocationService();

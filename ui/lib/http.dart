@@ -248,14 +248,14 @@ class HttpService {
     }
   }
 
-  Future<List<NearbyUser>> checkin(lat, lon) async {
+  Future<List<NearbyItem>> checkin(lat, lon) async {
     final data = {'lat': lat, 'lon': lon};
     final resp = await client.post(
       Uri.parse(baseurl + '/social/checkin'),
       body: jsonEncode(data),
     );
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    return NearbyUser.listFromJson(body['nearby_users'] as List<dynamic>);
+    return NearbyItem.listFromJson(body['nearby'] as List<dynamic>);
   }
 
   Future<int> join_user(user_id) async {
@@ -266,6 +266,15 @@ class HttpService {
     );
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     return body['id'] as int;
+  }
+
+  Future<RoomSummary> request_room_join(room_id) async {
+    final resp = await client.post(
+      Uri.parse(baseurl + '/social/request-room-join'),
+      body: jsonEncode({'room_id': room_id}),
+    );
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return RoomSummary.fromJson(body['room'] as Map<String, dynamic>);
   }
 
   Future<InviteLink> create_invite({int? roomId}) async {
@@ -294,6 +303,32 @@ class HttpService {
       headers: _requestHeaders(silentErrors: silentErrors),
     );
     return RoomSummary.listFromJson(jsonDecode(resp.body) as List<dynamic>);
+  }
+
+  Future<List<RoomJoinRequest>> get_room_requests(
+    room_id, {
+    bool silentErrors = false,
+  }) async {
+    final resp = await client.get(
+      Uri.parse(baseurl + '/social/get-room-requests?room_id=$room_id'),
+      headers: _requestHeaders(silentErrors: silentErrors),
+    );
+    return RoomJoinRequest.listFromJson(jsonDecode(resp.body) as List<dynamic>);
+  }
+
+  Future<RoomSummary> approve_room_request(room_id, user_id) async {
+    final resp = await client.post(
+      Uri.parse(baseurl + '/social/approve-room-request'),
+      body: jsonEncode({'room_id': room_id, 'user_id': user_id}),
+    );
+    return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<void> reject_room_request(room_id, user_id) async {
+    await client.post(
+      Uri.parse(baseurl + '/social/reject-room-request'),
+      body: jsonEncode({'room_id': room_id, 'user_id': user_id}),
+    );
   }
 
   Future<List<ChatMessage>> get_messages(

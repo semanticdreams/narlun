@@ -1,6 +1,12 @@
 from aiohttp import web
 
-from app.redis_store import InviteNotFound, PermissionDenied, RoomNotFound, UserNotFound
+from app.redis_store import (
+    InviteNotFound,
+    JoinRequestNotFound,
+    PermissionDenied,
+    RoomNotFound,
+    UserNotFound,
+)
 from app.util import InvalidUsage, authenticated, jsonify
 
 
@@ -43,6 +49,15 @@ class InvalidInviteError(InvalidUsage):
 class InvalidRoomSettingsError(InvalidUsage):
     code = 1005
     message = 'Invalid room settings'
+
+
+class InvalidJoinRequestError(InvalidUsage):
+    code = 1006
+    message = 'Invalid join request'
+
+    def __init__(self, message=None):
+        if message is not None:
+            self.message = message
 
 
 @routes.post('/checkin')
@@ -97,6 +112,111 @@ async def create_room(req):
     return jsonify(room)
 
 
+@routes.post('/request-room-join')
+@authenticated
+async def request_room_join(req):
+    try:
+        room_id = int(req.data.get('room_id'))
+    except (TypeError, ValueError):
+        raise InvalidJoinRequestError()
+
+    try:
+        request_result = await req.store.request_join_room(req.user['id'], room_id)
+    except RoomNotFound:
+        raise NoSuchRoomError()
+    except PermissionDenied:
+        raise NoSuchRoomError()
+
+    if request_result.get('created') is True:
+        await req.store.publish_room_requests_changed(room_id)
+        room_members = await req.store.get_room_members(room_id)
+        await req.store.publish_rooms_changed(room_members)
+        await req.store.publish_nearby_changed([req.user['id']])
+        req.push.enqueue_room_join_request(req.user['id'], room_id, room_members)
+    return jsonify(request_result)
+
+
+@routes.get('/get-room-requests')
+@authenticated
+async def get_room_requests(req):
+    try:
+        room_id = int(req.query.get('room_id'))
+    except (TypeError, ValueError):
+        raise InvalidJoinRequestError()
+
+    try:
+        requests = await req.store.get_room_join_requests(req.user['id'], room_id)
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    return jsonify(requests)
+
+
+async def _resolve_room_request_update(req):
+    try:
+        room_id = int(req.data.get('room_id'))
+        user_id = int(req.data.get('user_id'))
+    except (TypeError, ValueError):
+        raise InvalidJoinRequestError()
+    return room_id, user_id
+
+
+async def _publish_pending_requester_nearby_changes(req, room_id, *, include_user_ids=()):
+    requester_ids = await req.store.get_room_join_requester_ids(room_id)
+    changed_user_ids = [*requester_ids, *[int(user_id) for user_id in include_user_ids]]
+    if changed_user_ids:
+        await req.store.publish_nearby_changed(changed_user_ids)
+
+
+@routes.post('/approve-room-request')
+@authenticated
+async def approve_room_request(req):
+    room_id, user_id = await _resolve_room_request_update(req)
+
+    try:
+        result = await req.store.approve_room_join_request(req.user['id'], room_id, user_id)
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    except JoinRequestNotFound:
+        raise InvalidJoinRequestError(message='Join request is no longer pending')
+
+    room_members = await req.store.get_room_members(room_id)
+    await req.store.publish_room_requests_changed(room_id)
+    await req.store.publish_rooms_changed(room_members)
+    await _publish_pending_requester_nearby_changes(
+        req,
+        room_id,
+        include_user_ids=[user_id],
+    )
+    if result.get('membership_changed') is True:
+        req.push.enqueue_room_joined(
+            user_id,
+            room_id,
+            [member_id for member_id in room_members if member_id != user_id],
+        )
+        req.push.enqueue_room_request_approved(user_id, room_id)
+    return jsonify(result['room'])
+
+
+@routes.post('/reject-room-request')
+@authenticated
+async def reject_room_request(req):
+    room_id, user_id = await _resolve_room_request_update(req)
+
+    try:
+        await req.store.reject_room_join_request(req.user['id'], room_id, user_id)
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    except JoinRequestNotFound:
+        raise InvalidJoinRequestError(message='Join request is no longer pending')
+
+    await req.store.publish_room_requests_changed(room_id)
+    room_members = await req.store.get_room_members(room_id)
+    await req.store.publish_rooms_changed(room_members)
+    await req.store.publish_nearby_changed([user_id])
+    req.push.enqueue_room_request_rejected(user_id, room_id)
+    return web.Response(status=204)
+
+
 @routes.post('/send-message')
 @authenticated
 async def send_message(req):
@@ -112,7 +232,10 @@ async def send_message(req):
         raise NoSuchRoomError()
 
     await req.store.publish_room_message(req.data['room_id'], message)
-    await req.store.publish_rooms_changed(await req.store.get_room_members(req.data['room_id']))
+    await req.store.publish_rooms_changed(
+        await req.store.get_room_members(req.data['room_id']),
+    )
+    await _publish_pending_requester_nearby_changes(req, req.data['room_id'])
     req.push.enqueue_new_message(req.user['id'], req.data['room_id'], message)
     return jsonify(message)
 
@@ -152,6 +275,7 @@ async def accept_invite(req):
     room_members = await req.store.get_room_members(room['id'])
     await req.store.publish_rooms_changed(room_members)
     if invite_result.get('membership_changed') is True:
+        await _publish_pending_requester_nearby_changes(req, room['id'])
         req.push.enqueue_room_joined(
             req.user['id'],
             room['id'],

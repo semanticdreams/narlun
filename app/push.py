@@ -157,6 +157,94 @@ class PushService:
             },
         )
 
+    async def notify_room_join_request(self, requester_id, room_id, recipient_ids):
+        if not self.enabled:
+            return
+
+        room = await self.store.get_room(room_id)
+        requester = await self.store.get_public_user(requester_id)
+        if room is None or requester is None:
+            return
+
+        requester_username = requester.get('username') or 'Someone'
+        room_name = (room.get('name') or '').strip()
+        title = (
+            f'{requester_username} wants to join {room_name}'
+            if room_name
+            else f'{requester_username} wants to join your room'
+        )
+        filtered_recipient_ids = []
+        for recipient_id in recipient_ids:
+            if await self.store.get_room_push_muted(recipient_id, room_id):
+                continue
+            filtered_recipient_ids.append(recipient_id)
+
+        await self._notify_users(
+            filtered_recipient_ids,
+            {
+                'title': title,
+                'body': 'Open the room to approve or reject the request.',
+                'tag': f'room-request-{int(room_id)}',
+                'data': {
+                    'url': f'/rooms?open_room={int(room_id)}',
+                    'room_id': int(room_id),
+                    'requester_id': int(requester_id),
+                    'type': 'room-join-request',
+                },
+            },
+        )
+
+    async def notify_room_request_approved(self, requester_id, room_id):
+        if not self.enabled:
+            return
+
+        room = await self.store.get_room(room_id)
+        if room is None:
+            return
+
+        room_name = (room.get('name') or '').strip()
+        await self._notify_users(
+            [requester_id],
+            {
+                'title': (
+                    f'Joined {room_name}'
+                    if room_name
+                    else 'Your room request was approved'
+                ),
+                'body': 'Open the room to join the conversation.',
+                'tag': f'room-request-{int(room_id)}',
+                'data': {
+                    'url': f'/rooms?open_room={int(room_id)}',
+                    'room_id': int(room_id),
+                    'type': 'room-request-approved',
+                },
+            },
+        )
+
+    async def notify_room_request_rejected(self, requester_id, room_id):
+        if not self.enabled:
+            return
+
+        room = await self.store.get_room(room_id)
+        room_name = (room.get('name') or '').strip() if room is not None else ''
+        await self._notify_users(
+            [requester_id],
+            {
+                'title': (
+                    f'Request declined for {room_name}'
+                    if room_name
+                    else 'Your room request was declined'
+                ),
+                'body': 'You can keep browsing nearby rooms.',
+                'tag': f'room-request-{int(room_id)}',
+                'data': {
+                    'url': '/nearby',
+                    'room_id': int(room_id),
+                    'type': 'room-request-rejected',
+                },
+            },
+        )
+
     async def notify_new_message(self, sender_id, room_id, message):
         if not self.enabled:
             return
@@ -234,6 +322,24 @@ class PushService:
         self._enqueue(
             'new-message',
             lambda: self.notify_new_message(sender_id, room_id, message),
+        )
+
+    def enqueue_room_join_request(self, requester_id, room_id, recipient_ids):
+        self._enqueue(
+            'room-join-request',
+            lambda: self.notify_room_join_request(requester_id, room_id, recipient_ids),
+        )
+
+    def enqueue_room_request_approved(self, requester_id, room_id):
+        self._enqueue(
+            'room-request-approved',
+            lambda: self.notify_room_request_approved(requester_id, room_id),
+        )
+
+    def enqueue_room_request_rejected(self, requester_id, room_id):
+        self._enqueue(
+            'room-request-rejected',
+            lambda: self.notify_room_request_rejected(requester_id, room_id),
         )
 
     def _enqueue(self, operation, coro_factory):

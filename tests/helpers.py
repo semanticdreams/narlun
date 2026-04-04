@@ -115,6 +115,41 @@ async def accept_invite(cli, jwt, token):
     return response
 
 
+async def request_room_join(cli, jwt, room_id):
+    response = await cli.post(
+        '/api/social/request-room-join',
+        json={'room_id': room_id},
+        headers=auth_headers(jwt),
+    )
+    return response
+
+
+async def get_room_requests(cli, jwt, room_id):
+    response = await cli.get(
+        f'/api/social/get-room-requests?room_id={room_id}',
+        headers=auth_headers(jwt),
+    )
+    return response
+
+
+async def approve_room_request(cli, jwt, room_id, user_id):
+    response = await cli.post(
+        '/api/social/approve-room-request',
+        json={'room_id': room_id, 'user_id': user_id},
+        headers=auth_headers(jwt),
+    )
+    return response
+
+
+async def reject_room_request(cli, jwt, room_id, user_id):
+    response = await cli.post(
+        '/api/social/reject-room-request',
+        json={'room_id': room_id, 'user_id': user_id},
+        headers=auth_headers(jwt),
+    )
+    return response
+
+
 async def send_message(cli, jwt, room_id, body):
     response = await cli.post(
         '/api/social/send-message',

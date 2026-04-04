@@ -453,4 +453,57 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     expect(find.text('bob'), findsWidgets);
   });
+
+  testWidgets('shows pending join request count in the room list', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    httpService
+      .._responses.clear()
+      ..queueRoomsResponse([
+        RoomSummary(
+          id: 9,
+          isGroup: true,
+          name: 'Coffee crew',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          pendingJoinRequestCount: 2,
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'bob'),
+          ],
+        ),
+      ]);
+    final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 requests'), findsOneWidget);
+  });
 }

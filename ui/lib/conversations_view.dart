@@ -340,6 +340,26 @@ class _ConversationsState extends State<ConversationsView> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(timeago.format(room.updatedAt)),
+                      if (room.pendingJoinRequestCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '${room.pendingJoinRequestCount} request${room.pendingJoinRequestCount == 1 ? '' : 's'}',
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                          ),
+                        ),
                       if (room.pushMuted)
                         const Padding(
                           padding: EdgeInsets.only(top: 4),

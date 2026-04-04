@@ -4,6 +4,7 @@ import 'package:chat_bubbles/chat_bubbles.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'avatar_image.dart';
 import 'http.dart';
 import 'invite_qr_button.dart';
 import 'locator.dart';
@@ -43,10 +44,13 @@ class MessagesState extends State<MessagesView> {
   StreamSubscription? roomDeletedSubscription;
   StreamSubscription? connectionEventsSubscription;
   StreamSubscription? roomsChangedSubscription;
+  StreamSubscription? roomRequestsChangedSubscription;
 
   bool _firstAutoscrollExecuted = false;
   bool _shouldAutoscroll = false;
   bool _roomClosed = false;
+  List<RoomJoinRequest> pendingJoinRequests = [];
+  final Set<int> _updatingJoinRequestUserIds = <int>{};
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -151,6 +155,42 @@ class MessagesState extends State<MessagesView> {
     }
   }
 
+  Future<void> _refreshJoinRequests({bool silentErrors = false}) async {
+    try {
+      final requests = await httpService.get_room_requests(
+        room.id,
+        silentErrors: silentErrors,
+      );
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      setState(() {
+        pendingJoinRequests = requests;
+      });
+    } on UnauthorizedResponse {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } on InvalidUsage catch (e) {
+      if (e.code == 1000) {
+        await _handleRoomDeleted();
+      } else {
+        rethrow;
+      }
+    } catch (_) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _showRefreshFailure('Could not refresh join requests. Trying again soon.');
+    }
+  }
+
   Future<void> _handleRoomDeleted() async {
     if (_roomClosed || !mounted) {
       return;
@@ -213,6 +253,61 @@ class MessagesState extends State<MessagesView> {
     }
   }
 
+  Future<void> _updateJoinRequest(
+    RoomJoinRequest request, {
+    required bool approve,
+  }) async {
+    final requesterId = request.user.id;
+    if (_updatingJoinRequestUserIds.contains(requesterId)) {
+      return;
+    }
+    setState(() {
+      _updatingJoinRequestUserIds.add(requesterId);
+    });
+    try {
+      if (approve) {
+        final updatedRoom = await httpService.approve_room_request(
+          room.id,
+          requesterId,
+        );
+        if (!mounted || _roomClosed) {
+          return;
+        }
+        setState(() {
+          room = updatedRoom;
+        });
+      } else {
+        await httpService.reject_room_request(room.id, requesterId);
+      }
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      await _refreshJoinRequests(silentErrors: true);
+    } on UnauthorizedResponse {
+      if (_roomClosed || !mounted) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } on InvalidUsage catch (e) {
+      if (e.code == 1000) {
+        await _handleRoomDeleted();
+      } else {
+        await _refreshJoinRequests(silentErrors: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _updatingJoinRequestUserIds.remove(requesterId);
+        });
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -248,6 +343,11 @@ class MessagesState extends State<MessagesView> {
         .listen((_) async {
           await _handleRoomDeleted();
         });
+    roomRequestsChangedSubscription = websocketService
+        .roomRequestsChangedStream(widget.room.id)
+        .listen((_) {
+          unawaited(_refreshJoinRequests(silentErrors: true));
+        });
     roomsChangedSubscription = websocketService.roomsChangedStream().listen((_) {
       unawaited(_refreshRoomSummary(silentErrors: true));
     });
@@ -259,6 +359,7 @@ class MessagesState extends State<MessagesView> {
       }
       if (event == 'reconnected') {
         await _refreshRoomSummary(silentErrors: true);
+        await _refreshJoinRequests(silentErrors: true);
         await update_messages(silentErrors: true);
       } else if (event == 'signed-out') {
         await _handleSessionEnded();
@@ -273,6 +374,7 @@ class MessagesState extends State<MessagesView> {
 
       await websocketService.subscribeRoom(room.id);
       await _refreshRoomSummary(silentErrors: true);
+      await _refreshJoinRequests(silentErrors: true);
       await update_messages(silentErrors: true);
     } on RoomUnavailable {
       await _handleRoomDeleted();
@@ -309,6 +411,7 @@ class MessagesState extends State<MessagesView> {
     roomDeletedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
     roomsChangedSubscription?.cancel();
+    roomRequestsChangedSubscription?.cancel();
     _scrollController.removeListener(_scrollListener);
     messageController.dispose();
     messageFocusNode.dispose();
@@ -371,6 +474,87 @@ class MessagesState extends State<MessagesView> {
       ),
       body: Column(
         children: [
+          if (pendingJoinRequests.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Pending join requests',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final request in pendingJoinRequests)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Row(
+                            children: [
+                              AvatarImage(
+                                picture: request.user.picture,
+                                radius: 18,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(request.user.username),
+                                    if (request.user.status?.isNotEmpty ?? false)
+                                      Text(
+                                        request.user.status!,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: _updatingJoinRequestUserIds.contains(
+                                      request.user.id,
+                                    )
+                                    ? null
+                                    : () {
+                                        unawaited(
+                                          _updateJoinRequest(
+                                            request,
+                                            approve: false,
+                                          ),
+                                        );
+                                      },
+                                child: const Text('Reject'),
+                              ),
+                              FilledButton(
+                                onPressed: _updatingJoinRequestUserIds.contains(
+                                      request.user.id,
+                                    )
+                                    ? null
+                                    : () {
+                                        unawaited(
+                                          _updateJoinRequest(
+                                            request,
+                                            approve: true,
+                                          ),
+                                        );
+                                      },
+                                child: const Text('Approve'),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               itemCount: messages.length,

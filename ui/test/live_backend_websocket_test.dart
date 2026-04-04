@@ -190,6 +190,69 @@ class BackendClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> createGroupRoom(
+    String jwtCookie,
+    String name,
+    List<int> userIds,
+  ) async {
+    final response = await _client.post(
+      apiBaseUri.resolve('social/create-room'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode({'name': name, 'user_ids': userIds}),
+    );
+    expect(response.statusCode, 200);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> requestRoomJoin(
+    String jwtCookie,
+    int roomId,
+  ) async {
+    final response = await _client.post(
+      apiBaseUri.resolve('social/request-room-join'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode({'room_id': roomId}),
+    );
+    expect(response.statusCode, 200);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> approveRoomRequest(
+    String jwtCookie,
+    int roomId,
+    int userId,
+  ) async {
+    final response = await _client.post(
+      apiBaseUri.resolve('social/approve-room-request'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode({'room_id': roomId, 'user_id': userId}),
+    );
+    expect(response.statusCode, 200);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<void> rejectRoomRequest(
+    String jwtCookie,
+    int roomId,
+    int userId,
+  ) async {
+    final response = await _client.post(
+      apiBaseUri.resolve('social/reject-room-request'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode({'room_id': roomId, 'user_id': userId}),
+    );
+    expect(response.statusCode, 204);
+  }
+
+  Future<List<dynamic>> getRooms(String jwtCookie) async {
+    final response = await _client.get(
+      apiBaseUri.resolve('social/get-rooms'),
+      headers: {'Cookie': jwtCookie},
+    );
+    expect(response.statusCode, 200);
+    return jsonDecode(response.body) as List<dynamic>;
+  }
+
   Future<Map<String, dynamic>> sendMessage(
     String jwtCookie,
     int roomId,
@@ -240,6 +303,26 @@ class BackendSession {
 
   Future<Map<String, dynamic>> joinUser(int userId) {
     return client.joinUser(jwtCookie, userId);
+  }
+
+  Future<Map<String, dynamic>> createGroupRoom(String name, List<int> userIds) {
+    return client.createGroupRoom(jwtCookie, name, userIds);
+  }
+
+  Future<Map<String, dynamic>> requestRoomJoin(int roomId) {
+    return client.requestRoomJoin(jwtCookie, roomId);
+  }
+
+  Future<Map<String, dynamic>> approveRoomRequest(int roomId, int userId) {
+    return client.approveRoomRequest(jwtCookie, roomId, userId);
+  }
+
+  Future<void> rejectRoomRequest(int roomId, int userId) {
+    return client.rejectRoomRequest(jwtCookie, roomId, userId);
+  }
+
+  Future<List<dynamic>> getRooms() {
+    return client.getRooms(jwtCookie);
   }
 
   Future<Map<String, dynamic>> sendMessage(int roomId, String body) {
@@ -497,6 +580,100 @@ void main() {
       );
       await pumpUntilFound(tester, find.text('Rooms'));
       await pumpUntilNotFound(tester, find.text(bob.username));
+    },
+  );
+
+  testWidgets(
+    'live backend request flow updates member room list and can be approved in-room',
+    (tester) async {
+      await launchApp(tester, harness);
+      final aliceUsername = randomUsername('alice');
+      await signUpThroughUi(tester, aliceUsername);
+
+      final aliceJwtCookie = await currentFrontendJwtCookie();
+      final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final charlie = await backendClient.signupGuest(randomUsername('charlie'));
+      final room = await backendClient.createGroupRoom(
+        aliceJwtCookie,
+        'Coffee crew',
+        [bob.user['id'] as int],
+      );
+
+      await pumpUntilFound(tester, find.text('Coffee crew'));
+
+      await charlie.requestRoomJoin(room['id'] as int);
+      await pumpUntilFound(tester, find.text('1 request'));
+
+      await openRoomFromList(tester, 'Coffee crew');
+      await pumpUntilFound(tester, find.text('Pending join requests'));
+      await pumpUntilFound(tester, find.text(charlie.username));
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+      await tester.pump();
+      await pumpUntilNotFound(tester, find.text('Pending join requests'));
+
+      final charlieRooms = await charlie.getRooms();
+      expect(
+        charlieRooms.any((candidate) => candidate['id'] == room['id']),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'live backend approval flow delivers the room to the requester ui',
+    (tester) async {
+      await launchApp(tester, harness);
+      final charlieUsername = randomUsername('charlie');
+      await signUpThroughUi(tester, charlieUsername);
+
+      final charlieJwtCookie = await currentFrontendJwtCookie();
+      final charlie = await backendClient.getMe(charlieJwtCookie);
+      final alice = await backendClient.signupGuest(randomUsername('alice'));
+      final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final room = await alice.createGroupRoom('Coffee crew', [bob.user['id'] as int]);
+
+      await backendClient.requestRoomJoin(
+        charlieJwtCookie,
+        room['id'] as int,
+      );
+      expect(find.text('Coffee crew'), findsNothing);
+
+      await alice.approveRoomRequest(
+        room['id'] as int,
+        charlie['id'] as int,
+      );
+
+      await pumpUntilFound(tester, find.text('Coffee crew'));
+    },
+  );
+
+  testWidgets(
+    'live backend rejection flow clears the member request badge',
+    (tester) async {
+      await launchApp(tester, harness);
+      final aliceUsername = randomUsername('alice');
+      await signUpThroughUi(tester, aliceUsername);
+
+      final aliceJwtCookie = await currentFrontendJwtCookie();
+      final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final charlie = await backendClient.signupGuest(randomUsername('charlie'));
+      final room = await backendClient.createGroupRoom(
+        aliceJwtCookie,
+        'Coffee crew',
+        [bob.user['id'] as int],
+      );
+
+      await pumpUntilFound(tester, find.text('Coffee crew'));
+      await charlie.requestRoomJoin(room['id'] as int);
+      await pumpUntilFound(tester, find.text('1 request'));
+
+      await bob.rejectRoomRequest(
+        room['id'] as int,
+        charlie.user['id'] as int,
+      );
+
+      await pumpUntilNotFound(tester, find.text('1 request'));
     },
   );
 }

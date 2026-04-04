@@ -26,13 +26,12 @@ async def test_guest_signup_password_upgrade_and_signin(cli):
         created['jwt'],
         password='correct horse battery',
         status='hello',
-        phone='123',
     )
     assert response.status == 200
     me = await response.json()
     assert me['has_password'] is True
     assert me['status'] == 'hello'
-    assert me['phone'] == '123'
+    assert 'phone' not in me
 
     await cli.post('/api/users/signout', headers=auth_headers(created['jwt']))
 
@@ -54,6 +53,7 @@ async def test_status_is_normalized_and_limited(cli):
     assert response.status == 200
     me = await response.json()
     assert me['status'] == 'hello from nearby'
+    assert 'phone' not in me
 
     response = await update_profile(
         cli,

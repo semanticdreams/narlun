@@ -3,7 +3,6 @@ class SessionUser {
   final int? id;
   final String? username;
   final String? picture;
-  final String? phone;
   final String? status;
   final bool hasPassword;
 
@@ -12,7 +11,6 @@ class SessionUser {
     this.id,
     this.username,
     this.picture,
-    this.phone,
     this.status,
     this.hasPassword = false,
   });
@@ -27,7 +25,6 @@ class SessionUser {
       id: json['id'] as int?,
       username: json['username'] as String?,
       picture: json['picture'] as String?,
-      phone: json['phone'] as String?,
       status: json['status'] as String? ?? json['about_me'] as String?,
       hasPassword: json['has_password'] == true,
     );
@@ -38,7 +35,6 @@ class SessionUser {
     int? id,
     String? username,
     String? picture,
-    String? phone,
     String? status,
     bool? hasPassword,
   }) {
@@ -47,7 +43,6 @@ class SessionUser {
       id: id ?? this.id,
       username: username ?? this.username,
       picture: picture ?? this.picture,
-      phone: phone ?? this.phone,
       status: status ?? this.status,
       hasPassword: hasPassword ?? this.hasPassword,
     );

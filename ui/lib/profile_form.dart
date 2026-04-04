@@ -25,7 +25,6 @@ class ProfileFormState extends State<ProfileForm> {
   final passwordController = TextEditingController();
 
   String? username;
-  String? phone;
   String? status;
   bool obscurePassword = true;
 
@@ -152,16 +151,6 @@ class ProfileFormState extends State<ProfileForm> {
               labelText: 'Status',
             ),
           ),
-          TextFormField(
-            initialValue: widget.data.phone ?? '',
-            onSaved: (String? value) {
-              phone = value;
-            },
-            decoration: const InputDecoration(
-              hintText: 'Set a phone number for quick sharing in messages',
-              labelText: 'Phone',
-            ),
-          ),
           const SizedBox(height: 10),
           if (!hasPassword)
             const Padding(
@@ -185,7 +174,6 @@ class ProfileFormState extends State<ProfileForm> {
                   final data = <String, String?>{
                     'username': username,
                     'status': status,
-                    'phone': phone,
                   };
                   if (password.trim().isNotEmpty) {
                     data['password'] = password;

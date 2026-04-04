@@ -153,7 +153,6 @@ class RedisStore:
             'id': user_id,
             'username': raw_user['username'],
             'status': raw_user.get('status') or raw_user.get('about_me') or None,
-            'phone': raw_user.get('phone') or None,
             'picture': avatar_url(user_id, avatar_version),
             'has_password': password_hash is not None,
             'authenticated': authenticated,
@@ -190,7 +189,6 @@ class RedisStore:
             'username': username,
             'username_normalized': normalize_username(username),
             'status': '',
-            'phone': '',
             'password_hash': '',
             'avatar_seed': secrets.token_hex(16),
             'avatar_version': timestamp,
@@ -218,13 +216,14 @@ class RedisStore:
             return False
         return self._serialize_user(raw_user, authenticated=True)
 
-    async def update_user(self, user_id, *, username=None, password=None, status=None, phone=None):
+    async def update_user(self, user_id, *, username=None, password=None, status=None):
         raw_user = await self._load_user_hash(user_id)
         if raw_user is None:
             raise UserNotFound()
 
         updates = {}
         remove_legacy_about_me = False
+        remove_legacy_phone = 'phone' in raw_user
         if username is not None:
             username = username.strip()
             if not username:
@@ -238,13 +237,13 @@ class RedisStore:
         if status is not None:
             updates['status'] = normalize_status(status)
             remove_legacy_about_me = True
-        if phone is not None:
-            updates['phone'] = phone
 
         if updates:
             await self.redis.hset(self._user_key(user_id), mapping=updates)
         if remove_legacy_about_me:
             await self.redis.hdel(self._user_key(user_id), 'about_me')
+        if remove_legacy_phone:
+            await self.redis.hdel(self._user_key(user_id), 'phone')
         return await self.get_authenticated_user(user_id)
 
     async def _replace_username(self, user_id, old_username, new_username):

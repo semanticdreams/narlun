@@ -46,7 +46,6 @@ class FakeProfileHttpService extends HttpService {
       id: 1,
       username: data['username'] as String?,
       status: data['status'] as String?,
-      phone: data['phone'] as String?,
       hasPassword: true,
     );
   }
@@ -65,7 +64,6 @@ Widget _buildProfileForm(FakeProfileHttpService httpService, MeModel meModel) {
               id: 1,
               username: 'alice',
               status: 'busy',
-              phone: '123',
               hasPassword: true,
             ),
           ),
@@ -95,7 +93,6 @@ void main() {
           id: 1,
           username: 'alice',
           status: 'busy',
-          phone: '123',
           hasPassword: true,
         ),
       );
@@ -103,20 +100,16 @@ void main() {
     await tester.pumpWidget(_buildProfileForm(httpService, meModel));
 
     expect(find.text('Status'), findsOneWidget);
-    expect(find.text('Phone'), findsOneWidget);
+    expect(find.text('Phone'), findsNothing);
 
     final statusField = find.byType(TextFormField).at(2);
-    final phoneField = find.byType(TextFormField).at(3);
-
-    final statusTopLeft = tester.getTopLeft(statusField);
-    final phoneTopLeft = tester.getTopLeft(phoneField);
-    expect(statusTopLeft.dy, lessThan(phoneTopLeft.dy));
 
     await tester.enterText(statusField, '  new status  ');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
     expect(httpService.lastPayload?['status'], 'new status');
+    expect(httpService.lastPayload?.containsKey('phone'), isFalse);
     expect(meModel.data?.status, 'new status');
   });
 
@@ -131,7 +124,6 @@ void main() {
           id: 1,
           username: 'alice',
           status: 'busy',
-          phone: '123',
           hasPassword: true,
         ),
       );
@@ -171,7 +163,6 @@ void main() {
           id: 1,
           username: 'alice',
           status: 'busy',
-          phone: '123',
           hasPassword: true,
         ),
       );
@@ -195,7 +186,6 @@ void main() {
           id: 1,
           username: 'alice',
           status: 'busy',
-          phone: '123',
           hasPassword: true,
         ),
       );

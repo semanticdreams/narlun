@@ -111,7 +111,6 @@ async def update_profile(req):
             username=req.data.get('username'),
             password=password,
             status=req.data.get('status'),
-            phone=req.data.get('phone'),
         )
     except ValueError:
         raise InvalidUsernameError()

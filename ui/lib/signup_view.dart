@@ -96,7 +96,7 @@ class SignupViewState extends State<SignupView> {
                           labelText: 'Username',
                           suffixIcon: IconButton(
                             key: const Key('signup-generate-username-button'),
-                            icon: const Icon(Icons.shuffle_on_outlined),
+                            icon: const Icon(Icons.casino_outlined),
                             tooltip: 'Generate random username',
                             onPressed: () {
                               setState(() {

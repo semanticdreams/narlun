@@ -4,6 +4,7 @@ import 'dart:html' as html;
 import 'dart:math';
 
 const _clientSessionStorageKey = 'narlun_client_session_id';
+const _randomSaltUpperBound = 0x100000000;
 
 String getOrCreateClientSessionId() {
   try {
@@ -43,6 +44,6 @@ Map<String, int>? getScreenInfo() {
 String _generateClientSessionId() {
   final random = Random();
   final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-  final salt = random.nextInt(1 << 32).toRadixString(16);
+  final salt = random.nextInt(_randomSaltUpperBound).toRadixString(16);
   return '$timestamp$salt';
 }

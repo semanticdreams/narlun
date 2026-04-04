@@ -1,6 +1,7 @@
 import 'dart:math';
 
 String? _clientSessionId;
+const _defaultClientSessionRandomUpperBound = 0x100000000;
 
 String getOrCreateClientSessionId() {
   return _clientSessionId ??= _generateClientSessionId();
@@ -17,6 +18,6 @@ Map<String, int>? getScreenInfo() {
 String _generateClientSessionId() {
   final random = Random();
   final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-  final salt = random.nextInt(1 << 32).toRadixString(16);
+  final salt = random.nextInt(_defaultClientSessionRandomUpperBound).toRadixString(16);
   return '$timestamp$salt';
 }

@@ -38,3 +38,12 @@ if app_settings := os.environ.get('APP_SETTINGS'):
 for k in list(globals().keys()):
     if v := os.environ.get(k):
         setattr(sys.modules[__name__], k, v)
+
+
+def _coerce_int(name):
+    value = globals().get(name)
+    if isinstance(value, str):
+        setattr(sys.modules[__name__], name, int(value))
+
+
+_coerce_int('PORT')

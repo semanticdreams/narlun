@@ -2,6 +2,7 @@ import 'dart:html' as html;
 import 'dart:math';
 
 const _clientIdentityStorageKey = 'narlun.clientId';
+const _clientIdentityRandomUpperBound = 0x100000000;
 
 Future<String?> readClientIdentity() async {
   final existing = html.window.localStorage[_clientIdentityStorageKey];
@@ -12,7 +13,7 @@ Future<String?> readClientIdentity() async {
   final random = Random.secure();
   final created =
       '${DateTime.now().toUtc().microsecondsSinceEpoch.toRadixString(16)}-'
-      '${random.nextInt(1 << 32).toRadixString(16)}';
+      '${random.nextInt(_clientIdentityRandomUpperBound).toRadixString(16)}';
   html.window.localStorage[_clientIdentityStorageKey] = created;
   return created;
 }

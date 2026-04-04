@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -116,5 +118,95 @@ void main() {
 
     expect(httpService.lastPayload?['status'], 'new status');
     expect(meModel.data?.status, 'new status');
+  });
+
+  testWidgets('generates a memorable passphrase and saves it as password', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          phone: '123',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    await tester.tap(find.byKey(const Key('profile-generate-password-button')));
+    await tester.pump();
+
+    final passwordField = tester.widget<TextFormField>(
+      find.byType(TextFormField).at(1),
+    );
+    expect(passwordField.controller!.text.split(' '), hasLength(8));
+    final editablePasswordField = tester.widget<EditableText>(
+      find.byType(EditableText).at(0),
+    );
+    expect(editablePasswordField.obscureText, isFalse);
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.lastPayload?['password'], isA<String>());
+    expect(
+      (httpService.lastPayload?['password'] as String).split(' '),
+      hasLength(8),
+    );
+  });
+
+  testWidgets('leaves current password unchanged when password field stays blank', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          phone: '123',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.lastPayload?.containsKey('password'), isFalse);
+  });
+
+  testWidgets('shows a local validation error for a short password', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          phone: '123',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    await tester.enterText(find.byType(TextFormField).at(1), 'short');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Password must be at least 8 characters'), findsOneWidget);
+    expect(httpService.lastPayload, isNull);
   });
 }

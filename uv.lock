@@ -1438,7 +1438,6 @@ dependencies = [
     { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "redis", extra = ["hiredis"] },
-    { name = "sentry-sdk", extra = ["aiohttp"] },
     { name = "structlog" },
     { name = "uvloop", marker = "sys_platform != 'win32'" },
     { name = "werkzeug" },
@@ -1466,7 +1465,6 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.9,<3" },
     { name = "python-dotenv", specifier = ">=1.0,<2" },
     { name = "redis", extras = ["hiredis"], specifier = ">=5.0,<6" },
-    { name = "sentry-sdk", extras = ["aiohttp"], specifier = ">=2,<3" },
     { name = "structlog", specifier = ">=24,<26" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.21,<0.22" },
     { name = "werkzeug", specifier = ">=3,<4" },
@@ -1996,24 +1994,6 @@ wheels = [
 [package.optional-dependencies]
 hiredis = [
     { name = "hiredis" },
-]
-
-[[package]]
-name = "sentry-sdk"
-version = "2.57.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "certifi" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/87/46c0406d8b5ddd026f73adaf5ab75ce144219c41a4830b52df4b9ab55f7f/sentry_sdk-2.57.0.tar.gz", hash = "sha256:4be8d1e71c32fb27f79c577a337ac8912137bba4bcbc64a4ec1da4d6d8dc5199", size = 435288, upload-time = "2026-03-31T09:39:29.264Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/64/982e07b93219cb52e1cca5d272cb579e2f3eb001956c9e7a9a6d106c9473/sentry_sdk-2.57.0-py2.py3-none-any.whl", hash = "sha256:812c8bf5ff3d2f0e89c82f5ce80ab3a6423e102729c4706af7413fd1eb480585", size = 456489, upload-time = "2026-03-31T09:39:27.524Z" },
-]
-
-[package.optional-dependencies]
-aiohttp = [
-    { name = "aiohttp" },
 ]
 
 [[package]]

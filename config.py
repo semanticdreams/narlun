@@ -9,8 +9,6 @@ APP_NAME = 'narlun'
 basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, '.env'))
 
-SENTRY_DSN = ''
-
 SECRET_KEY = 'change-me-to-a-long-random-secret-key'
 
 PORT = 3000
@@ -19,6 +17,7 @@ REDIS_URL = 'redis://localhost:6379'
 
 DOMAIN = 'https://narlun.com'
 WEB_ROOT = ''
+FRONTEND_ERROR_LOG_PATH = os.path.join(basedir, 'frontend-errors.jsonl')
 
 # load local config
 if app_settings := os.environ.get('APP_SETTINGS'):

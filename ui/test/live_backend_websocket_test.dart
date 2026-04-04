@@ -50,7 +50,7 @@ class LiveBackendHarness {
 PORT = $backendPort
 REDIS_URL = "redis://127.0.0.1:$redisPort/0"
 SECRET_KEY = "integration-test-secret"
-SENTRY_DSN = ""
+FRONTEND_ERROR_LOG_PATH = r"${_tempDir!.path}/frontend-errors.jsonl"
 ''');
 
     _backendProcess = await Process.start(

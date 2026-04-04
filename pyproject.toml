@@ -17,7 +17,6 @@ dependencies = [
     "pyjwt>=2.9,<3",
     "python-dotenv>=1.0,<2",
     "redis[hiredis]>=5.0,<6",
-    "sentry-sdk[aiohttp]>=2,<3",
     "structlog>=24,<26",
     "uvloop>=0.21,<0.22; sys_platform != 'win32'",
     "werkzeug>=3,<4",

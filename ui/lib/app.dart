@@ -7,6 +7,7 @@ import 'welcome_view.dart';
 import 'home_view.dart';
 import 'invite_accept_view.dart';
 import 'profile_view.dart';
+import 'frontend_error_reporter.dart';
 import 'me_model.dart';
 import 'set_page_title.dart';
 
@@ -16,11 +17,13 @@ import 'session_watcher.dart';
 
 class MyApp extends StatelessWidget {
   final ThemeData theme;
+  final FrontendErrorReporter errorReporter;
   final GlobalKey<NavigatorState> navigatorKey;
 
   MyApp({
     super.key,
     required this.theme,
+    required this.errorReporter,
     GlobalKey<NavigatorState>? navigatorKey,
   }) : navigatorKey = navigatorKey ?? GlobalKey<NavigatorState>();
 
@@ -32,6 +35,7 @@ class MyApp extends StatelessWidget {
       builder: (context, widget) =>
           SessionWatcher(navigatorKey: navigatorKey, child: widget!),
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [errorReporter.createNavigatorObserver()],
       title: 'Narlun',
       theme: theme,
       onGenerateRoute: (RouteSettings settings) {
@@ -45,6 +49,7 @@ class MyApp extends StatelessWidget {
         if (uriData != null) {
           setPageTitle(uriData.path, context);
         }
+        errorReporter.updateRoute(settings.name ?? uriData?.toString());
 
         const unauthPaths = ['/', '/signin', '/signup'];
         final requestedLocation = uriData?.toString();

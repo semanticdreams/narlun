@@ -107,7 +107,7 @@ class LiveHarness {
         `PORT = ${this.backendPort}`,
         `REDIS_URL = "redis://127.0.0.1:${this.redisPort}/0"`,
         'SECRET_KEY = "playwright-test-secret"',
-        'SENTRY_DSN = ""',
+        `FRONTEND_ERROR_LOG_PATH = r"${path.join(this.tempDir, 'frontend-errors.jsonl')}"`,
         `WEB_ROOT = r"${webRoot}"`,
         '',
       ].join('\n'),

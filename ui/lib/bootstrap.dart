@@ -4,12 +4,14 @@ import 'package:url_strategy/url_strategy.dart';
 
 import 'app.dart';
 import 'config.dart';
+import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 
 Object? _e2eSemanticsHandle;
+FrontendErrorReporter? _frontendErrorReporter;
 
 Future<void> initializeApp({
   String? environment,
@@ -34,6 +36,11 @@ Future<void> initializeApp({
 
   Environment().initConfig(selectedEnvironment, apiUrlOverride: selectedApiUrl);
   await setupLocator(reset: true);
+  _frontendErrorReporter?.dispose();
+  _frontendErrorReporter = FrontendErrorReporter(
+    environment: selectedEnvironment,
+    apiBaseUrl: Environment().config.apiUrl,
+  )..install();
 }
 
 Widget buildNarlunApp() {
@@ -41,6 +48,11 @@ Widget buildNarlunApp() {
     seedColor: const Color(0xFF5F4484),
     brightness: Brightness.light,
   );
+  final errorReporter = _frontendErrorReporter ??=
+      (FrontendErrorReporter(apiBaseUrl: Environment().config.apiUrl)
+        ..install());
+  final meModel = MeModel();
+  errorReporter.attachMeModel(meModel);
   return MultiProvider(
     providers: [
       Provider<HttpService>(
@@ -51,9 +63,10 @@ Widget buildNarlunApp() {
         lazy: false,
         create: (_) => createInstallPromptService(),
       ),
-      ChangeNotifierProvider(create: (_) => MeModel()),
+      ChangeNotifierProvider<MeModel>.value(value: meModel),
     ],
     child: MyApp(
+      errorReporter: errorReporter,
       theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
     ),
   );

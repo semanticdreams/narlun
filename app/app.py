@@ -2,13 +2,12 @@ import asyncio
 from pathlib import Path
 
 import aiohttp_cors
-import sentry_sdk
 import uvloop
 from aiohttp import web
 from aiohttp.web import middleware
-from sentry_sdk.integrations.aiohttp import AioHttpIntegration
 
 import config
+from app.frontend_errors import create_frontend_error_tools, frontend_error_handler
 from app.redis_store import RedisStore
 from app.social import create_app as create_social_app
 from app.users import create_app as create_users_app
@@ -42,19 +41,17 @@ async def request_context(req, handler):
 
 
 async def create_app(*, redis_url=None, enable_cors=True):
-    sentry_sdk.init(
-        dsn=config.SENTRY_DSN,
-        integrations=[AioHttpIntegration()],
-        traces_sample_rate=0.0,
-    )
-
     store = await RedisStore.create(redis_url or config.REDIS_URL)
+    frontend_error_tools = create_frontend_error_tools(config.FRONTEND_ERROR_LOG_PATH)
     app = web.Application(middlewares=[request_context])
     app['store'] = store
     app['redis'] = store.redis
     app['redis_bytes'] = store.redis_bytes
+    app['frontend_error_log_writer'] = frontend_error_tools['writer']
+    app['frontend_error_rate_limiter'] = frontend_error_tools['rate_limiter']
 
     app.router.add_get('/api/ws', websocket_handler)
+    app.router.add_post('/api/client-errors', frontend_error_handler)
     app.add_subapp('/api/users', create_users_app())
     app.add_subapp('/api/social', create_social_app())
     _configure_web_routes(app)

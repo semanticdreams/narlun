@@ -1,79 +1,106 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'dart:collection';
-import 'dart:io';
-import 'dart:ui';
-import 'package:provider/provider.dart';
-import 'package:url_strategy/url_strategy.dart';
-import 'package:timeago/timeago.dart' as timeago;
-
-import 'package:json_theme/json_theme.dart';
-import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:chat_bubbles/chat_bubbles.dart';
-import 'profile_form.dart';
-import 'http.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'dart:collection';
-import 'dart:io';
-import 'dart:ui';
+
+import 'http.dart';
+import 'image_url.dart';
 import 'me_model.dart';
+import 'profile_form.dart';
+
 
 class ProfileView extends StatelessWidget {
+  ProfileView({Key? key}) : super(key: key);
+
   final HttpService httpService = HttpService();
+
+  Future<void> _deleteAccount(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text('This removes your account and avatar. Rooms that end up with no meaningful membership left may also disappear.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await httpService.delete_account();
+      Provider.of<MeModel>(context, listen: false).reset();
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(
-          title: Text('Profile'),
-          actions: [],
-          leading: IconButton(
-              icon: Icon(Icons.arrow_back),
-              onPressed: () {
-                Navigator.pop(context);
-                //Navigator.of(context).pushReplacementNamed('/rooms');
-              }),
+      appBar: AppBar(
+        title: const Text('Profile'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pop(context);
+          },
         ),
-        body: Consumer<MeModel>(builder: (context, me, child) {
+      ),
+      body: Consumer<MeModel>(
+        builder: (context, me, child) {
           return Container(
-              padding: EdgeInsets.all(20),
-              child: Column(children: [
-                Stack(children: [
-                  Container(
-                    alignment: Alignment.center,
-                    child: CircleAvatar(
-                        backgroundImage: NetworkImage(me.data?['picture'] ??
-                            'http://www.gravatar.com/avatar/?d=mp'),
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Stack(
+                  children: [
+                    Container(
+                      alignment: Alignment.center,
+                      child: CircleAvatar(
+                        backgroundImage: NetworkImage(resolveImageUrl(me.data?['picture'])),
                         backgroundColor: Colors.transparent,
-                        radius: 64),
-                  ),
-                  Container(
+                        radius: 64,
+                      ),
+                    ),
+                    Container(
                       alignment: Alignment.topRight,
                       child: TextButton(
-                          child: Text('Upload picture'),
-                          onPressed: () async {
-                            FilePickerResult? result =
-                                await FilePicker.platform.pickFiles();
-                            if (result != null) {
-                              Uint8List file = result.files.single.bytes!;
-                              final data = await httpService
-                                  .upload_profile_picture(file);
-                              Provider.of<MeModel>(context, listen: false)
-                                  .set_profile_picture(data['picture']);
+                        child: const Text('Upload picture'),
+                        onPressed: () async {
+                          FilePickerResult? result = await FilePicker.platform.pickFiles();
+                          if (result != null) {
+                            final file = result.files.single.bytes!;
+                            final data = await httpService.upload_profile_picture(file);
+                            Provider.of<MeModel>(context, listen: false).set_profile_picture(data['picture']);
 
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Profile picture saved')),
-                              );
-                            }
-                          })),
-                ]),
-                ProfileForm(data: me.data)
-              ]));
-        }));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Profile picture saved')),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                ProfileForm(data: me.data),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => _deleteAccount(context),
+                    child: const Text('Delete account'),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 }

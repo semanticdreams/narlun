@@ -9,7 +9,6 @@ RUN apk update && apk add \
     openssl-dev \
     cargo \
     make \
-    postgresql-dev \
     zlib \
     cairo \
     cairo-dev \

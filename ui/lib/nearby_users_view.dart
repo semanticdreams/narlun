@@ -14,6 +14,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
 
 import 'http.dart';
+import 'image_url.dart';
 import 'locator.dart';
 import 'dialog_manager.dart';
 import 'dialog_service.dart';
@@ -113,7 +114,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                         padding: const EdgeInsets.symmetric(vertical: 4.0),
                         child: ListTile(
                             leading: CircleAvatar(
-                                backgroundImage: NetworkImage(user['picture']),
+                                backgroundImage:
+                                    NetworkImage(resolveImageUrl(user['picture'])),
                                 backgroundColor: Colors.transparent),
                             title: Text(user['username']),
                             subtitle: Text(user['about_me'] != null

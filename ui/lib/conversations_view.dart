@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:collection';
 import 'dart:io';
@@ -14,9 +15,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
 
 import 'http.dart';
+import 'image_url.dart';
 import 'me_model.dart';
 import 'messages_view.dart';
 import 'appbar_avatar.dart';
+import 'locator.dart';
+import 'websocket.dart';
+
+WebsocketService _websocketService = locator<WebsocketService>();
 
 class ConversationsView extends StatefulWidget {
   @override
@@ -27,8 +33,7 @@ class _ConversationsState extends State<ConversationsView> {
   final HttpService httpService = HttpService();
 
   final rooms = [];
-
-  final picture_placeholder = 'http://www.gravatar.com/avatar/?d=mp';
+  StreamSubscription? roomsChangedSubscription;
 
   Future update_rooms() async {
     final resp = await httpService.get_rooms();
@@ -42,6 +47,14 @@ class _ConversationsState extends State<ConversationsView> {
   void initState() {
     super.initState();
     update_rooms();
+    roomsChangedSubscription =
+        _websocketService.roomsChangedStream().listen((_) => update_rooms());
+  }
+
+  @override
+  void dispose() {
+    roomsChangedSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -60,11 +73,11 @@ class _ConversationsState extends State<ConversationsView> {
                 padding: const EdgeInsets.symmetric(vertical: 4.0),
                 child: ListTile(
                     leading: CircleAvatar(
-                        backgroundImage: NetworkImage(room['is_group'] ||
-                                !me.data!['authenticated']
-                            ? (room['picture'] ?? picture_placeholder)
-                            : room['participants'].singleWhere(
-                                (x) => x['id'] != me.data!['id'])['picture']),
+                        backgroundImage: NetworkImage(resolveImageUrl(
+                            room['is_group'] || !me.data!['authenticated']
+                                ? room['picture']
+                                : room['participants'].singleWhere(
+                                    (x) => x['id'] != me.data!['id'])['picture'])),
                         backgroundColor: Colors.transparent),
                     trailing: Text(
                         timeago.format(DateTime.parse(room['updated_at']))),

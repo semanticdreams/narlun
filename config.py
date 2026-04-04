@@ -11,28 +11,13 @@ load_dotenv(os.path.join(basedir, '.env'))
 
 SENTRY_DSN = ''
 
-ADMIN_EMAIL = 'admin'
-ADMIN_PASSWORD = 'password'
-
-EMAIL_SENDER = 'hello@narlun.com'
-
 SECRET_KEY = 'hellosecret'
-SECURITY_PASSWORD_SALT = 'salt'
-#COOKIE_SECRET = 'mycookiesecret'
 
-PORT = 65001
-
-AWS_REGION = 'us-east-1'
-AWS_ACCESS_KEY = ''
-AWS_SECRET_KEY = ''
+PORT = 3000
 
 REDIS_URL = 'redis://localhost:6379'
 
 DOMAIN = 'https://narlun.com'
-
-DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/narlun'
-
-#PROXY_URL = ''
 
 # load local config
 if app_settings := os.environ.get('APP_SETTINGS'):

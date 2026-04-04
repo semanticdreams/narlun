@@ -14,6 +14,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
 
 import 'http.dart';
+import 'image_url.dart';
 import 'me_model.dart';
 
 class AppBarAvatar extends StatelessWidget {
@@ -24,8 +25,7 @@ class AppBarAvatar extends StatelessWidget {
           width: 58,
           child: IconButton(
               icon: CircleAvatar(
-                backgroundImage: NetworkImage(me.data?['picture'] ??
-                    'http://www.gravatar.com/avatar/?d=mp'),
+                backgroundImage: NetworkImage(resolveImageUrl(me.data?['picture'])),
                 backgroundColor: Colors.transparent,
               ),
               onPressed: () {

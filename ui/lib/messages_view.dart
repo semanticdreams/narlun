@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:collection';
 import 'dart:io';
@@ -41,10 +42,12 @@ class MessagesState extends State<MessagesView> {
 
   final ScrollController _scrollController = ScrollController();
 
-  late final messagesStreamSubscription;
+  StreamSubscription? messagesStreamSubscription;
+  StreamSubscription? roomDeletedSubscription;
 
   bool _firstAutoscrollExecuted = false;
   bool _shouldAutoscroll = false;
+  bool _roomClosed = false;
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -68,12 +71,34 @@ class MessagesState extends State<MessagesView> {
   }
 
   Future update_messages() async {
-    final resp = await httpService.get_messages(widget.room['id']);
-    setState(() {
-      messages.clear();
-      messages.addAll(resp);
-      _scrollToBottom();
-    });
+    try {
+      final resp = await httpService.get_messages(widget.room['id']);
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      setState(() {
+        messages.clear();
+        messages.addAll(resp);
+        _scrollToBottom();
+      });
+    } on InvalidUsage catch (e) {
+      if (e.code == 1000) {
+        await _handleRoomDeleted();
+      } else {
+        rethrow;
+      }
+    }
+  }
+
+  Future _handleRoomDeleted() async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    _roomClosed = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('This room is no longer available.')),
+    );
+    Navigator.pop(context);
   }
 
   @override
@@ -82,25 +107,40 @@ class MessagesState extends State<MessagesView> {
 
     _scrollController.addListener(_scrollListener);
 
-    update_messages();
-
-    messagesStreamSubscription =
-        _websocketService.messagesStream(widget.room['id']).listen((value) {
-      setState(() {
-        // TODO are new messages in right order?
-        messages.insertAll(0, value['data']['messages']);
-        _scrollToBottom();
-      });
-    });
-    _websocketService.subscribe_room(widget.room['id']);
+    _initializeRoom();
 
     messageFocusNode = FocusNode();
   }
 
+  Future<void> _initializeRoom() async {
+    await _websocketService.ensureConnected();
+    if (!mounted || _roomClosed) {
+      return;
+    }
+
+    messagesStreamSubscription =
+        _websocketService.messagesStream(widget.room['id']).listen((value) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      setState(() {
+        messages.insertAll(0, value['data']['messages']);
+        _scrollToBottom();
+      });
+    });
+    roomDeletedSubscription =
+        _websocketService.roomDeletedStream(widget.room['id']).listen((_) async {
+      await _handleRoomDeleted();
+    });
+    await _websocketService.subscribeRoom(widget.room['id']);
+    await update_messages();
+  }
+
   @override
   void dispose() {
-    _websocketService.unsubscribe_room(widget.room['id']);
-    messagesStreamSubscription.cancel();
+    _websocketService.unsubscribeRoom(widget.room['id']);
+    messagesStreamSubscription?.cancel();
+    roomDeletedSubscription?.cancel();
     _scrollController.removeListener(_scrollListener);
     messageController.dispose();
     messageFocusNode.dispose();
@@ -111,9 +151,16 @@ class MessagesState extends State<MessagesView> {
   Future send_message() async {
     final body = messageController.text;
     if (!body.isEmpty) {
-      await httpService.send_message(widget.room['id'], body);
-      //await update_messages();
-      messageController.text = '';
+      try {
+        await httpService.send_message(widget.room['id'], body);
+        messageController.text = '';
+      } on InvalidUsage catch (e) {
+        if (e.code == 1000) {
+          await _handleRoomDeleted();
+        } else {
+          rethrow;
+        }
+      }
     }
   }
 

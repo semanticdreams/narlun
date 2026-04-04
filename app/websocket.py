@@ -1,155 +1,92 @@
+import asyncio
 import json
 
-import asyncio
-import async_timeout
-
 import aiohttp
+import async_timeout
 from aiohttp import web
 
-from app.log import get_logger
-from app.util import JSONEncoder, authenticated
+from app.util import authenticated
 
 
-logger = get_logger()
-
-routes = web.RouteTableDef()
-
-pubsub_handlers = {}
-ws_handlers = {}
+active_sockets = {}
 
 
-def pubsub_handler(typ):
-    """Collect redis pubsub handler functions."""
-    def decorate(f):
-        pubsub_handlers[typ] = f
-        return f
-    return decorate
+async def close_user_websockets(user_id):
+    sockets = list(active_sockets.get(int(user_id), set()))
+    for ws in sockets:
+        await ws.close()
 
 
-def ws_handler(typ):
-    """Collect websocket handler functions."""
-    def decorate(f):
-        ws_handlers[typ] = f
-        return f
-    return decorate
+async def _subscribe_room(req, channel, room_id):
+    if await req.store.user_in_room(req.user['id'], int(room_id)):
+        await channel.subscribe(f'room:{room_id}')
+        return True
+    return False
 
 
-class UnknownPubsubMessageTypeError(Exception):
-    pass
+async def _unsubscribe_room(req, channel, room_id):
+    if await req.store.user_in_room(req.user['id'], int(room_id)):
+        await channel.unsubscribe(f'room:{room_id}')
+        return True
+    return False
 
 
-class UnknownWebsocketMessageTypeError(Exception):
-    pass
-
-
-class WsContext:
-    """Bundle context data to be passed to handler functions."""
-    def __init__(self, req, ws, channel, data):
-        self.req = req
-        self.ws = ws
-        self.channel = channel
-        self.data = data
-
-
-@pubsub_handler('new-messages')
-async def on_new_messages(ctx):
-    # send new messages to ws client
-    payload = json.dumps({'type': 'new-messages', 'data': ctx.data},
-                         cls=JSONEncoder)
-    await ctx.ws.send_str(payload)
-
-
-@pubsub_handler('signout')
-async def on_signout(ctx):
-    # close ws connection on signout
-    await ctx.ws.close()
-    logger.debug('ws connection closed upon signout')
-
-
-@ws_handler('subscribe-room')
-async def ws_subscribe_room(ctx):
-    # check room, ensure user is in it and subscribe user to room
-    if (room_id := ctx.data['data']['room_id']) is not None:
-        room = await ctx.req.db.fetchrow('select 1 from participants'
-                                         ' where room_id = $1 and user_id = $2',
-                                         room_id, ctx.req.user['id'])
-        if room:
-            channel_name = f'narlun:rooms:{room_id}'
-            await ctx.channel.subscribe(channel_name)
-
-
-@ws_handler('unsubscribe-room')
-async def ws_unsubscribe_room(ctx):
-    # check room, ensure user is in it and unsubscribe user from room
-    if (room_id := ctx.data['data']['room_id']) is not None:
-        room = await ctx.req.db.fetchrow('select 1 from participants'
-                                         ' where room_id = $1 and user_id = $2',
-                                         room_id, ctx.req.user['id'])
-        if room:
-            channel_name = f'narlun:rooms:{room_id}'
-            await ctx.channel.unsubscribe(channel_name)
-
-
-@routes.get('/api/ws')
 @authenticated
 async def websocket_handler(req):
-    """Handle websocket request."""
     ws = web.WebSocketResponse()
-
     await ws.prepare(req)
+    user_id = int(req.user['id'])
 
-    # create pubsub channel
     channel = req.redis.pubsub()
+    await channel.subscribe(f'user:{user_id}')
+    active_sockets.setdefault(user_id, set()).add(ws)
 
-    # automatically subscribe all users to a channel corresponding to their id
-    await channel.subscribe(f'narlun:users:{req.user["id"]}')
-
-    # the reader will handle messages incoming from the pubsub channel
-    async def reader(pubsub):
+    async def reader():
         while True:
             try:
                 async with async_timeout.timeout(1):
-                    message = await pubsub.get_message(ignore_subscribe_messages=True)
-                    if message is not None:
-                        data_str = message['data']
-                        data = json.loads(data_str)
-                        if data['type'] == 'stop':
-                            break
-                        else:
-                            handler = pubsub_handlers.get(data['type'])
-                            if handler:
-                                await handler(WsContext(req=req, channel=channel, ws=ws,
-                                                        data=data))
-                            else:
-                                raise UnknownPubsubMessageTypeError(data['type'])
-                    await asyncio.sleep(0.01)
+                    message = await channel.get_message(ignore_subscribe_messages=True)
+                    if message is None:
+                        await asyncio.sleep(0.01)
+                        continue
+                    data = json.loads(message['data'])
+                    if data['type'] == 'signout':
+                        await ws.send_str(json.dumps({'type': 'signout', 'data': data}))
+                        await ws.close()
+                        break
+                    await ws.send_str(json.dumps({'type': data['type'], 'data': data}))
             except asyncio.TimeoutError:
                 pass
-            except Exception as e:
-                logger.error(e, exc_info=True, stack_info=True)
-                await ws.close()
+            except asyncio.CancelledError:
+                break
 
-    # trigger reader task but don't await
-    reader_task = asyncio.create_task(reader(channel))
+    reader_task = asyncio.create_task(reader())
 
-    # now handle incoming websocket messages
     async for msg in ws:
         if msg.type == aiohttp.WSMsgType.TEXT:
-            if msg.data == 'close':
-                await ws.close()
-            else:
-                data = json.loads(msg.data)
-                handler = ws_handlers.get(data['type'])
-                if handler:
-                    await handler(WsContext(req=req, channel=channel, ws=ws,
-                                            data=data))
-                else:
-                    raise UnknownWebsocketMessageTypeError(data['type'])
+            payload = json.loads(msg.data)
+            message_type = payload.get('type')
+            data = payload.get('data', {})
+            room_id = data.get('room_id')
+            if message_type == 'subscribe-room' and room_id is not None:
+                if await _subscribe_room(req, channel, room_id):
+                    await ws.send_str(json.dumps({
+                        'type': 'subscribed-room',
+                        'data': {'room_id': int(room_id)},
+                    }))
+            elif message_type == 'unsubscribe-room' and room_id is not None:
+                if await _unsubscribe_room(req, channel, room_id):
+                    await ws.send_str(json.dumps({
+                        'type': 'unsubscribed-room',
+                        'data': {'room_id': int(room_id)},
+                    }))
         elif msg.type == aiohttp.WSMsgType.ERROR:
-            logger.error('ws connection closed with exception %s' %
-                         ws.exception())
+            break
 
-    # cancel reader task to prevent error
     reader_task.cancel()
-
+    sockets = active_sockets.get(user_id, set())
+    sockets.discard(ws)
+    if not sockets and user_id in active_sockets:
+        del active_sockets[user_id]
+    await channel.close()
     return ws

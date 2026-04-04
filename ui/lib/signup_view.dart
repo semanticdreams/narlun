@@ -117,7 +117,7 @@ class SignupViewState extends State<SignupView> {
                         ],
                       ),
                       Text(
-                          'To make your account permanent, set an email or password in your profile settings.',
+                          'Guest accounts disappear on sign out. Add a password in profile settings to keep the account.',
                           textAlign: TextAlign.center),
                       TextButton(
                           child: Text(

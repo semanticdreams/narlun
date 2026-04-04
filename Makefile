@@ -1,8 +1,7 @@
 .PHONY: test run lint cov secret-key
 
 run:
-	#poetry run python -m app.app
-	poetry run adev runserver app --port=5000
+	poetry run python -m app.app
 
 test:
 	poetry run python -m pytest -svx

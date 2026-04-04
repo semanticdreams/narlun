@@ -1,20 +1,13 @@
-import jwt
 import datetime
-import asyncpg
-import json
-from email_validator import validate_email, EmailNotValidError
-from werkzeug.security import generate_password_hash, check_password_hash
+
+import jwt
 from aiohttp import web
 
-from app.util import authenticated, jsonify, no_content, \
-        InvalidUsage, create_random_avatar, upload_fileobj_to_s3, \
-        generate_confirmation_token, confirm_token, \
-        send_email, JSONEncoder
-
 import config
+from app.redis_store import UserNotFound, UsernameAlreadyExists
+from app.util import InvalidUsage, authenticated, is_request_secure, jsonify, no_content
+from app.websocket import close_user_websockets
 
-
-# logger = get_logger()
 
 routes = web.RouteTableDef()
 
@@ -27,13 +20,6 @@ class UsernameExistsError(InvalidUsage):
 class PasswordTooShortError(InvalidUsage):
     code = 3
     message = 'Password must be at least 8 characters long'
-
-
-class InvalidEmailError(InvalidUsage):
-    code = 4
-
-    def __init__(self, msg):
-        self.message = 'Invalid email: ' + msg
 
 
 class UnknownUserError(InvalidUsage):
@@ -49,158 +35,133 @@ class BadPasswordError(InvalidUsage):
     message = 'Bad password'
 
 
+class InvalidUsernameError(InvalidUsage):
+    code = 7
+    message = 'Username cannot be empty'
+
+
+class InvalidAvatarError(InvalidUsage):
+    code = 8
+    message = 'Invalid avatar'
+
+    def __init__(self, message):
+        self.message = message
+
+
+def issue_auth_cookie(req, resp, user):
+    token = jwt.encode(
+        {'sub': user['id'], 'iat': datetime.datetime.utcnow()},
+        config.SECRET_KEY,
+    )
+    resp.set_cookie('jwt', token, path='/api', httponly=True, samesite='Lax', secure=is_request_secure(req))
+    return resp
+
+
 @routes.get('/me')
 async def get_me(req):
-    """Return authentication status and user data."""
     return jsonify(req.user)
 
 
 @routes.post('/signup')
 async def signup(req):
     try:
-        user = dict(await req.db.fetchrow(
-                'insert into users (username) values ($1)'
-                ' returning id, username, email, picture, password_hash, about_me, phone',
-                req.data['username']
-                ))
-    except asyncpg.exceptions.UniqueViolationError:
+        user = await req.store.create_guest_user(req.data['username'])
+    except KeyError:
+        raise InvalidUsernameError()
+    except ValueError:
+        raise InvalidUsernameError()
+    except UsernameAlreadyExists:
         raise UsernameExistsError()
 
-    # Set random avatar
-    url = await upload_fileobj_to_s3(create_random_avatar())
-    await req.db.execute('update users set picture = $2 where id = $1',
-                         user['id'], url)
-    user['picture'] = url
-    user['authenticated'] = True
-    user['has_password'] = True if user.pop('password_hash') else False
-    # TODO add roles
-
-    token = jwt.encode(dict(
-        sub=user['id'],
-        iat=datetime.datetime.utcnow()
-    ),
-        config.SECRET_KEY
-    )
-    resp = jsonify(user)
-    resp.set_cookie('jwt', token, path='/api', httponly=True,
-                    samesite='Lax', secure=True)
-    return resp
+    return issue_auth_cookie(req, jsonify(user), user)
 
 
 @routes.post('/signin')
 async def signin(req):
-    """Handle all types of signins: email, token and password."""
-    if req.data['method'] == 'email':
-        user = await req.db.fetchrow('select email from users where email = $1',
-                                     req.data['email'])
-        if user is None:
-            raise UnknownUserError(email=req.data['email'])
-        token = generate_confirmation_token(user['email'], 'signin')
-        signin_url = config.DOMAIN + '/signin?token=' + token
-        html = signin_url
-        subject = 'Sign in to narlun'
-        await send_email([req.data['email']], subject, html)
-        return jsonify(dict(authenticated=False, email_sent=True))
-    elif req.data['method'] == 'token':
-        email = confirm_token(req.data['token'], 'signin')
-        user = dict(await req.db.fetchrow(
-            'select * from users where email = $1', email))
-        if user is None:
-            raise UnknownUserError(token=req.data['token'])
-    else:
-        assert req.data['method'] == 'password'
-        user = dict(await req.db.fetchrow(
-            'select * from users where username = $1', req.data['username']))
-        if user is None:
-            raise UnknownUserError(username=req.data['username'])
-        if not check_password_hash(user['password_hash'], req.data['password']):
-            raise BadPasswordError()
-    user['authenticated'] = True
-    user['has_password'] = True if user.pop('password_hash') else False
-    # TODO add roles
-    token = jwt.encode(dict(
-        sub=user['id'],
-        iat=datetime.datetime.utcnow()
-    ),
-        config.SECRET_KEY
-    )
-    resp = jsonify(user)
-    resp.set_cookie('jwt', token, path='/api', httponly=True,
-                    samesite='Lax', secure=True)
-    return resp
+    username = req.data.get('username', '')
+    password = req.data.get('password', '')
+    user = await req.store.authenticate(username, password)
+    if user is None:
+        raise UnknownUserError(username=username)
+    if user is False:
+        raise BadPasswordError()
+    return issue_auth_cookie(req, jsonify(user), user)
 
 
 @routes.post('/update-profile')
 @authenticated
 async def update_profile(req):
-    """Update user data."""
+    password = req.data.get('password')
+    if password is not None and len(password) < 8:
+        raise PasswordTooShortError()
 
-    # Validate and update email
-    if (email := req.data.get('email')) is not None:
-        if email == '':
-            email = None
-        else:
-            try:
-                email = validate_email(
-                    email,
-                    check_deliverability=True).email
-            except EmailNotValidError as e:
-                raise InvalidEmailError(str(e))
-        await req.db.execute('update users set email = $2 where id = $1',
-                             req.user['id'], email)
+    try:
+        user = await req.store.update_user(
+            req.user['id'],
+            username=req.data.get('username'),
+            password=password,
+            about_me=req.data.get('about_me'),
+            phone=req.data.get('phone'),
+        )
+    except ValueError:
+        raise InvalidUsernameError()
+    except UsernameAlreadyExists:
+        raise UsernameExistsError()
+    except UserNotFound:
+        raise UnknownUserError(id=req.user['id'])
 
-    # Update username
-    if (username := req.data.get('username')) is not None:
-        # TODO should validate
-        await req.db.execute('update users set username = $2 where id = $1',
-                             req.user['id'], username)
-
-    # Update password
-    if (password := req.data.get('password')) is not None:
-        if password == '':
-            password_hash = None
-        elif len(password) < 8:
-            raise PasswordTooShortError()
-        else:
-            password_hash = generate_password_hash(password)
-        await req.db.execute('update users set password_hash = $2 where id = $1',
-                             req.user['id'], password_hash)
-
-    # Update about_me
-    if (about_me := req.data.get('about_me')) is not None:
-        await req.db.execute('update users set about_me = $2 where id = $1',
-                             req.user['id'], about_me)
-
-    # Update phone
-    if (phone := req.data.get('phone')) is not None:
-        await req.db.execute('update users set phone = $2 where id = $1',
-                             req.user['id'], phone)
-
-    # Return updated user data
-    return jsonify(await load_user_by_id(req.db, req.user['id']))
+    return jsonify(user)
 
 
 @routes.post('/upload-profile-picture')
 @authenticated
 async def upload_profile_picture(req):
-    """Save uploaded picture and set as avatar."""
     data = await req.post()
-    url = await upload_fileobj_to_s3(data['file'])
-    await req.db.execute('update users set picture = $2 where id = $1',
-                         req.user['id'], url)
-    return jsonify({'picture': url})
+    uploaded = data.get('file')
+    if uploaded is None:
+        raise InvalidAvatarError('Missing file')
+
+    raw_bytes = uploaded.file.read()
+    try:
+        picture = await req.store.normalize_and_store_avatar(req.user['id'], raw_bytes)
+    except UserNotFound:
+        raise UnknownUserError(id=req.user['id'])
+    except ValueError as exc:
+        raise InvalidAvatarError(str(exc))
+
+    return jsonify({'picture': picture})
+
+
+@routes.get(r'/avatar/{user_id:\d+}')
+async def get_avatar(req):
+    user_id = int(req.match_info['user_id'])
+    try:
+        data, content_type = await req.store.get_avatar(user_id)
+    except UserNotFound:
+        raise web.HTTPNotFound()
+    return web.Response(body=data, content_type=content_type)
 
 
 @routes.post('/signout')
 async def signout(req):
-    """Remove jwt cookie and trigger ws disconnect through redis."""
     resp = no_content()
     resp.del_cookie('jwt', path='/api')
-    if req.user['authenticated']:
-        await req.redis.publish(f'narlun:users:{req.user["id"]}',
-                                json.dumps(
-                                    {'type': 'signout'},
-                                    cls=JSONEncoder))
+    if req.user.get('authenticated'):
+        await req.store.publish_signout(req.user['id'])
+        await close_user_websockets(req.user['id'])
+        if not req.user['has_password']:
+            await req.store.delete_account(req.user['id'])
+    return resp
+
+
+@routes.delete('/me')
+@authenticated
+async def delete_account(req):
+    await req.store.publish_signout(req.user['id'])
+    await close_user_websockets(req.user['id'])
+    await req.store.delete_account(req.user['id'])
+    resp = no_content()
+    resp.del_cookie('jwt', path='/api')
     return resp
 
 

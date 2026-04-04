@@ -1,11 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:html';
 import 'package:http/http.dart' as http;
 import 'package:http_interceptor/http_interceptor.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:path/path.dart' as p;
 
 import 'config.dart';
 
@@ -76,7 +74,11 @@ class AuthInterceptor implements InterceptorContract {
       int index = jwt_cookie.indexOf(';');
       String jwt = jwt_cookie.substring(0, index);
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('jwt', jwt);
+      if (jwt == 'jwt=""' || jwt == 'jwt=') {
+        await prefs.remove('jwt');
+      } else {
+        await prefs.setString('jwt', jwt);
+      }
     }
     return data;
   }
@@ -110,14 +112,17 @@ class HttpService {
   }
 
   Future signout() async {
-    final resp = await client.post(Uri.parse(baseurl + '/users/signout'));
+    await client.post(Uri.parse(baseurl + '/users/signout'));
+    await _websocketService.close();
   }
 
   Future fetch_me() async {
     final resp = await client.get(Uri.parse(baseurl + '/users/me'));
     final body = jsonDecode(resp.body);
     if (body['authenticated']) {
-      _websocketService.reconnect();
+      await _websocketService.reconnect();
+    } else {
+      await _websocketService.close();
     }
     return body;
   }
@@ -127,23 +132,20 @@ class HttpService {
         body: jsonEncode({'username': username}));
     final body = jsonDecode(resp.body);
     if (body['authenticated']) {
-      _websocketService.reconnect();
+      await _websocketService.reconnect();
     }
     return body;
   }
 
-  Future signin({username, password, email, token, method}) async {
+  Future signin({username, password}) async {
     final resp = await client.post(Uri.parse(baseurl + '/users/signin'),
         body: jsonEncode({
           'username': username,
           'password': password,
-          'email': email,
-          'token': token,
-          'method': method
         }));
     final body = jsonDecode(resp.body);
     if (body['authenticated']) {
-      _websocketService.reconnect();
+      await _websocketService.reconnect();
     }
     return body;
   }
@@ -173,8 +175,13 @@ class HttpService {
     final bodyfunc = (x) async {
       return jsonDecode(await x.stream.bytesToString());
     };
-    final checked_resp = await check_response(resp, bodyfunc);
+    await check_response(resp, bodyfunc);
     return bodyfunc(resp);
+  }
+
+  Future delete_account() async {
+    await client.delete(Uri.parse(baseurl + '/users/me'));
+    await _websocketService.close();
   }
 
   Future checkin(lat, lon) async {

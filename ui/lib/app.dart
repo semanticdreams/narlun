@@ -124,8 +124,7 @@ class MyApp extends StatelessWidget {
                 page_view = ProfileView();
                 break;
               case '/signin':
-                page_view =
-                    SigninView(token: uri_data.queryParameters['token']);
+                page_view = SigninView();
                 break;
             }
           }

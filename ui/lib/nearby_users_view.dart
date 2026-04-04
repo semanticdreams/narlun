@@ -20,6 +20,7 @@ class NearbyUsersView extends StatefulWidget {
   final HttpService? httpService;
   final DialogService? dialogService;
   final LocationService? locationService;
+  final bool autoCheckin;
 
   const NearbyUsersView({
     super.key,
@@ -27,6 +28,7 @@ class NearbyUsersView extends StatefulWidget {
     this.httpService,
     this.dialogService,
     this.locationService,
+    this.autoCheckin = true,
   });
 
   @override
@@ -41,6 +43,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   final List<NearbyUser> nearbyUsers = [];
   bool _loading = false;
   String _statusMessage = 'Checking your location...';
+  bool _didInitialCheckin = false;
 
   @override
   void initState() {
@@ -49,6 +52,20 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
     dialogService = widget.dialogService ?? locator<DialogService>();
     locationService = widget.locationService ?? GeolocatorLocationService();
+    _maybeStartInitialCheckin();
+  }
+
+  @override
+  void didUpdateWidget(covariant NearbyUsersView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _maybeStartInitialCheckin();
+  }
+
+  void _maybeStartInitialCheckin() {
+    if (!widget.autoCheckin || _didInitialCheckin) {
+      return;
+    }
+    _didInitialCheckin = true;
     unawaited(checkin());
   }
 

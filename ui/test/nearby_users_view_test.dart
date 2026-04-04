@@ -85,24 +85,41 @@ class FakeLocationService implements LocationService {
   LocationPermission permission;
   LocationPermission requestPermissionResult;
   Position position;
+  int isEnabledCalls = 0;
+  int checkPermissionCalls = 0;
+  int requestPermissionCalls = 0;
+  int getCurrentPositionCalls = 0;
 
   @override
-  Future<LocationPermission> checkPermission() async => permission;
+  Future<LocationPermission> checkPermission() async {
+    checkPermissionCalls += 1;
+    return permission;
+  }
 
   @override
-  Future<Position> getCurrentPosition() async => position;
+  Future<Position> getCurrentPosition() async {
+    getCurrentPositionCalls += 1;
+    return position;
+  }
 
   @override
-  Future<bool> isLocationServiceEnabled() async => enabled;
+  Future<bool> isLocationServiceEnabled() async {
+    isEnabledCalls += 1;
+    return enabled;
+  }
 
   @override
-  Future<LocationPermission> requestPermission() async => requestPermissionResult;
+  Future<LocationPermission> requestPermission() async {
+    requestPermissionCalls += 1;
+    return requestPermissionResult;
+  }
 }
 
 Widget _buildNearbyApp({
   required FakeNearbyHttpService httpService,
   required FakeLocationService locationService,
   required Future<void> Function(int roomId) onUserJoined,
+  bool autoCheckin = true,
   String initialRoute = '/nearby',
 }) {
   return Provider<HttpService>.value(
@@ -120,6 +137,7 @@ Widget _buildNearbyApp({
                 httpService: httpService,
                 dialogService: DialogService(),
                 locationService: locationService,
+                autoCheckin: autoCheckin,
                 onUserJoined: onUserJoined,
               ),
         },
@@ -244,5 +262,26 @@ void main() {
 
     expect(httpService.clearedLocalSession, isTrue);
     expect(find.text('Welcome landing'), findsOneWidget);
+  });
+
+  testWidgets('does not request location when auto checkin is disabled', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService();
+    final locationService = FakeLocationService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        autoCheckin: false,
+        onUserJoined: (_) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(locationService.isEnabledCalls, 0);
+    expect(locationService.checkPermissionCalls, 0);
+    expect(locationService.getCurrentPositionCalls, 0);
   });
 }

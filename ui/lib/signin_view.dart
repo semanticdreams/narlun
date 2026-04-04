@@ -7,7 +7,7 @@ import 'models.dart';
 import 'route_utils.dart';
 
 class SigninView extends StatefulWidget {
-  const SigninView({Key? key}) : super(key: key);
+  const SigninView({super.key});
 
   @override
   SigninState createState() {
@@ -31,7 +31,7 @@ class SigninState extends State<SigninView> {
       }
       Provider.of<MeModel>(context, listen: false).setData(me);
       Navigator.of(context).pushNamedAndRemoveUntil(
-        nextRouteFromContext(context) ?? '/rooms',
+        nextRouteFromContext(context) ?? '/home',
         (route) => false,
       );
     } on InvalidUsage {
@@ -67,10 +67,10 @@ class SigninState extends State<SigninView> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
+              const Text(
                 'Narlun',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 50,
                   color: Color(0xFF5F4484),

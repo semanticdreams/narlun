@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
@@ -5,11 +7,14 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
 import 'package:narlun/dialog_service.dart';
+import 'package:narlun/install_prompt_service.dart';
+import 'package:narlun/home_tab_storage.dart';
 import 'package:narlun/home_view.dart';
 import 'package:narlun/http.dart';
 import 'package:narlun/location_service.dart';
 import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
+import 'package:narlun/messages_view.dart';
 import 'package:narlun/models.dart';
 import 'package:narlun/websocket.dart';
 
@@ -29,6 +34,31 @@ class _FakeWebsocketService extends WebsocketService {
 
   @override
   Future<void> ensureConnected() async {}
+
+  @override
+  Future<void> subscribeRoom(roomId) async {}
+
+  @override
+  Future<void> unsubscribeRoom(roomId) async {}
+}
+
+class _FakeInstallPromptService extends InstallPromptService {
+  @override
+  bool get isInstallAvailable => false;
+
+  @override
+  bool get isInstalled => false;
+
+  @override
+  bool get shouldShowSuggestion => false;
+
+  @override
+  void dismissSuggestion() {}
+
+  @override
+  Future<InstallPromptOutcome> requestInstall() async {
+    return InstallPromptOutcome.unavailable;
+  }
 }
 
 class FakeNearbyHttpService extends HttpService {
@@ -40,10 +70,26 @@ class FakeNearbyHttpService extends HttpService {
       );
 
   int checkinCalls = 0;
+  int joinUserCalls = 0;
+  List<NearbyUser> nearbyUsers = const [];
 
   @override
   Future<List<NearbyUser>> checkin(lat, lon) async {
     checkinCalls += 1;
+    return nearbyUsers;
+  }
+
+  @override
+  Future<int> join_user(user_id) async {
+    joinUserCalls += 1;
+    return 42;
+  }
+
+  @override
+  Future<List<ChatMessage>> get_messages(
+    room_id, {
+    bool silentErrors = false,
+  }) async {
     return const [];
   }
 }
@@ -93,9 +139,11 @@ class FakeLocationService implements LocationService {
 void main() {
   setUp(() async {
     await setupLocator(reset: true, dialogService: DialogService());
+    clearStoredHomeTabIndexForTests();
   });
 
   tearDown(() async {
+    clearStoredHomeTabIndexForTests();
     await locator.reset();
   });
 
@@ -106,19 +154,24 @@ void main() {
     final locationService = FakeLocationService();
 
     await tester.pumpWidget(
-      Provider<HttpService>.value(
-        value: httpService,
-        child: ChangeNotifierProvider(
-          create: (_) => MeModel()
-            ..setData(
-              const SessionUser(authenticated: true, id: 1, username: 'me'),
-            ),
-          child: MaterialApp(
-            home: HomeView(
-              initialTabIndex: 1,
-              nearbyLocationService: locationService,
-              roomsView: const Scaffold(body: Text('Rooms placeholder')),
-            ),
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: HomeView(
+            initialTabIndex: 1,
+            nearbyLocationService: locationService,
+            roomsView: const Scaffold(body: Text('Rooms placeholder')),
           ),
         ),
       ),
@@ -131,12 +184,109 @@ void main() {
     expect(locationService.getCurrentPositionCalls, 0);
     expect(httpService.checkinCalls, 0);
 
-    await tester.tap(find.byIcon(Icons.people));
+    await tester.tap(find.byIcon(Icons.people_outline));
     await tester.pumpAndSettle();
 
     expect(locationService.isEnabledCalls, 1);
     expect(locationService.checkPermissionCalls, 1);
     expect(locationService.getCurrentPositionCalls, 1);
     expect(httpService.checkinCalls, 1);
+  });
+
+  testWidgets('home view remembers the last selected tab', (tester) async {
+    writeStoredHomeTabIndex(1);
+    final httpService = FakeNearbyHttpService();
+    final locationService = FakeLocationService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: HomeView(
+            nearbyLocationService: locationService,
+            roomsView: const Scaffold(body: Text('Rooms placeholder')),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rooms placeholder'), findsOneWidget);
+    expect(locationService.isEnabledCalls, 0);
+
+    await tester.tap(find.text('Nearby'));
+    await tester.pumpAndSettle();
+
+    expect(readStoredHomeTabIndex(), 0);
+  });
+
+  testWidgets('tapping a nearby user opens the room immediately', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyUsers = [
+        NearbyUser(
+          id: 2,
+          username: 'bob',
+          distance: 120,
+          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          status: 'Nearby',
+        ),
+      ];
+    final locationService = FakeLocationService();
+
+    await setupLocator(
+      reset: true,
+      dialogService: DialogService(),
+      websocketService: _FakeWebsocketService(),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: HomeView(
+            initialTabIndex: 0,
+            nearbyLocationService: locationService,
+            roomsView: const Scaffold(body: Text('Rooms placeholder')),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('bob'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.joinUserCalls, 1);
+    expect(find.byType(MessagesView), findsOneWidget);
+    expect(find.byKey(const Key('message-input-field')), findsOneWidget);
+
+    Navigator.of(tester.element(find.byType(MessagesView))).pop();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rooms placeholder'), findsOneWidget);
   });
 }

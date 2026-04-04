@@ -208,6 +208,15 @@ class BackendClient {
     return response.json;
   }
 
+  async checkin(jwtCookie, latitude, longitude) {
+    const response = await this.request('POST', '/social/checkin', {
+      cookie: jwtCookie,
+      body: { lat: latitude, lon: longitude },
+      expectedStatus: 200,
+    });
+    return response.json;
+  }
+
   async signout(jwtCookie) {
     await this.request('POST', '/users/signout', {
       cookie: jwtCookie,
@@ -254,6 +263,10 @@ class BackendSession {
 
   async sendMessage(roomId, body) {
     return this.client.sendMessage(this.jwtCookie, roomId, body);
+  }
+
+  async checkin(latitude, longitude) {
+    return this.client.checkin(this.jwtCookie, latitude, longitude);
   }
 
   async signout() {

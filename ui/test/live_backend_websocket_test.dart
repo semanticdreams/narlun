@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:narlun/bootstrap.dart';
+import 'package:narlun/home_tab_storage.dart';
 import 'package:narlun/http.dart';
 import 'package:narlun/locator.dart';
 import 'package:narlun/websocket.dart';
@@ -294,6 +294,7 @@ Future<void> pumpUntilNotFound(
 }
 
 Future<void> launchApp(WidgetTester tester, LiveBackendHarness harness) async {
+  writeStoredHomeTabIndex(1);
   await clearSessionCookieForTests();
   await initializeApp(environment: 'DEV', apiUrlOverride: harness.apiUrl);
   await tester.pumpWidget(buildNarlunApp());
@@ -309,6 +310,11 @@ Future<void> signUpThroughUi(WidgetTester tester, String username) async {
 }
 
 Future<void> openRoomFromList(WidgetTester tester, String username) async {
+  final roomsTab = find.text('Rooms').first;
+  if (roomsTab.evaluate().isNotEmpty) {
+    await tester.tap(roomsTab);
+    await tester.pumpAndSettle();
+  }
   await pumpUntilFound(tester, find.text(username));
   await tester.tap(find.text(username).last);
   await tester.pumpAndSettle();
@@ -328,6 +334,7 @@ void main() {
   });
 
   tearDown(() async {
+    clearStoredHomeTabIndexForTests();
     if (locator.isRegistered<WebsocketService>()) {
       await locator<WebsocketService>().close();
       await locator.reset();

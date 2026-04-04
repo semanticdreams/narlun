@@ -8,7 +8,6 @@ import 'home_view.dart';
 import 'profile_view.dart';
 import 'me_model.dart';
 import 'set_page_title.dart';
-import 'conversations_view.dart';
 
 import 'locator.dart';
 import 'dialog_service.dart';
@@ -19,11 +18,10 @@ class MyApp extends StatelessWidget {
   final GlobalKey<NavigatorState> navigatorKey;
 
   MyApp({
-    Key? key,
+    super.key,
     required this.theme,
     GlobalKey<NavigatorState>? navigatorKey,
-  }) : navigatorKey = navigatorKey ?? GlobalKey<NavigatorState>(),
-       super(key: key);
+  }) : navigatorKey = navigatorKey ?? GlobalKey<NavigatorState>();
 
   @override
   Widget build(BuildContext context) {
@@ -78,17 +76,17 @@ class MyApp extends StatelessWidget {
               name: newUri.toString(),
               arguments: settings.arguments,
             ),
-            builder: (BuildContext context) => SignupView(),
+            builder: (BuildContext context) => const SignupView(),
           );
         } else if (me != null &&
             me.authenticated == true &&
             unauthPaths.contains(uriData!.path)) {
           return MaterialPageRoute(
             settings: RouteSettings(
-              name: '/rooms',
+              name: '/home',
               arguments: settings.arguments,
             ),
-            builder: (BuildContext context) => HomeView(),
+            builder: (BuildContext context) => const HomeView(),
           );
         }
 
@@ -101,13 +99,16 @@ class MyApp extends StatelessWidget {
               pageView = const SignupView();
               break;
             case '/home':
-              pageView = HomeView();
+              pageView = const HomeView();
               break;
             case '/rooms':
-              pageView = ConversationsView();
+              pageView = const HomeView(initialTabIndex: 1);
+              break;
+            case '/nearby':
+              pageView = const HomeView(initialTabIndex: 0);
               break;
             case '/profile':
-              pageView = ProfileView();
+              pageView = const ProfileView();
               break;
             case '/signin':
               pageView = const SigninView();

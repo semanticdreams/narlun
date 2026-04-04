@@ -58,7 +58,7 @@ Widget _buildWelcomeApp(FakeBootstrapHttpService httpService) {
         routes: {
           '/': (_) => const WelcomeView(),
           '/signup': (_) => const Scaffold(body: Text('Signup page')),
-          '/rooms': (_) => const Scaffold(body: Text('Rooms page')),
+          '/home': (_) => const Scaffold(body: Text('Home page')),
         },
       ),
     ),

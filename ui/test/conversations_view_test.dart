@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -161,7 +163,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final state = tester.state(find.byType(ConversationsView)) as dynamic;
-    await state.update_rooms(silentErrors: true);
+    await state.updateRooms(silentErrors: true);
     await tester.pumpAndSettle();
 
     expect(httpService.clearedLocalSession, isTrue);
@@ -215,5 +217,49 @@ void main() {
 
     expect(installPromptService.dismissCalls, 1);
     expect(find.text('Install Narlun'), findsNothing);
+  });
+
+  testWidgets('shows a nearby empty state action when there are no rooms', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final installPromptService = FakeInstallPromptService();
+    var openNearbyCalls = 0;
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+            onOpenNearby: () {
+              openNearbyCalls += 1;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('No rooms yet'), findsOneWidget);
+    expect(find.text('Find people nearby'), findsOneWidget);
+
+    await tester.tap(find.text('Find people nearby'));
+    await tester.pumpAndSettle();
+
+    expect(openNearbyCalls, 1);
   });
 }

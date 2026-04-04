@@ -16,7 +16,7 @@ import 'models.dart';
 import 'session_actions.dart';
 
 class NearbyUsersView extends StatefulWidget {
-  final FutureOr<void> Function(int) onUserJoined;
+  final FutureOr<void> Function(NearbyUser user, int roomId) onUserJoined;
   final HttpService? httpService;
   final DialogService? dialogService;
   final LocationService? locationService;
@@ -153,9 +153,9 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     }
   }
 
-  Future<void> join_user(NearbyUser user) async {
+  Future<void> joinUser(NearbyUser user) async {
     final roomId = await httpService.join_user(user.id);
-    await Future.sync(() => widget.onUserJoined(roomId));
+    await Future.sync(() => widget.onUserJoined(user, roomId));
   }
 
   @override
@@ -216,7 +216,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                       ],
                     ),
                     onTap: () async {
-                      await join_user(user);
+                      await joinUser(user);
                     },
                   ),
                 ),

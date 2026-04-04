@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
@@ -118,7 +120,7 @@ class FakeLocationService implements LocationService {
 Widget _buildNearbyApp({
   required FakeNearbyHttpService httpService,
   required FakeLocationService locationService,
-  required Future<void> Function(int roomId) onUserJoined,
+  required Future<void> Function(NearbyUser user, int roomId) onUserJoined,
   bool autoCheckin = true,
   String initialRoute = '/nearby',
 }) {
@@ -170,12 +172,14 @@ void main() {
       ];
     final locationService = FakeLocationService();
     int? joinedRoomId;
+    NearbyUser? joinedUser;
 
     await tester.pumpWidget(
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
-        onUserJoined: (roomId) async {
+        onUserJoined: (user, roomId) async {
+          joinedUser = user;
           joinedRoomId = roomId;
         },
       ),
@@ -196,6 +200,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(joinedRoomId, 99);
+    expect(joinedUser?.username, 'bob');
   });
 
   testWidgets('does not render an empty subtitle when status is missing', (
@@ -216,7 +221,7 @@ void main() {
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
-        onUserJoined: (_) async {},
+        onUserJoined: (_, __) async {},
       ),
     );
     await tester.pumpAndSettle();
@@ -237,7 +242,7 @@ void main() {
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
-        onUserJoined: (_) async {},
+        onUserJoined: (_, __) async {},
       ),
     );
     await tester.pumpAndSettle();
@@ -255,7 +260,7 @@ void main() {
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
-        onUserJoined: (_) async {},
+        onUserJoined: (_, __) async {},
       ),
     );
     await tester.pumpAndSettle();
@@ -275,7 +280,7 @@ void main() {
         httpService: httpService,
         locationService: locationService,
         autoCheckin: false,
-        onUserJoined: (_) async {},
+        onUserJoined: (_, __) async {},
       ),
     );
     await tester.pumpAndSettle();

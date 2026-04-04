@@ -1,28 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import 'appbar_avatar.dart';
 import 'conversations_view.dart';
+import 'home_tab_storage.dart';
 import 'location_service.dart';
-import 'navdrawer.dart';
+import 'messages_view.dart';
+import 'me_model.dart';
+import 'models.dart';
 import 'nearby_users_view.dart';
 
 class HomeView extends StatelessWidget {
-  final int initialTabIndex;
+  final int? initialTabIndex;
   final LocationService? nearbyLocationService;
   final Widget? roomsView;
 
   const HomeView({
     super.key,
-    this.initialTabIndex = 1,
+    this.initialTabIndex,
     this.nearbyLocationService,
     this.roomsView,
   });
 
   @override
   Widget build(BuildContext context) {
+    final resolvedInitialTabIndex =
+        initialTabIndex ?? readStoredHomeTabIndex() ?? 0;
     return DefaultTabController(
       length: 2,
-      initialIndex: initialTabIndex,
+      initialIndex: resolvedInitialTabIndex,
       child: _HomeScaffold(
         nearbyLocationService: nearbyLocationService,
         roomsView: roomsView,
@@ -58,6 +64,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     _tabController?.removeListener(_handleTabChanged);
     _tabController = controller;
     _activeTabIndex = controller.index;
+    writeStoredHomeTabIndex(controller.index);
     _tabController?.addListener(_handleTabChanged);
   }
 
@@ -78,20 +85,49 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     setState(() {
       _activeTabIndex = controller.index;
     });
+    writeStoredHomeTabIndex(controller.index);
+  }
+
+  Future<void> _openNearbyRoom(NearbyUser user, int roomId) async {
+    final me = Provider.of<MeModel>(context, listen: false).data;
+    if (me == null || !me.authenticated || me.id == null) {
+      return;
+    }
+
+    _tabController?.animateTo(1);
+    final room = RoomSummary(
+      id: roomId,
+      isGroup: false,
+      updatedAt: DateTime.now(),
+      participants: [
+        RoomParticipant(id: me.id!, username: me.username ?? ''),
+        RoomParticipant(
+          id: user.id,
+          username: user.username,
+          picture: user.picture,
+        ),
+      ],
+    );
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MessagesView(room: room, me: me),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final tabController = _tabController ?? DefaultTabController.of(context);
     return Scaffold(
-      drawer: NavDrawer(),
       appBar: AppBar(
         title: const Text('Narlun'),
         actions: const [AppBarAvatar()],
         bottom: const TabBar(
           tabs: [
-            Tab(icon: Icon(Icons.people)),
-            Tab(icon: Icon(Icons.message)),
+            Tab(icon: Icon(Icons.people_outline), text: 'Nearby'),
+            Tab(icon: Icon(Icons.chat_bubble_outline), text: 'Rooms'),
           ],
         ),
       ),
@@ -100,11 +136,15 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
           NearbyUsersView(
             autoCheckin: _activeTabIndex == 0,
             locationService: widget.nearbyLocationService,
-            onUserJoined: (_) {
-              tabController.animateTo(1);
-            },
+            onUserJoined: _openNearbyRoom,
           ),
-          widget.roomsView ?? const ConversationsView(),
+          widget.roomsView ??
+              ConversationsView(
+                showChrome: false,
+                onOpenNearby: () {
+                  tabController.animateTo(0);
+                },
+              ),
         ],
       ),
     );

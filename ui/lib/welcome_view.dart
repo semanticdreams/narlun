@@ -8,7 +8,7 @@ import 'me_model.dart';
 import 'models.dart';
 
 class WelcomeView extends StatefulWidget {
-  const WelcomeView({Key? key}) : super(key: key);
+  const WelcomeView({super.key});
 
   @override
   State<WelcomeView> createState() => _WelcomeState();
@@ -57,7 +57,7 @@ class _WelcomeState extends State<WelcomeView> {
     }
 
     if (me.authenticated) {
-      Navigator.pushReplacementNamed(context, '/rooms');
+      Navigator.pushReplacementNamed(context, '/home');
     } else {
       Navigator.pushReplacementNamed(context, '/signup');
     }

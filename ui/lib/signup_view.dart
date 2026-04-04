@@ -8,7 +8,7 @@ import 'models.dart';
 import 'route_utils.dart';
 
 class SignupView extends StatefulWidget {
-  const SignupView({Key? key}) : super(key: key);
+  const SignupView({super.key});
 
   @override
   SignupViewState createState() {
@@ -30,7 +30,7 @@ class SignupViewState extends State<SignupView> {
       }
       Provider.of<MeModel>(context, listen: false).setData(me);
       Navigator.of(context).pushNamedAndRemoveUntil(
-        nextRouteFromContext(context) ?? '/rooms',
+        nextRouteFromContext(context) ?? '/home',
         (route) => false,
       );
     } on InvalidUsage {

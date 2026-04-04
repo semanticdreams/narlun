@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import 'package:url_strategy/url_strategy.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:json_theme/json_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
@@ -25,19 +24,30 @@ import 'conversations_view.dart';
 
 import 'dialog_manager.dart';
 import 'dialog_service.dart';
+import 'session_watcher.dart';
 
 class MyApp extends StatelessWidget {
   final ThemeData theme;
+  final GlobalKey<NavigatorState> navigatorKey;
 
-  const MyApp({Key? key, required this.theme}) : super(key: key);
+  MyApp({
+    Key? key,
+    required this.theme,
+    GlobalKey<NavigatorState>? navigatorKey,
+  })  : navigatorKey = navigatorKey ?? GlobalKey<NavigatorState>(),
+        super(key: key);
 
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-        builder: (context, widget) => Navigator(
-            onGenerateRoute: (settings) => MaterialPageRoute(
-                builder: (context) => DialogManager(child: widget!))),
+        navigatorKey: navigatorKey,
+        builder: (context, widget) => DialogManager(
+              child: SessionWatcher(
+                navigatorKey: navigatorKey,
+                child: widget!,
+              ),
+            ),
         debugShowCheckedModeBanner: false,
         title: 'Narlun',
         theme: theme,

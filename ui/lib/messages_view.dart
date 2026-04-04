@@ -1,30 +1,25 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:convert';
-import 'dart:collection';
-import 'dart:io';
-import 'dart:ui';
-import 'package:provider/provider.dart';
-import 'package:url_strategy/url_strategy.dart';
-import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:json_theme/json_theme.dart';
-import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
+import 'package:flutter/material.dart';
 
 import 'http.dart';
 import 'locator.dart';
 import 'websocket.dart';
 
-WebsocketService _websocketService = locator<WebsocketService>();
-
 class MessagesView extends StatefulWidget {
   final room;
   final me;
+  final HttpService? httpService;
+  final WebsocketService? websocketService;
 
-  const MessagesView({Key? key, this.room, this.me}) : super(key: key);
+  const MessagesView({
+    Key? key,
+    this.room,
+    this.me,
+    this.httpService,
+    this.websocketService,
+  }) : super(key: key);
 
   @override
   MessagesState createState() {
@@ -33,7 +28,8 @@ class MessagesView extends StatefulWidget {
 }
 
 class MessagesState extends State<MessagesView> {
-  final HttpService httpService = HttpService();
+  late final HttpService httpService;
+  late final WebsocketService websocketService;
 
   final messages = [];
 
@@ -44,6 +40,7 @@ class MessagesState extends State<MessagesView> {
 
   StreamSubscription? messagesStreamSubscription;
   StreamSubscription? roomDeletedSubscription;
+  StreamSubscription? connectionEventsSubscription;
 
   bool _firstAutoscrollExecuted = false;
   bool _shouldAutoscroll = false;
@@ -77,8 +74,7 @@ class MessagesState extends State<MessagesView> {
         return;
       }
       setState(() {
-        messages.clear();
-        messages.addAll(resp);
+        _mergeMessages(resp);
         _scrollToBottom();
       });
     } on InvalidUsage catch (e) {
@@ -101,9 +97,23 @@ class MessagesState extends State<MessagesView> {
     Navigator.pop(context);
   }
 
+  Future _handleSessionEnded() async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    _roomClosed = true;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Your session has ended.')));
+    Navigator.pop(context);
+  }
+
   @override
   void initState() {
     super.initState();
+    websocketService = widget.websocketService ?? locator<WebsocketService>();
+    httpService =
+        widget.httpService ?? HttpService(websocketService: websocketService);
 
     _scrollController.addListener(_scrollListener);
 
@@ -113,34 +123,85 @@ class MessagesState extends State<MessagesView> {
   }
 
   Future<void> _initializeRoom() async {
-    await _websocketService.ensureConnected();
-    if (!mounted || _roomClosed) {
-      return;
-    }
-
-    messagesStreamSubscription =
-        _websocketService.messagesStream(widget.room['id']).listen((value) {
+    messagesStreamSubscription = websocketService
+        .messagesStream(widget.room['id'])
+        .listen((value) {
+          if (!mounted || _roomClosed) {
+            return;
+          }
+          setState(() {
+            _mergeMessages(value['data']['messages']);
+            _scrollToBottom();
+          });
+        });
+    roomDeletedSubscription = websocketService
+        .roomDeletedStream(widget.room['id'])
+        .listen((_) async {
+          await _handleRoomDeleted();
+        });
+    connectionEventsSubscription = websocketService.connectionEvents.listen((
+      event,
+    ) async {
       if (!mounted || _roomClosed) {
         return;
       }
-      setState(() {
-        messages.insertAll(0, value['data']['messages']);
-        _scrollToBottom();
-      });
+      if (event == 'reconnected') {
+        await update_messages();
+      } else if (event == 'signed-out') {
+        await _handleSessionEnded();
+      }
     });
-    roomDeletedSubscription =
-        _websocketService.roomDeletedStream(widget.room['id']).listen((_) async {
+
+    try {
+      await websocketService.ensureConnected();
+      if (!mounted || _roomClosed) {
+        return;
+      }
+
+      await websocketService.subscribeRoom(widget.room['id']);
+      await update_messages();
+    } on RoomUnavailable {
       await _handleRoomDeleted();
+    } catch (_) {
+      // The websocket service keeps retrying in the background.
+    }
+  }
+
+  void _mergeMessages(List<dynamic> incoming) {
+    final mergedById = <String, dynamic>{};
+    for (final message in messages) {
+      final messageId = message['id'];
+      if (messageId != null) {
+        mergedById['$messageId'] = message;
+      }
+    }
+    for (final message in incoming) {
+      final messageId = message['id'];
+      if (messageId != null) {
+        mergedById['$messageId'] = message;
+      }
+    }
+    final merged = mergedById.values.toList();
+    merged.sort((a, b) {
+      final timestampComparison = '${b['timestamp']}'.compareTo(
+        '${a['timestamp']}',
+      );
+      if (timestampComparison != 0) {
+        return timestampComparison;
+      }
+      return '${b['id']}'.compareTo('${a['id']}');
     });
-    await _websocketService.subscribeRoom(widget.room['id']);
-    await update_messages();
+    messages
+      ..clear()
+      ..addAll(merged);
   }
 
   @override
   void dispose() {
-    _websocketService.unsubscribeRoom(widget.room['id']);
+    websocketService.unsubscribeRoom(widget.room['id']);
     messagesStreamSubscription?.cancel();
     roomDeletedSubscription?.cancel();
+    connectionEventsSubscription?.cancel();
     _scrollController.removeListener(_scrollListener);
     messageController.dispose();
     messageFocusNode.dispose();
@@ -167,65 +228,83 @@ class MessagesState extends State<MessagesView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        backgroundColor: Colors.purple[50],
-        appBar: AppBar(
-          title: Text(widget.room['is_group']
+      backgroundColor: Colors.purple[50],
+      appBar: AppBar(
+        title: Text(
+          widget.room['is_group']
               ? widget.room['name']
               : widget.room['participants'].singleWhere(
-                  (x) => x['id'] != widget.me.data['id'])['username']),
-          actions: [],
+                  (x) => x['id'] != widget.me.data['id'],
+                )['username'],
         ),
-        body: Column(children: [
+        actions: [],
+      ),
+      body: Column(
+        children: [
           Expanded(
-              child: ListView.builder(
-                  //reverse: true,
-                  itemCount: messages.length,
-                  controller: _scrollController,
-                  itemBuilder: (BuildContext context, int index) {
-                    final msg = messages[(messages.length - 1) - index];
-                    final is_sender = msg['sender_id'] == widget.me.data['id'];
-                    return Padding(
-                        padding: EdgeInsets.symmetric(vertical: 1),
-                        child: BubbleSpecialOne(
-                            text: msg['body'],
-                            isSender: is_sender,
-                            tail: true,
-                            color: is_sender
-                                ? Colors.purple[500]!
-                                : Colors.grey[700]!,
-                            textStyle: TextStyle(
-                                color:
-                                    Theme.of(context).colorScheme.onPrimary)));
-                  })),
+            child: ListView.builder(
+              //reverse: true,
+              itemCount: messages.length,
+              controller: _scrollController,
+              itemBuilder: (BuildContext context, int index) {
+                final msg = messages[(messages.length - 1) - index];
+                final is_sender = msg['sender_id'] == widget.me.data['id'];
+                return Padding(
+                  padding: EdgeInsets.symmetric(vertical: 1),
+                  child: BubbleSpecialOne(
+                    text: msg['body'],
+                    isSender: is_sender,
+                    tail: true,
+                    color: is_sender ? Colors.purple[500]! : Colors.grey[700]!,
+                    textStyle: TextStyle(
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
           //Spacer(),
-//          TextField(),
+          //          TextField(),
           Container(
-              padding: const EdgeInsets.all(4.0),
-              child:
-                  Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            padding: const EdgeInsets.all(4.0),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
                 Expanded(
-                    child: TextField(
-                        autofocus: true,
-                        focusNode: messageFocusNode,
-                        controller: messageController,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (v) async {
-                          await send_message();
-                          messageFocusNode.requestFocus();
-                        },
-                        decoration: InputDecoration(
-                            hintText: 'Message',
-                            border: OutlineInputBorder()))),
+                  child: TextField(
+                    autofocus: true,
+                    focusNode: messageFocusNode,
+                    controller: messageController,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (v) async {
+                      await send_message();
+                      messageFocusNode.requestFocus();
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Message',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
                 SizedBox(width: 4),
                 CircleAvatar(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    child: IconButton(
-                        icon: Icon(Icons.send,
-                            color: Theme.of(context).colorScheme.onPrimary),
-                        onPressed: () async {
-                          await send_message();
-                        })),
-              ]))
-        ]));
+                  backgroundColor: Theme.of(context).primaryColor,
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.send,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                    onPressed: () async {
+                      await send_message();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

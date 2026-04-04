@@ -7,12 +7,12 @@ import 'package:provider/provider.dart';
 import 'package:url_strategy/url_strategy.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:json_theme/json_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
 
+import 'avatar_image.dart';
 import 'http.dart';
 import 'image_url.dart';
 import 'locator.dart';
@@ -45,7 +45,9 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     }
     if (!(await Geolocator.isLocationServiceEnabled())) {
       await _dialogService.showDialog(
-          title: 'Error', description: 'Location services aren\'t enabled.');
+        title: 'Error',
+        description: 'Location services aren\'t enabled.',
+      );
       return;
     }
 
@@ -56,14 +58,17 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         await _dialogService.showDialog(
-            title: 'Error', description: 'Location services denied.');
+          title: 'Error',
+          description: 'Location services denied.',
+        );
         return;
       }
     }
     if (permission == LocationPermission.deniedForever) {
       await _dialogService.showDialog(
-          title: 'Error',
-          description: 'Location services are permanently denied.');
+        title: 'Error',
+        description: 'Location services are permanently denied.',
+      );
       return;
     }
 
@@ -97,47 +102,51 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-        onRefresh: () async {
-          await checkin();
-        },
-        child: ScrollConfiguration(
-            behavior: ScrollConfiguration.of(context).copyWith(dragDevices: {
-              PointerDeviceKind.touch,
-              PointerDeviceKind.mouse
-            }),
-            child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  for (var user in nearby_users)
-                    Container(
-                        //height: 48,
-                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: ListTile(
-                            leading: CircleAvatar(
-                                backgroundImage:
-                                    NetworkImage(resolveImageUrl(user['picture'])),
-                                backgroundColor: Colors.transparent),
-                            title: Text(user['username']),
-                            subtitle: Text(user['about_me'] != null
-                                ? user['about_me']
-                                : ''),
-                            trailing: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(user['distance'].toString() + 'm away',
-                                      textAlign: TextAlign.right),
-                                  SizedBox(height: 4),
-                                  Text(
-                                      'last seen ' +
-                                          timeago.format(DateTime.parse(
-                                              user['last_seen'])),
-                                      textAlign: TextAlign.right)
-                                ]),
-                            //trailing: Icon(Icons.more_vert),
-                            onTap: () async {
-                              await join_user(user);
-                            }))
-                ])));
+      onRefresh: () async {
+        await checkin();
+      },
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(
+          dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
+        ),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            for (var user in nearby_users)
+              Container(
+                //height: 48,
+                padding: const EdgeInsets.symmetric(vertical: 4.0),
+                child: ListTile(
+                  leading: AvatarImage(picture: user['picture']),
+                  title: Text(user['username']),
+                  subtitle: Text(
+                    user['about_me'] != null ? user['about_me'] : '',
+                  ),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        user['distance'].toString() + 'm away',
+                        textAlign: TextAlign.right,
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'last seen ' +
+                            timeago.format(DateTime.parse(user['last_seen'])),
+                        textAlign: TextAlign.right,
+                      ),
+                    ],
+                  ),
+                  //trailing: Icon(Icons.more_vert),
+                  onTap: () async {
+                    await join_user(user);
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }

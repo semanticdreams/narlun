@@ -15,19 +15,15 @@ import 'websocket.dart';
 import 'http_client_default.dart'
     if (dart.library.html) 'http_client_browser.dart';
 
-WebsocketService _websocketService = locator<WebsocketService>();
-
-DialogService _dialogService = locator<DialogService>();
-
-Future check_response(data, bodyfunc) async {
+Future check_response(data, bodyfunc, DialogService dialogService) async {
   if (data.statusCode == 400) {
     final body = await bodyfunc(data);
-    await _dialogService.showDialog(
+    await dialogService.showDialog(
         title: 'Usage error', description: body['message']);
     throw InvalidUsage(
         status: data.statusCode, message: body['message'], code: body['code']);
   } else if (data.statusCode == 500) {
-    await _dialogService.showDialog(
+    await dialogService.showDialog(
         title: 'Server error', description: 'Contact support.');
     throw ServerError();
   } else if (data.statusCode == 200 || data.statusCode == 204) {
@@ -38,16 +34,31 @@ Future check_response(data, bodyfunc) async {
 }
 
 class ErrorInterceptor implements InterceptorContract {
+  final DialogService dialogService;
+
+  ErrorInterceptor(this.dialogService);
+
   @override
-  Future<RequestData> interceptRequest({required RequestData data}) async {
-    return data;
+  Future<bool> shouldInterceptRequest() async => true;
+
+  @override
+  Future<bool> shouldInterceptResponse() async => true;
+
+  @override
+  Future<http.BaseRequest> interceptRequest(
+      {required http.BaseRequest request}) async {
+    return request;
   }
 
   @override
-  Future<ResponseData> interceptResponse({required ResponseData data}) async {
-    return await check_response(data, (x) {
-      return jsonDecode(x.body!);
-    });
+  Future<http.BaseResponse> interceptResponse(
+      {required http.BaseResponse response}) async {
+    if (response is http.Response) {
+      return await check_response(response, (x) {
+        return jsonDecode((x as http.Response).body);
+      }, dialogService);
+    }
+    return response;
   }
 }
 
@@ -59,17 +70,25 @@ Future<String?> get_jwt_token_from_prefs() async {
 
 class AuthInterceptor implements InterceptorContract {
   @override
-  Future<RequestData> interceptRequest({required RequestData data}) async {
+  Future<bool> shouldInterceptRequest() async => true;
+
+  @override
+  Future<bool> shouldInterceptResponse() async => true;
+
+  @override
+  Future<http.BaseRequest> interceptRequest(
+      {required http.BaseRequest request}) async {
     final jwt = await get_jwt_token_from_prefs();
     if (jwt != null) {
-      data.headers[HttpHeaders.cookieHeader] = jwt;
+      request.headers[HttpHeaders.cookieHeader] = jwt;
     }
-    return data;
+    return request;
   }
 
   @override
-  Future<ResponseData> interceptResponse({required ResponseData data}) async {
-    String? jwt_cookie = data.headers?[HttpHeaders.setCookieHeader];
+  Future<http.BaseResponse> interceptResponse(
+      {required http.BaseResponse response}) async {
+    String? jwt_cookie = response.headers[HttpHeaders.setCookieHeader];
     if (jwt_cookie != null) {
       int index = jwt_cookie.indexOf(';');
       String jwt = jwt_cookie.substring(0, index);
@@ -80,7 +99,7 @@ class AuthInterceptor implements InterceptorContract {
         await prefs.setString('jwt', jwt);
       }
     }
-    return data;
+    return response;
   }
 }
 
@@ -101,28 +120,35 @@ class UnexpectedResponse {
 }
 
 class HttpService {
+  final WebsocketService websocketService;
+  final DialogService dialogService;
   final String baseurl = Environment().config.apiUrl;
 
   late http.Client client;
 
-  HttpService() {
-    client = InterceptedClient.build(
-        interceptors: [ErrorInterceptor(), if (!kIsWeb) AuthInterceptor()],
-        client: inner_client);
+  HttpService({
+    WebsocketService? websocketService,
+    DialogService? dialogService,
+    http.Client? client,
+  })  : websocketService = websocketService ?? locator<WebsocketService>(),
+        dialogService = dialogService ?? locator<DialogService>() {
+    this.client = InterceptedClient.build(
+        interceptors: [ErrorInterceptor(this.dialogService), if (!kIsWeb) AuthInterceptor()],
+        client: client ?? inner_client);
   }
 
   Future signout() async {
     await client.post(Uri.parse(baseurl + '/users/signout'));
-    await _websocketService.close();
+    await websocketService.close();
   }
 
   Future fetch_me() async {
     final resp = await client.get(Uri.parse(baseurl + '/users/me'));
     final body = jsonDecode(resp.body);
     if (body['authenticated']) {
-      await _websocketService.reconnect();
+      await websocketService.reconnect();
     } else {
-      await _websocketService.close();
+      await websocketService.close();
     }
     return body;
   }
@@ -132,7 +158,7 @@ class HttpService {
         body: jsonEncode({'username': username}));
     final body = jsonDecode(resp.body);
     if (body['authenticated']) {
-      await _websocketService.reconnect();
+      await websocketService.reconnect();
     }
     return body;
   }
@@ -145,7 +171,7 @@ class HttpService {
         }));
     final body = jsonDecode(resp.body);
     if (body['authenticated']) {
-      await _websocketService.reconnect();
+      await websocketService.reconnect();
     }
     return body;
   }
@@ -175,13 +201,13 @@ class HttpService {
     final bodyfunc = (x) async {
       return jsonDecode(await x.stream.bytesToString());
     };
-    await check_response(resp, bodyfunc);
+    await check_response(resp, bodyfunc, dialogService);
     return bodyfunc(resp);
   }
 
   Future delete_account() async {
     await client.delete(Uri.parse(baseurl + '/users/me'));
-    await _websocketService.close();
+    await websocketService.close();
   }
 
   Future checkin(lat, lon) async {

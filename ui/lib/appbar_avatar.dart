@@ -7,12 +7,12 @@ import 'package:provider/provider.dart';
 import 'package:url_strategy/url_strategy.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:json_theme/json_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
 
+import 'avatar_image.dart';
 import 'http.dart';
 import 'image_url.dart';
 import 'me_model.dart';
@@ -20,17 +20,16 @@ import 'me_model.dart';
 class AppBarAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Consumer<MeModel>(builder: (context, me, child) {
-      return Container(
+    return Consumer<MeModel>(
+      builder: (context, me, child) {
+        return Container(
           width: 58,
           child: IconButton(
-              icon: CircleAvatar(
-                backgroundImage: NetworkImage(resolveImageUrl(me.data?['picture'])),
-                backgroundColor: Colors.transparent,
-              ),
-              onPressed: () {
-                Navigator.pushNamed(context, '/profile');
-              })
+            icon: AvatarImage(picture: me.data?['picture']),
+            onPressed: () {
+              Navigator.pushNamed(context, '/profile');
+            },
+          ),
           //child: PopupMenuButton(
           //  icon: CircleAvatar(
           //    backgroundImage: NetworkImage(
@@ -51,7 +50,8 @@ class AppBarAvatar extends StatelessWidget {
           //    ];
           //  },
           //),
-          );
-    });
+        );
+      },
+    );
   }
 }

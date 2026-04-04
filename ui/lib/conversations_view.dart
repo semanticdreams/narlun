@@ -1,42 +1,41 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:convert';
-import 'dart:collection';
-import 'dart:io';
-import 'dart:ui';
+
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:url_strategy/url_strategy.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:json_theme/json_theme.dart';
-import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:chat_bubbles/chat_bubbles.dart';
-
+import 'avatar_image.dart';
 import 'http.dart';
-import 'image_url.dart';
 import 'me_model.dart';
 import 'messages_view.dart';
 import 'appbar_avatar.dart';
 import 'locator.dart';
 import 'websocket.dart';
 
-WebsocketService _websocketService = locator<WebsocketService>();
-
 class ConversationsView extends StatefulWidget {
+  final HttpService? httpService;
+  final WebsocketService? websocketService;
+
+  const ConversationsView({Key? key, this.httpService, this.websocketService})
+    : super(key: key);
+
   @override
   _ConversationsState createState() => _ConversationsState();
 }
 
 class _ConversationsState extends State<ConversationsView> {
-  final HttpService httpService = HttpService();
+  late final WebsocketService websocketService;
+  late final HttpService httpService;
 
   final rooms = [];
   StreamSubscription? roomsChangedSubscription;
+  StreamSubscription? connectionEventsSubscription;
 
   Future update_rooms() async {
     final resp = await httpService.get_rooms();
+    if (!mounted) {
+      return;
+    }
     setState(() {
       rooms.clear();
       rooms.addAll(resp);
@@ -46,57 +45,79 @@ class _ConversationsState extends State<ConversationsView> {
   @override
   void initState() {
     super.initState();
+    websocketService = widget.websocketService ?? locator<WebsocketService>();
+    httpService =
+        widget.httpService ?? HttpService(websocketService: websocketService);
     update_rooms();
-    roomsChangedSubscription =
-        _websocketService.roomsChangedStream().listen((_) => update_rooms());
+    unawaited(websocketService.ensureConnected());
+    roomsChangedSubscription = websocketService.roomsChangedStream().listen(
+      (_) => update_rooms(),
+    );
+    connectionEventsSubscription = websocketService.connectionEvents.listen((
+      event,
+    ) {
+      if (event == 'reconnected') {
+        update_rooms();
+      }
+    });
   }
 
   @override
   void dispose() {
     roomsChangedSubscription?.cancel();
+    connectionEventsSubscription?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Rooms'),
-        actions: [
-          AppBarAvatar(),
-        ],
-      ),
-      body: Consumer<MeModel>(builder: (context, me, child) {
-        return ListView(children: [
-          for (var room in rooms)
-            Container(
-                padding: const EdgeInsets.symmetric(vertical: 4.0),
-                child: ListTile(
-                    leading: CircleAvatar(
-                        backgroundImage: NetworkImage(resolveImageUrl(
-                            room['is_group'] || !me.data!['authenticated']
-                                ? room['picture']
-                                : room['participants'].singleWhere(
-                                    (x) => x['id'] != me.data!['id'])['picture'])),
-                        backgroundColor: Colors.transparent),
+      appBar: AppBar(title: Text('Rooms'), actions: [AppBarAvatar()]),
+      body: Consumer<MeModel>(
+        builder: (context, me, child) {
+          return ListView(
+            children: [
+              for (var room in rooms)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                  child: ListTile(
+                    leading: AvatarImage(
+                      picture: room['is_group'] || !me.data!['authenticated']
+                          ? room['picture']
+                          : room['participants'].singleWhere(
+                              (x) => x['id'] != me.data!['id'],
+                            )['picture'],
+                    ),
                     trailing: Text(
-                        timeago.format(DateTime.parse(room['updated_at']))),
-                    title: Text(room['is_group'] || !me.data!['authenticated']
-                        ? (room['name'] ?? '')
-                        : room['participants'].singleWhere(
-                            (x) => x['id'] != me.data!['id'])['username']),
-                    subtitle: Text(room['last_message'] != null
-                        ? room['last_message']['body']
-                        : ''),
+                      timeago.format(DateTime.parse(room['updated_at'])),
+                    ),
+                    title: Text(
+                      room['is_group'] || !me.data!['authenticated']
+                          ? (room['name'] ?? '')
+                          : room['participants'].singleWhere(
+                              (x) => x['id'] != me.data!['id'],
+                            )['username'],
+                    ),
+                    subtitle: Text(
+                      room['last_message'] != null
+                          ? room['last_message']['body']
+                          : '',
+                    ),
                     onTap: () async {
                       Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) =>
-                                  MessagesView(room: room, me: me)));
-                    })) // TODO subtitle should be different for group, needs name
-        ]);
-      }),
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              MessagesView(room: room, me: me),
+                        ),
+                      );
+                    },
+                  ),
+                ), // TODO subtitle should be different for group, needs name
+            ],
+          );
+        },
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           // Add your onPressed code here!

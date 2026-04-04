@@ -150,8 +150,7 @@ async def signout(req):
     resp = no_content()
     resp.del_cookie('jwt', path='/api')
     if req.user.get('authenticated'):
-        await req.store.publish_signout(req.user['id'])
-        await close_user_websockets(req.user['id'])
+        await close_user_websockets(req.user['id'], send_signout=True)
         if not req.user['has_password']:
             await req.store.delete_account(req.user['id'])
     return resp
@@ -160,8 +159,7 @@ async def signout(req):
 @routes.delete('/me')
 @authenticated
 async def delete_account(req):
-    await req.store.publish_signout(req.user['id'])
-    await close_user_websockets(req.user['id'])
+    await close_user_websockets(req.user['id'], send_signout=True)
     await req.store.delete_account(req.user['id'])
     resp = no_content()
     resp.del_cookie('jwt', path='/api')

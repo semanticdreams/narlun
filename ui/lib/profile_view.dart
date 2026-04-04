@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 
+import 'avatar_image.dart';
 import 'http.dart';
-import 'image_url.dart';
 import 'me_model.dart';
 import 'profile_form.dart';
-
 
 class ProfileView extends StatelessWidget {
   ProfileView({Key? key}) : super(key: key);
@@ -18,7 +17,9 @@ class ProfileView extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete account?'),
-        content: const Text('This removes your account and avatar. Rooms that end up with no meaningful membership left may also disappear.'),
+        content: const Text(
+          'This removes your account and avatar. Rooms that end up with no meaningful membership left may also disappear.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -61,9 +62,8 @@ class ProfileView extends StatelessWidget {
                   children: [
                     Container(
                       alignment: Alignment.center,
-                      child: CircleAvatar(
-                        backgroundImage: NetworkImage(resolveImageUrl(me.data?['picture'])),
-                        backgroundColor: Colors.transparent,
+                      child: AvatarImage(
+                        picture: me.data?['picture'],
                         radius: 64,
                       ),
                     ),
@@ -72,14 +72,21 @@ class ProfileView extends StatelessWidget {
                       child: TextButton(
                         child: const Text('Upload picture'),
                         onPressed: () async {
-                          FilePickerResult? result = await FilePicker.platform.pickFiles();
+                          FilePickerResult? result = await FilePicker.platform
+                              .pickFiles();
                           if (result != null) {
                             final file = result.files.single.bytes!;
-                            final data = await httpService.upload_profile_picture(file);
-                            Provider.of<MeModel>(context, listen: false).set_profile_picture(data['picture']);
+                            final data = await httpService
+                                .upload_profile_picture(file);
+                            Provider.of<MeModel>(
+                              context,
+                              listen: false,
+                            ).set_profile_picture(data['picture']);
 
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Profile picture saved')),
+                              const SnackBar(
+                                content: Text('Profile picture saved'),
+                              ),
                             );
                           }
                         },

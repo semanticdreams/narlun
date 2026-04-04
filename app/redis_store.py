@@ -1,4 +1,5 @@
 import redis.asyncio as redis
+import hashlib
 import json
 import secrets
 import time
@@ -14,6 +15,7 @@ from app.util import create_random_avatar
 MESSAGE_TTL_SECONDS = 7 * 24 * 60 * 60
 ACTIVE_WINDOW_SECONDS = 3 * 24 * 60 * 60
 INVITE_TTL_SECONDS = 24 * 60 * 60
+WEBSOCKET_PRESENCE_TTL_SECONDS = 45
 MAX_NEARBY_RESULTS = 10
 MAX_GEO_RESULTS = 50
 MAX_ROOM_RESULTS = 30
@@ -119,6 +121,25 @@ class RedisStore:
     def _room_messages_key(self, room_id):
         return f'room:{{{room_id}}}:messages'
 
+    def _user_push_subscriptions_key(self, user_id):
+        return f'user:{{{user_id}}}:push_subscriptions'
+
+    def _user_room_prefs_key(self, user_id):
+        return f'user:{{{user_id}}}:room_prefs'
+
+    def _user_websocket_presence_key(self, user_id):
+        return f'user:{{{user_id}}}:websocket_presence'
+
+    def _user_client_websocket_presence_key(self, user_id, client_id):
+        client_hash = hashlib.sha256(client_id.encode('utf-8')).hexdigest()
+        return f'user:{{{user_id}}}:websocket_presence:{client_hash}'
+
+    def _push_subscription_key(self, subscription_id):
+        return f'push_subscription:{subscription_id}'
+
+    def _push_subscription_id(self, endpoint):
+        return hashlib.sha256(endpoint.encode('utf-8')).hexdigest()
+
     def _invite_key(self, token):
         return f'invite:{token}'
 
@@ -187,6 +208,12 @@ class RedisStore:
         if raw_user is None:
             return None
         return self._serialize_user(raw_user, authenticated=True)
+
+    async def get_room(self, room_id):
+        return await self._serialize_room(room_id)
+
+    async def get_room_for_user(self, room_id, user_id):
+        return await self._serialize_room(room_id, viewer_user_id=user_id)
 
     async def create_guest_user(self, username):
         username = username.strip()
@@ -376,16 +403,18 @@ class RedisStore:
         dm_key = self._dm_key(user_id, other_user_id)
         existing_room_id = await self.redis.get(dm_key)
         if existing_room_id is not None:
-            return {'id': int(existing_room_id)}
+            return {'id': int(existing_room_id), 'created': False}
 
         room_id = await self._next_room_id()
         members = sorted([int(user_id), other_user_id])
+        created = True
         if not await self.redis.set(dm_key, room_id, nx=True):
             existing_room_id = await self.redis.get(dm_key)
             room_id = int(existing_room_id)
+            created = False
 
         await self._ensure_dm_room(room_id, dm_key, members)
-        return {'id': int(room_id)}
+        return {'id': int(room_id), 'created': created}
 
     async def _ensure_dm_room(self, room_id, dm_key, members):
         timestamp_ms = now_ms()
@@ -471,19 +500,22 @@ class RedisStore:
 
         if invite['target'] == 'room':
             room_id = int(invite['room_id'])
-            room = await self._add_user_to_room(
+            return await self._add_user_to_room(
                 room_id,
                 user_id,
                 inviter_id=inviter_id,
             )
-        else:
-            if int(user_id) == inviter_id:
-                raise PermissionDenied()
-            room_data = await self.join_user(inviter_id, user_id)
-            room = await self._serialize_room(room_data['id'])
-            if room is None:
-                raise RoomNotFound()
-        return room
+
+        if int(user_id) == inviter_id:
+            raise PermissionDenied()
+        room_data = await self.join_user(inviter_id, user_id)
+        room = await self._serialize_room(room_data['id'])
+        if room is None:
+            raise RoomNotFound()
+        return {
+            'room': room,
+            'membership_changed': room_data.get('created') is True,
+        }
 
     async def user_in_room(self, user_id, room_id):
         return bool(await self.redis.sismember(self._room_members_key(room_id), user_id))
@@ -547,6 +579,124 @@ class RedisStore:
             'room_id': int(room_id),
         }))
 
+    async def upsert_push_subscription(self, user_id, subscription, *, user_agent='', client_id=None):
+        endpoint = subscription['endpoint']
+        subscription_id = self._push_subscription_id(endpoint)
+        key = self._push_subscription_key(subscription_id)
+        existing_user_id = await self.redis.hget(key, 'user_id')
+        if existing_user_id is not None and int(existing_user_id) != int(user_id):
+            await self.redis.srem(self._user_push_subscriptions_key(int(existing_user_id)), subscription_id)
+
+        timestamp = now_ts()
+        await self.redis.hset(key, mapping={
+            'id': subscription_id,
+            'user_id': int(user_id),
+            'endpoint': endpoint,
+            'p256dh': subscription['keys']['p256dh'],
+            'auth': subscription['keys']['auth'],
+            'expiration_time': '' if subscription.get('expirationTime') is None else int(subscription['expirationTime']),
+            'user_agent': user_agent,
+            'client_id': client_id or '',
+            'created_at': int(await self.redis.hget(key, 'created_at') or timestamp),
+            'updated_at': timestamp,
+        })
+        await self.redis.sadd(self._user_push_subscriptions_key(user_id), subscription_id)
+        return subscription_id
+
+    async def remove_push_subscription(self, user_id, endpoint):
+        subscription_id = self._push_subscription_id(endpoint)
+        key = self._push_subscription_key(subscription_id)
+        existing_user_id = await self.redis.hget(key, 'user_id')
+        if existing_user_id is None or int(existing_user_id) != int(user_id):
+            return False
+        await self.redis.delete(key)
+        await self.redis.srem(self._user_push_subscriptions_key(user_id), subscription_id)
+        return True
+
+    async def remove_push_subscription_by_id(self, subscription_id):
+        key = self._push_subscription_key(subscription_id)
+        user_id = await self.redis.hget(key, 'user_id')
+        if user_id is None:
+            return False
+        await self.redis.delete(key)
+        await self.redis.srem(self._user_push_subscriptions_key(int(user_id)), subscription_id)
+        return True
+
+    async def remove_push_subscriptions_for_user(self, user_id):
+        subscription_ids = await self.redis.smembers(self._user_push_subscriptions_key(user_id))
+        if subscription_ids:
+            await self.redis.delete(*(self._push_subscription_key(subscription_id) for subscription_id in subscription_ids))
+        await self.redis.delete(self._user_push_subscriptions_key(user_id))
+
+    async def get_push_subscriptions_for_users(self, user_ids):
+        subscriptions = []
+        seen_subscription_ids = set()
+        for user_id in {int(candidate) for candidate in user_ids}:
+            subscription_ids = await self.redis.smembers(self._user_push_subscriptions_key(user_id))
+            for subscription_id in subscription_ids:
+                if subscription_id in seen_subscription_ids:
+                    continue
+                seen_subscription_ids.add(subscription_id)
+                data = await self.redis.hgetall(self._push_subscription_key(subscription_id))
+                if not data:
+                    await self.redis.srem(self._user_push_subscriptions_key(user_id), subscription_id)
+                    continue
+                subscriptions.append({
+                    'id': data['id'],
+                    'user_id': int(data['user_id']),
+                    'endpoint': data['endpoint'],
+                    'keys': {
+                        'p256dh': data['p256dh'],
+                        'auth': data['auth'],
+                    },
+                    'expirationTime': int(data['expiration_time']) if data.get('expiration_time') else None,
+                    'user_agent': data.get('user_agent') or '',
+                    'client_id': data.get('client_id') or None,
+                })
+        return subscriptions
+
+    async def get_room_push_muted(self, user_id, room_id):
+        value = await self.redis.hget(self._user_room_prefs_key(user_id), int(room_id))
+        return room_bool(value)
+
+    async def set_room_push_muted(self, user_id, room_id, *, push_muted):
+        room_id = int(room_id)
+        if not await self.user_in_room(user_id, room_id):
+            raise PermissionDenied()
+        prefs_key = self._user_room_prefs_key(user_id)
+        if push_muted:
+            await self.redis.hset(prefs_key, room_id, '1')
+        else:
+            await self.redis.hdel(prefs_key, room_id)
+        return await self._serialize_room(room_id, viewer_user_id=user_id)
+
+    async def mark_active_websocket(self, user_id, connection_id, *, client_id=None):
+        key = (
+            self._user_client_websocket_presence_key(user_id, client_id)
+            if client_id else self._user_websocket_presence_key(user_id)
+        )
+        now = now_ts()
+        expires_at = now + WEBSOCKET_PRESENCE_TTL_SECONDS
+        await self.redis.zremrangebyscore(key, '-inf', now)
+        await self.redis.zadd(key, {connection_id: expires_at})
+        return expires_at
+
+    async def clear_active_websocket(self, user_id, connection_id, *, client_id=None):
+        key = (
+            self._user_client_websocket_presence_key(user_id, client_id)
+            if client_id else self._user_websocket_presence_key(user_id)
+        )
+        await self.redis.zrem(key, connection_id)
+
+    async def has_active_websocket(self, user_id, *, client_id=None):
+        key = (
+            self._user_client_websocket_presence_key(user_id, client_id)
+            if client_id else self._user_websocket_presence_key(user_id)
+        )
+        now = now_ts()
+        await self.redis.zremrangebyscore(key, '-inf', now)
+        return int(await self.redis.zcard(key)) > 0
+
     async def get_room_members(self, room_id):
         return sorted(int(member) for member in await self.redis.smembers(self._room_members_key(room_id)))
 
@@ -566,10 +716,13 @@ class RedisStore:
         if not await self.redis.sismember(members_key, inviter_id):
             raise PermissionDenied()
         if await self.redis.sismember(members_key, user_id):
-            room = await self._serialize_room(room_id)
+            room = await self._serialize_room(room_id, viewer_user_id=user_id)
             if room is None:
                 raise RoomNotFound()
-            return room
+            return {
+                'room': room,
+                'membership_changed': False,
+            }
 
         timestamp_ms = now_ms()
         existing_members = sorted(
@@ -591,21 +744,24 @@ class RedisStore:
         for member_id in all_members:
             await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
 
-        room = await self._serialize_room(room_id)
+        room = await self._serialize_room(room_id, viewer_user_id=user_id)
         if room is None:
             raise RoomNotFound()
-        return room
+        return {
+            'room': room,
+            'membership_changed': True,
+        }
 
     async def get_rooms(self, user_id):
         room_ids = await self.redis.zrevrange(self._user_rooms_key(user_id), 0, MAX_ROOM_RESULTS - 1)
         rooms = []
         for room_id in room_ids:
-            room = await self._serialize_room(room_id)
+            room = await self._serialize_room(room_id, viewer_user_id=user_id)
             if room is not None:
                 rooms.append(room)
         return rooms
 
-    async def _serialize_room(self, room_id):
+    async def _serialize_room(self, room_id, *, viewer_user_id=None):
         meta = await self.redis.hgetall(self._room_meta_key(room_id))
         if not meta:
             return None
@@ -630,6 +786,8 @@ class RedisStore:
             'picture': meta.get('picture') or None,
             'is_group': room_bool(meta.get('is_group')),
             'is_public': room_bool(meta.get('is_public')),
+            'push_muted': await self.get_room_push_muted(viewer_user_id, room_id)
+            if viewer_user_id is not None else False,
             'participants': participants,
         }
 
@@ -658,6 +816,14 @@ class RedisStore:
         await self.redis.zrem('z:user:last_seen', user_id)
         await self.redis.execute_command('ZREM', 'geo:active_users', user_id)
         await self.redis_bytes.delete(self._user_avatar_key(user_id))
+        await self.redis.delete(self._user_room_prefs_key(user_id))
+        websocket_keys = [self._user_websocket_presence_key(user_id)]
+        websocket_keys.extend(
+            await self.redis.keys(f'user:{{{user_id}}}:websocket_presence:*')
+        )
+        if websocket_keys:
+            await self.redis.delete(*set(websocket_keys))
+        await self.remove_push_subscriptions_for_user(user_id)
         return True
 
     async def _remove_user_from_room(self, user_id, room_id):
@@ -669,6 +835,7 @@ class RedisStore:
         members_key = self._room_members_key(room_id)
         await self.redis.srem(members_key, user_id)
         await self.redis.zrem(self._user_rooms_key(user_id), room_id)
+        await self.redis.hdel(self._user_room_prefs_key(user_id), room_id)
         remaining_members = sorted(int(member) for member in await self.redis.smembers(members_key))
 
         should_delete_room = False
@@ -682,6 +849,7 @@ class RedisStore:
             await self.publish_rooms_changed(remaining_members)
             for member in remaining_members:
                 await self.redis.zrem(self._user_rooms_key(member), room_id)
+                await self.redis.hdel(self._user_room_prefs_key(member), room_id)
             if meta.get('dm_key'):
                 await self.redis.delete(meta['dm_key'])
             await self.redis.delete(meta_key)

@@ -14,6 +14,7 @@ import 'locator.dart';
 import 'me_model.dart';
 import 'messages_view.dart';
 import 'models.dart';
+import 'push_notifications_service.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
 
@@ -48,6 +49,7 @@ class _ConversationsState extends State<ConversationsView> {
   StreamSubscription? connectionEventsSubscription;
   Timer? installSuggestionTimer;
   bool _installSuggestionEligible = false;
+  bool _pushPromptEligible = false;
   bool _loadingInitialRooms = true;
   bool _openedInitialRoom = false;
   bool _reportedMissingInitialRoom = false;
@@ -147,6 +149,7 @@ class _ConversationsState extends State<ConversationsView> {
       }
       setState(() {
         _installSuggestionEligible = true;
+        _pushPromptEligible = true;
       });
     });
     unawaited(updateRooms(silentErrors: true));
@@ -173,11 +176,63 @@ class _ConversationsState extends State<ConversationsView> {
 
   @override
   Widget build(BuildContext context) {
-    final content = Consumer2<MeModel, InstallPromptService>(
-      builder: (context, meModel, installPromptService, child) {
+    final content = Consumer3<
+      MeModel,
+      InstallPromptService,
+      PushNotificationsService
+    >(
+      builder: (context, meModel, installPromptService, pushService, child) {
         final currentUser = meModel.data;
         return ListView(
           children: [
+            if (currentUser?.authenticated == true &&
+                _pushPromptEligible &&
+                pushService.shouldShowPrompt)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Turn On Notifications',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Get notified about new messages even when Narlun is not open.',
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton(
+                              onPressed: pushService.isBusy
+                                  ? null
+                                  : () {
+                                      unawaited(
+                                        pushService.enableNotifications(),
+                                      );
+                                    },
+                              child: const Text('Turn on'),
+                            ),
+                            TextButton(
+                              onPressed: pushService.dismissPrompt,
+                              child: const Text('Not now'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (currentUser?.authenticated == true &&
                 _installSuggestionEligible &&
                 installPromptService.shouldShowSuggestion)
@@ -280,7 +335,21 @@ class _ConversationsState extends State<ConversationsView> {
                         ? room.picture
                         : room.displayPictureFor(currentUser),
                   ),
-                  trailing: Text(timeago.format(room.updatedAt)),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(timeago.format(room.updatedAt)),
+                      if (room.pushMuted)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 4),
+                          child: Icon(
+                            Icons.notifications_off_outlined,
+                            size: 18,
+                          ),
+                        ),
+                    ],
+                  ),
                   title: Text(
                     currentUser == null
                         ? (room.name ?? '')

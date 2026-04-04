@@ -18,4 +18,16 @@ void main() {
 
     expect(room.displayTitleFor(me), 'alice, bob');
   });
+
+  test('room summary parses push muted state', () {
+    final room = RoomSummary.fromJson({
+      'id': 7,
+      'is_group': false,
+      'updated_at': '2026-04-04T10:00:00.000Z',
+      'participants': const [],
+      'push_muted': true,
+    });
+
+    expect(room.pushMuted, isTrue);
+  });
 }

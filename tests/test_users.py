@@ -124,3 +124,93 @@ async def test_delete_account_removes_permanent_user(cli):
 
     response = await signin(cli, username, 'permanent123')
     assert response.status == 400
+
+
+async def test_push_subscription_routes_store_and_remove_browser_subscription(
+    cli,
+    monkeypatch,
+):
+    monkeypatch.setattr('config.PUSH_VAPID_PUBLIC_KEY', 'public-key')
+    monkeypatch.setattr('config.PUSH_VAPID_PRIVATE_KEY', 'private-key')
+    monkeypatch.setattr('config.PUSH_VAPID_SUBJECT', 'mailto:test@example.com')
+
+    created = await signup(cli)
+    response = await update_profile(cli, created['jwt'], password='permanent123')
+    assert response.status == 200
+
+    config_response = await cli.get(
+        '/api/users/push-config',
+        headers=auth_headers(created['jwt']),
+    )
+    assert config_response.status == 200
+    assert await config_response.json() == {
+        'enabled': True,
+        'vapid_public_key': 'public-key',
+    }
+
+    subscription = {
+        'endpoint': 'https://push.example.test/sub/1',
+        'keys': {
+            'p256dh': 'p256dh-value',
+            'auth': 'auth-value',
+        },
+        'expirationTime': None,
+    }
+    response = await cli.post(
+        '/api/users/push-subscriptions',
+        json={'subscription': subscription},
+        headers=auth_headers(created['jwt']),
+    )
+    assert response.status == 204
+
+    subscriptions = await cli.app['store'].get_push_subscriptions_for_users(
+        [created['user']['id']],
+    )
+    assert len(subscriptions) == 1
+    assert subscriptions[0]['user_id'] == created['user']['id']
+    assert subscriptions[0]['endpoint'] == subscription['endpoint']
+    assert subscriptions[0]['keys'] == subscription['keys']
+    assert subscriptions[0]['expirationTime'] is None
+    assert subscriptions[0]['user_agent']
+
+    signout = await cli.post(
+        '/api/users/signout',
+        json={'push_endpoint': subscription['endpoint']},
+        headers=auth_headers(created['jwt']),
+    )
+    assert signout.status == 204
+    assert await cli.app['store'].get_push_subscriptions_for_users(
+        [created['user']['id']],
+    ) == []
+
+
+async def test_invalid_push_subscription_returns_usage_error(cli, monkeypatch):
+    monkeypatch.setattr('config.PUSH_VAPID_PUBLIC_KEY', 'public-key')
+    monkeypatch.setattr('config.PUSH_VAPID_PRIVATE_KEY', 'private-key')
+    monkeypatch.setattr('config.PUSH_VAPID_SUBJECT', 'mailto:test@example.com')
+
+    created = await signup(cli)
+    response = await cli.post(
+        '/api/users/push-subscriptions',
+        json={'subscription': {'endpoint': '', 'keys': {}}},
+        headers=auth_headers(created['jwt']),
+    )
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 10
+
+
+async def test_non_object_push_subscription_returns_usage_error(cli, monkeypatch):
+    monkeypatch.setattr('config.PUSH_VAPID_PUBLIC_KEY', 'public-key')
+    monkeypatch.setattr('config.PUSH_VAPID_PRIVATE_KEY', 'private-key')
+    monkeypatch.setattr('config.PUSH_VAPID_SUBJECT', 'mailto:test@example.com')
+
+    created = await signup(cli)
+    response = await cli.post(
+        '/api/users/push-subscriptions',
+        json={'subscription': 'invalid'},
+        headers=auth_headers(created['jwt']),
+    )
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 10

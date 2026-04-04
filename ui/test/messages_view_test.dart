@@ -33,9 +33,12 @@ class FakeHttpService extends HttpService {
       Queue<Future<List<ChatMessage>> Function(int roomId)>();
   final Queue<Future<List<RoomSummary>> Function()> _roomHandlers =
       Queue<Future<List<RoomSummary>> Function()>();
+  final Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>
+  _roomSettingsHandlers = Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>();
   var getMessagesCalls = 0;
   var getRoomsCalls = 0;
   var clearedLocalSession = false;
+  final updatedRoomSettings = <Map<String, dynamic>>[];
 
   void enqueueMessages(Future<List<ChatMessage>> Function(int roomId) handler) {
     _messageHandlers.add(handler);
@@ -43,6 +46,12 @@ class FakeHttpService extends HttpService {
 
   void enqueueRooms(Future<List<RoomSummary>> Function() handler) {
     _roomHandlers.add(handler);
+  }
+
+  void enqueueRoomSettings(
+    Future<RoomSummary> Function(int roomId, bool pushMuted) handler,
+  ) {
+    _roomSettingsHandlers.add(handler);
   }
 
   @override
@@ -73,6 +82,27 @@ class FakeHttpService extends HttpService {
   @override
   Future<void> clearLocalSession() async {
     clearedLocalSession = true;
+  }
+
+  @override
+  Future<RoomSummary> update_room_settings(
+    room_id, {
+    required bool pushMuted,
+  }) async {
+    updatedRoomSettings.add({'room_id': room_id, 'push_muted': pushMuted});
+    if (_roomSettingsHandlers.isNotEmpty) {
+      return _roomSettingsHandlers.removeFirst()(room_id as int, pushMuted);
+    }
+    return RoomSummary(
+      id: room_id as int,
+      isGroup: false,
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 1, username: 'me'),
+        RoomParticipant(id: 2, username: 'other'),
+      ],
+      pushMuted: pushMuted,
+    );
   }
 }
 
@@ -497,5 +527,43 @@ void main() {
 
     expect(httpService.clearedLocalSession, isTrue);
     expect(find.text('Welcome landing'), findsOneWidget);
+  });
+
+  testWidgets('toggles room push notifications from the room menu', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueRoomSettings((roomId, pushMuted) async {
+      return RoomSummary(
+        id: roomId,
+        isGroup: false,
+        updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        participants: const [
+          RoomParticipant(id: 1, username: 'me'),
+          RoomParticipant(id: 2, username: 'other'),
+        ],
+        pushMuted: pushMuted,
+      );
+    });
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mute notifications'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.updatedRoomSettings, [
+      {'room_id': 1, 'push_muted': true},
+    ]);
+    expect(find.text('Notifications muted for this room.'), findsOneWidget);
   });
 }

@@ -2,7 +2,7 @@
   "name": "narlun-ui",
   "private": true,
   "scripts": {
-    "build:e2e": "flutter build web --release --dart-define=ENABLE_E2E_SEMANTICS=true",
+    "build:e2e": "./tool/build_web.sh --dart-define=ENABLE_E2E_SEMANTICS=true",
     "test:e2e": "npm run build:e2e && playwright test"
   },
   "devDependencies": {

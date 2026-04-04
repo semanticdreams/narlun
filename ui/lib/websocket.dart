@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'config.dart';
+import 'client_identity_default.dart'
+    if (dart.library.html) 'client_identity_browser.dart'
+    as client_identity;
 import 'http_client_default.dart'
     if (dart.library.html) 'http_client_browser.dart'
     as session_http;
@@ -98,7 +101,10 @@ class WebsocketService {
       return;
     }
 
-    final wsUri = createWebSocketUri(baseurl);
+    final wsUri = createWebSocketUri(
+      baseurl,
+      clientId: await client_identity.readClientIdentity(),
+    );
 
     late final WebSocketChannel channel;
     try {

@@ -87,6 +87,7 @@ class RoomSummary {
   final DateTime updatedAt;
   final List<RoomParticipant> participants;
   final MessagePreview? lastMessage;
+  final bool pushMuted;
 
   const RoomSummary({
     required this.id,
@@ -96,6 +97,7 @@ class RoomSummary {
     this.name,
     this.picture,
     this.lastMessage,
+    this.pushMuted = false,
   });
 
   factory RoomSummary.fromJson(Map<String, dynamic> json) {
@@ -112,6 +114,7 @@ class RoomSummary {
       lastMessage: json['last_message'] is Map<String, dynamic>
           ? MessagePreview.fromJson(json['last_message'] as Map<String, dynamic>)
           : null,
+      pushMuted: json['push_muted'] == true,
     );
   }
 

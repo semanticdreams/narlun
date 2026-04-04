@@ -5,6 +5,7 @@ import jwt
 from aiohttp import web
 
 import config
+from app.push import InvalidPushSubscriptionError, normalized_client_id
 from app.redis_store import StatusTooLong, UserNotFound, UsernameAlreadyExists
 from app.util import InvalidUsage, authenticated, is_request_secure, jsonify, no_content
 from app.websocket import notify_local_signout
@@ -53,6 +54,15 @@ class InvalidAvatarError(InvalidUsage):
 
     def __init__(self, message):
         self.message = message
+
+
+class InvalidPushSubscriptionErrorResponse(InvalidUsage):
+    code = 10
+    message = 'Invalid push subscription'
+
+    def __init__(self, message=None):
+        if message is not None:
+            self.message = message
 
 
 def issue_auth_cookie(req, resp, user):
@@ -143,6 +153,42 @@ async def upload_profile_picture(req):
     return jsonify({'picture': picture})
 
 
+@routes.get('/push-config')
+@authenticated
+async def get_push_config(req):
+    return jsonify(req.push.client_config())
+
+
+@routes.post('/push-subscriptions')
+@authenticated
+async def create_push_subscription(req):
+    if req.push.enabled is not True:
+        return jsonify({'enabled': False, 'saved': False})
+    subscription = req.data.get('subscription')
+    if isinstance(subscription, dict):
+        subscription = {
+            **subscription,
+            'client_id': normalized_client_id(req.data.get('client_id')),
+        }
+    try:
+        await req.push.save_subscription(
+            req.user['id'],
+            subscription,
+            user_agent=req.headers.get('User-Agent', ''),
+        )
+    except InvalidPushSubscriptionError as exc:
+        raise InvalidPushSubscriptionErrorResponse(str(exc))
+    return no_content()
+
+
+@routes.delete('/push-subscriptions')
+@authenticated
+async def delete_push_subscription(req):
+    endpoint = req.data.get('endpoint', '')
+    await req.push.delete_subscription(req.user['id'], endpoint)
+    return no_content()
+
+
 @routes.get(r'/avatar/{user_id:\d+}')
 async def get_avatar(req):
     user_id = int(req.match_info['user_id'])
@@ -158,6 +204,8 @@ async def signout(req):
     resp = no_content()
     resp.del_cookie('jwt', path='/api')
     if req.user.get('authenticated'):
+        if req.data.get('push_endpoint'):
+            await req.push.delete_subscription(req.user['id'], req.data['push_endpoint'])
         await notify_local_signout(req.user['id'])
         try:
             await req.store.publish_signout(req.user['id'])

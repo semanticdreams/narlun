@@ -9,6 +9,7 @@ import 'install_prompt_service.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'profile_form.dart';
+import 'push_notifications_service.dart';
 
 class ProfileView extends StatelessWidget {
   const ProfileView({super.key});
@@ -106,6 +107,58 @@ class ProfileView extends StatelessWidget {
                   ],
                 ),
                 if (currentUser != null) ProfileForm(data: currentUser),
+                Consumer<PushNotificationsService>(
+                  builder: (context, pushService, child) {
+                    if (currentUser?.authenticated != true ||
+                        !pushService.isSupported) {
+                      return const SizedBox.shrink();
+                    }
+
+                    final statusMessage = pushService.statusMessage;
+                    final canShowAction =
+                        pushService.isConfigured || pushService.isSubscribed;
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (canShowAction)
+                              OutlinedButton.icon(
+                                onPressed: pushService.isBusy
+                                    ? null
+                                    : () async {
+                                        if (pushService.isSubscribed) {
+                                          await pushService
+                                              .disableNotifications();
+                                        } else {
+                                          await pushService
+                                              .enableNotifications();
+                                        }
+                                      },
+                                icon: Icon(
+                                  pushService.isSubscribed
+                                      ? Icons.notifications_off_outlined
+                                      : Icons.notifications_active_outlined,
+                                ),
+                                label: Text(
+                                  pushService.isSubscribed
+                                      ? 'Turn off notifications'
+                                      : 'Turn on notifications',
+                                ),
+                              ),
+                            if (statusMessage != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Text(statusMessage),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 Consumer<InstallPromptService>(
                   builder: (context, installPromptService, child) {
                     if (!installPromptService.isInstallAvailable) {

@@ -14,6 +14,7 @@ import 'package:narlun/install_prompt_service.dart';
 import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/models.dart';
+import 'package:narlun/push_notifications_service.dart';
 import 'package:narlun/websocket.dart';
 
 class _DummyHttpClient extends http.BaseClient {
@@ -140,6 +141,59 @@ class FakeInstallPromptService extends InstallPromptService {
   }
 }
 
+class FakePushNotificationsService extends PushNotificationsService {
+  FakePushNotificationsService({
+    this.prompt = false,
+    this.supported = true,
+    this.configured = true,
+  });
+
+  bool prompt;
+  final bool supported;
+  final bool configured;
+  int enableCalls = 0;
+  int dismissCalls = 0;
+
+  @override
+  bool get isBusy => false;
+
+  @override
+  bool get isConfigured => configured;
+
+  @override
+  bool get isSubscribed => false;
+
+  @override
+  bool get isSupported => supported;
+
+  @override
+  bool get shouldShowPrompt => prompt;
+
+  @override
+  PushPermissionState get permissionState => PushPermissionState.defaultState;
+
+  @override
+  String? get statusMessage => null;
+
+  @override
+  Future<void> disableNotifications() async {}
+
+  @override
+  void dismissPrompt() {
+    dismissCalls += 1;
+    prompt = false;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> enableNotifications() async {
+    enableCalls += 1;
+  }
+
+  @override
+  Future<void> syncSession(SessionUser? user) async {}
+}
+
 void main() {
   setUp(() async {
     await setupLocator(reset: true, dialogService: DialogService());
@@ -155,6 +209,7 @@ void main() {
     final websocketService = FakeRoomsWebsocketService();
     final httpService = FakeRoomsHttpService(websocketService: websocketService);
     final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -162,6 +217,9 @@ void main() {
           Provider<HttpService>.value(value: httpService),
           ChangeNotifierProvider<InstallPromptService>.value(
             value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
           ),
           ChangeNotifierProvider(
             create: (_) => MeModel()
@@ -201,6 +259,7 @@ void main() {
       available: true,
       suggest: true,
     );
+    final pushNotificationsService = FakePushNotificationsService();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -208,6 +267,9 @@ void main() {
           Provider<HttpService>.value(value: httpService),
           ChangeNotifierProvider<InstallPromptService>.value(
             value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
           ),
           ChangeNotifierProvider(
             create: (_) => MeModel()
@@ -241,12 +303,63 @@ void main() {
     expect(find.text('Install Narlun'), findsNothing);
   });
 
+  testWidgets('shows a dismissible notification prompt on the rooms screen', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService(prompt: true);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Turn On Notifications'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 8));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Turn On Notifications'), findsOneWidget);
+    expect(find.text('Turn on'), findsOneWidget);
+
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+
+    expect(pushNotificationsService.dismissCalls, 1);
+    expect(find.text('Turn On Notifications'), findsNothing);
+  });
+
   testWidgets('shows a nearby empty state action when there are no rooms', (
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
     final httpService = FakeRoomsHttpService(websocketService: websocketService);
     final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
     var openNearbyCalls = 0;
 
     await tester.pumpWidget(
@@ -255,6 +368,9 @@ void main() {
           Provider<HttpService>.value(value: httpService),
           ChangeNotifierProvider<InstallPromptService>.value(
             value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
           ),
           ChangeNotifierProvider(
             create: (_) => MeModel()
@@ -304,6 +420,7 @@ void main() {
         ),
       ]);
     final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -311,6 +428,9 @@ void main() {
           Provider<HttpService>.value(value: httpService),
           ChangeNotifierProvider<InstallPromptService>.value(
             value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
           ),
           ChangeNotifierProvider(
             create: (_) => MeModel()

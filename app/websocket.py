@@ -2,17 +2,20 @@ import asyncio
 import contextlib
 import json
 import logging
+import secrets
 
 import aiohttp
 import async_timeout
 from aiohttp import web
 from aiohttp.http_websocket import WSCloseCode
 
+from app.push import normalized_client_id
 from app.util import authenticated
 
 
 active_sockets = {}
 logger = logging.getLogger(__name__)
+_presence_refresh_interval_seconds = 15
 
 
 async def _close_socket_after_grace_period(ws):
@@ -71,7 +74,20 @@ async def websocket_handler(req):
     channel = req.redis.pubsub()
     await channel.subscribe(f'user:{user_id}')
     active_sockets.setdefault(user_id, set()).add(ws)
+    connection_id = secrets.token_hex(16)
+    client_id = normalized_client_id(req.query.get('client_id'))
+    await req.store.mark_active_websocket(user_id, connection_id, client_id=client_id)
     subscribed_rooms = set()
+
+    async def refresh_presence():
+        while True:
+            try:
+                await asyncio.sleep(_presence_refresh_interval_seconds)
+                await req.store.mark_active_websocket(user_id, connection_id, client_id=client_id)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception('Failed to refresh websocket presence', extra={'user_id': user_id})
 
     async def reader():
         while True:
@@ -112,6 +128,7 @@ async def websocket_handler(req):
                 break
 
     reader_task = asyncio.create_task(reader())
+    presence_task = asyncio.create_task(refresh_presence())
 
     try:
         async for msg in ws:
@@ -179,8 +196,11 @@ async def websocket_handler(req):
                 break
     finally:
         reader_task.cancel()
+        presence_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await reader_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await presence_task
         for room_id in list(subscribed_rooms):
             with contextlib.suppress(Exception):
                 await _unsubscribe_room(channel, room_id, subscribed_rooms)
@@ -188,5 +208,7 @@ async def websocket_handler(req):
         sockets.discard(ws)
         if not sockets and user_id in active_sockets:
             del active_sockets[user_id]
+        with contextlib.suppress(Exception):
+            await req.store.clear_active_websocket(user_id, connection_id, client_id=client_id)
         await channel.aclose()
     return ws

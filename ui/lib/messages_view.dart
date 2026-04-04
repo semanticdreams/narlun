@@ -173,6 +173,46 @@ class MessagesState extends State<MessagesView> {
     Navigator.pop(context);
   }
 
+  Future<void> _updatePushMuted(bool pushMuted) async {
+    try {
+      final updatedRoom = await httpService.update_room_settings(
+        room.id,
+        pushMuted: pushMuted,
+      );
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      setState(() {
+        room = updatedRoom;
+      });
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            pushMuted
+                ? 'Notifications muted for this room.'
+                : 'Notifications restored for this room.',
+          ),
+        ),
+      );
+    } on UnauthorizedResponse {
+      if (_roomClosed || !mounted) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } on InvalidUsage catch (e) {
+      if (e.code == 1000) {
+        await _handleRoomDeleted();
+      } else {
+        rethrow;
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -308,7 +348,26 @@ class MessagesState extends State<MessagesView> {
       backgroundColor: Colors.purple[50],
       appBar: AppBar(
         title: Text(room.displayTitleFor(widget.me)),
-        actions: [InviteQrButton(room: room)],
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'toggle-push') {
+                unawaited(_updatePushMuted(!room.pushMuted));
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                value: 'toggle-push',
+                child: Text(
+                  room.pushMuted
+                      ? 'Turn on notifications'
+                      : 'Mute notifications',
+                ),
+              ),
+            ],
+          ),
+          InviteQrButton(room: room),
+        ],
       ),
       body: Column(
         children: [

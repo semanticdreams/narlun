@@ -15,6 +15,33 @@ from tests.helpers import (
 )
 
 
+class FakePushService:
+    enabled = True
+
+    def __init__(self):
+        self.room_created_calls = []
+        self.room_joined_calls = []
+        self.new_message_calls = []
+
+    async def notify_room_created(self, actor_id, room_id, recipient_ids):
+        self.room_created_calls.append((actor_id, room_id, list(recipient_ids)))
+
+    async def notify_room_joined(self, joined_user_id, room_id, recipient_ids):
+        self.room_joined_calls.append((joined_user_id, room_id, list(recipient_ids)))
+
+    async def notify_new_message(self, sender_id, room_id, message):
+        self.new_message_calls.append((sender_id, room_id, message))
+
+    def enqueue_room_created(self, actor_id, room_id, recipient_ids):
+        self.room_created_calls.append((actor_id, room_id, list(recipient_ids)))
+
+    def enqueue_room_joined(self, joined_user_id, room_id, recipient_ids):
+        self.room_joined_calls.append((joined_user_id, room_id, list(recipient_ids)))
+
+    def enqueue_new_message(self, sender_id, room_id, message):
+        self.new_message_calls.append((sender_id, room_id, message))
+
+
 async def test_nearby_users_exclude_shared_rooms(cli):
     users = [await signup(cli) for _ in range(3)]
 
@@ -135,3 +162,127 @@ async def test_invite_requires_valid_token(cli):
     assert response.status == 400
     body = await response.json()
     assert body['code'] == 1004
+
+
+async def test_room_push_mute_settings_round_trip(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/update-room-settings',
+        json={'room_id': room['id'], 'push_muted': True},
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+    assert response.status == 200
+    updated_room = await response.json()
+    assert updated_room['push_muted'] is True
+
+    owner_rooms = await get_rooms(cli, users[0]['jwt'])
+    other_rooms = await get_rooms(cli, users[1]['jwt'])
+    assert owner_rooms[0]['push_muted'] is True
+    assert other_rooms[0]['push_muted'] is False
+
+
+async def test_send_message_requests_push_delivery(cli_factory):
+    fake_push = FakePushService()
+    cli = await cli_factory(push_service=fake_push)
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    message = await send_message(cli, users[0]['jwt'], room['id'], 'hello')
+
+    assert fake_push.new_message_calls == [
+        (users[0]['user']['id'], room['id'], message),
+    ]
+
+
+async def test_room_creation_and_invite_accept_request_push_delivery(cli_factory):
+    fake_push = FakePushService()
+    cli = await cli_factory(push_service=fake_push)
+    users = [await signup(cli) for _ in range(4)]
+
+    dm_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    assert fake_push.room_created_calls == [
+        (users[0]['user']['id'], dm_room['id'], [users[1]['user']['id']]),
+    ]
+
+    group_room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        'group',
+        [users[1]['user']['id'], users[2]['user']['id']],
+    )
+    assert fake_push.room_created_calls[-1] == (
+        users[0]['user']['id'],
+        group_room['id'],
+        [users[1]['user']['id'], users[2]['user']['id']],
+    )
+
+    invite = await create_invite(cli, users[0]['jwt'], room_id=group_room['id'])
+    response = await accept_invite(cli, users[3]['jwt'], invite['token'])
+    assert response.status == 200
+    assert fake_push.room_joined_calls[-1] == (
+        users[3]['user']['id'],
+        group_room['id'],
+        [users[0]['user']['id'], users[1]['user']['id'], users[2]['user']['id']],
+    )
+
+
+async def test_reopening_existing_dm_does_not_request_push_delivery(cli_factory):
+    fake_push = FakePushService()
+    cli = await cli_factory(push_service=fake_push)
+    users = [await signup(cli) for _ in range(2)]
+
+    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    fake_push.room_created_calls.clear()
+
+    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    assert fake_push.room_created_calls == []
+
+
+async def test_accepting_invite_twice_does_not_request_duplicate_push(cli_factory):
+    fake_push = FakePushService()
+    cli = await cli_factory(push_service=fake_push)
+    users = [await signup(cli) for _ in range(4)]
+    group_room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        'group',
+        [users[1]['user']['id'], users[2]['user']['id']],
+    )
+    invite = await create_invite(cli, users[0]['jwt'], room_id=group_room['id'])
+
+    first = await accept_invite(cli, users[3]['jwt'], invite['token'])
+    assert first.status == 200
+    fake_push.room_joined_calls.clear()
+
+    second = await accept_invite(cli, users[3]['jwt'], invite['token'])
+    assert second.status == 200
+    assert fake_push.room_joined_calls == []
+
+
+async def test_reaccepting_room_invite_preserves_viewer_push_muted_state(cli):
+    users = [await signup(cli) for _ in range(3)]
+    group_room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        'group',
+        [users[1]['user']['id']],
+    )
+    invite = await create_invite(cli, users[0]['jwt'], room_id=group_room['id'])
+
+    first = await accept_invite(cli, users[2]['jwt'], invite['token'])
+    assert first.status == 200
+
+    response = await cli.post(
+        '/api/social/update-room-settings',
+        json={'room_id': group_room['id'], 'push_muted': True},
+        headers={'Cookie': f'jwt={users[2]["jwt"]}'},
+    )
+    assert response.status == 200
+
+    second = await accept_invite(cli, users[2]['jwt'], invite['token'])
+    assert second.status == 200
+    room = await second.json()
+    assert room['push_muted'] is True

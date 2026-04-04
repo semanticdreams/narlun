@@ -10,6 +10,7 @@ import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/models.dart';
 import 'package:narlun/profile_view.dart';
+import 'package:narlun/push_notifications_service.dart';
 import 'package:narlun/websocket.dart';
 
 class _DummyHttpClient extends http.BaseClient {
@@ -61,6 +62,59 @@ class FakeInstallPromptService extends InstallPromptService {
   }
 }
 
+class FakePushNotificationsService extends PushNotificationsService {
+  FakePushNotificationsService({
+    this.supported = true,
+    this.configured = true,
+    this.subscribed = false,
+    this.message = 'Notifications are off for this browser.',
+  });
+
+  final bool supported;
+  final bool configured;
+  final bool subscribed;
+  final String? message;
+  int enableCalls = 0;
+  int disableCalls = 0;
+
+  @override
+  bool get isBusy => false;
+
+  @override
+  bool get isConfigured => configured;
+
+  @override
+  bool get isSubscribed => subscribed;
+
+  @override
+  bool get isSupported => supported;
+
+  @override
+  bool get shouldShowPrompt => false;
+
+  @override
+  PushPermissionState get permissionState => PushPermissionState.defaultState;
+
+  @override
+  String? get statusMessage => message;
+
+  @override
+  Future<void> disableNotifications() async {
+    disableCalls += 1;
+  }
+
+  @override
+  Future<void> enableNotifications() async {
+    enableCalls += 1;
+  }
+
+  @override
+  void dismissPrompt() {}
+
+  @override
+  Future<void> syncSession(SessionUser? user) async {}
+}
+
 void main() {
   setUp(() async {
     await setupLocator(reset: true, dialogService: DialogService());
@@ -74,6 +128,7 @@ void main() {
     tester,
   ) async {
     final installPromptService = FakeInstallPromptService(available: true);
+    final pushNotificationsService = FakePushNotificationsService();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -81,6 +136,9 @@ void main() {
           Provider<HttpService>.value(value: FakeProfileHttpService()),
           ChangeNotifierProvider<InstallPromptService>.value(
             value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
           ),
           ChangeNotifierProvider(
             create: (_) => MeModel()
@@ -106,5 +164,48 @@ void main() {
 
     expect(installPromptService.requestInstallCalls, 1);
     expect(find.text('Narlun is installing.'), findsOneWidget);
+  });
+
+  testWidgets('shows notification controls in profile when supported', (
+    tester,
+  ) async {
+    final pushNotificationsService = FakePushNotificationsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: FakeProfileHttpService()),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: FakeInstallPromptService(available: false),
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(
+                  authenticated: true,
+                  id: 1,
+                  username: 'alice',
+                ),
+              ),
+          ),
+        ],
+        child: const MaterialApp(home: ProfileView()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Turn on notifications'), findsOneWidget);
+    expect(
+      find.text('Notifications are off for this browser.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Turn on notifications'));
+    await tester.pumpAndSettle();
+
+    expect(pushNotificationsService.enableCalls, 1);
   });
 }

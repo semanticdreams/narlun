@@ -9,6 +9,8 @@ import 'http.dart';
 import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
+import 'push_notifications_service.dart';
+import 'push_notifications_session_bridge.dart';
 
 Object? _e2eSemanticsHandle;
 FrontendErrorReporter? _frontendErrorReporter;
@@ -63,11 +65,19 @@ Widget buildNarlunApp() {
         lazy: false,
         create: (_) => createInstallPromptService(),
       ),
+      ChangeNotifierProvider<PushNotificationsService>(
+        lazy: false,
+        create: (_) => createPushNotificationsService(
+          apiBaseUrl: Environment().config.apiUrl,
+        ),
+      ),
       ChangeNotifierProvider<MeModel>.value(value: meModel),
     ],
-    child: MyApp(
-      errorReporter: errorReporter,
-      theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+    child: PushNotificationsSessionBridge(
+      child: MyApp(
+        errorReporter: errorReporter,
+        theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+      ),
     ),
   );
 }

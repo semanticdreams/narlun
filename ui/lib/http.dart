@@ -7,6 +7,9 @@ import 'config.dart';
 import 'locator.dart';
 import 'dialog_service.dart';
 import 'models.dart';
+import 'push_subscription_endpoint_default.dart'
+    if (dart.library.html) 'push_subscription_endpoint_browser.dart'
+    as push_subscription;
 import 'websocket.dart';
 import 'http_client_default.dart'
     if (dart.library.html) 'http_client_browser.dart'
@@ -150,8 +153,15 @@ class HttpService {
   }
 
   Future signout() async {
+    final pushEndpoint =
+        await push_subscription.readCurrentPushSubscriptionEndpoint();
     try {
-      await client.post(Uri.parse(baseurl + '/users/signout'));
+      await client.post(
+        Uri.parse(baseurl + '/users/signout'),
+        body: pushEndpoint == null
+            ? null
+            : jsonEncode({'push_endpoint': pushEndpoint}),
+      );
     } finally {
       await clearLocalSession();
     }
@@ -297,6 +307,17 @@ class HttpService {
       body: jsonEncode(data),
     );
     return ChatMessage.listFromJson(jsonDecode(resp.body) as List<dynamic>);
+  }
+
+  Future<RoomSummary> update_room_settings(
+    room_id, {
+    required bool pushMuted,
+  }) async {
+    final resp = await client.post(
+      Uri.parse(baseurl + '/social/update-room-settings'),
+      body: jsonEncode({'room_id': room_id, 'push_muted': pushMuted}),
+    );
+    return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   Future<void> send_message(room_id, message_body) async {

@@ -8,6 +8,7 @@ from aiohttp.web import middleware
 
 import config
 from app.frontend_errors import create_frontend_error_tools, frontend_error_handler
+from app.push import PushService
 from app.redis_store import RedisStore
 from app.social import create_app as create_social_app
 from app.users import create_app as create_users_app
@@ -18,6 +19,7 @@ from app.websocket import websocket_handler
 @middleware
 async def request_context(req, handler):
     req.store = req.config_dict['store']
+    req.push = req.config_dict['push']
     req.redis = req.config_dict['redis']
     req.redis_bytes = req.config_dict['redis_bytes']
     req.user = await load_user_from_token(req)
@@ -40,11 +42,12 @@ async def request_context(req, handler):
         )
 
 
-async def create_app(*, redis_url=None, enable_cors=True):
+async def create_app(*, redis_url=None, enable_cors=True, push_service=None):
     store = await RedisStore.create(redis_url or config.REDIS_URL)
     frontend_error_tools = create_frontend_error_tools(config.FRONTEND_ERROR_LOG_PATH)
     app = web.Application(middlewares=[request_context])
     app['store'] = store
+    app['push'] = push_service or PushService(store)
     app['redis'] = store.redis
     app['redis_bytes'] = store.redis_bytes
     app['frontend_error_log_writer'] = frontend_error_tools['writer']
@@ -67,9 +70,15 @@ async def create_app(*, redis_url=None, enable_cors=True):
         for route in list(app.router.routes()):
             cors.add(route)
 
+    async def close_push(_app):
+        shutdown = getattr(app['push'], 'shutdown', None)
+        if shutdown is not None:
+            await shutdown()
+
     async def close_store(_app):
         await store.close()
 
+    app.on_cleanup.append(close_push)
     app.on_cleanup.append(close_store)
     return app
 

@@ -15,6 +15,7 @@ dependencies = [
     "pillow>=10,<12",
     "py-avataaars>=1.1.2,<2",
     "pyjwt>=2.9,<3",
+    "pywebpush>=2.0,<3",
     "python-dotenv>=1.0,<2",
     "redis[hiredis]>=5.0,<6",
     "structlog>=24,<26",

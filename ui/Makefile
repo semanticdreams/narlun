@@ -7,7 +7,7 @@ web:
 	flutter run --dart-define=ENV=dev -d chrome --web-port=8080 --pid-file /tmp/flutter.pid
 
 build-web:
-	flutter build web --release
+	./tool/build_web.sh
 
 browser-e2e:
 	npm run test:e2e

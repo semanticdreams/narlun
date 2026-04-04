@@ -9,7 +9,7 @@ WebSocketChannel connectWsChannel(Uri uri, {Map<String, dynamic>? headers}) {
   );
 }
 
-Uri createWebSocketUri(String apiBaseUrl) {
+Uri createWebSocketUri(String apiBaseUrl, {String? clientId}) {
   final apiBaseUri = Uri.parse(apiBaseUrl);
   if (!apiBaseUri.hasScheme || apiBaseUri.host.isEmpty) {
     throw StateError(
@@ -22,5 +22,6 @@ Uri createWebSocketUri(String apiBaseUrl) {
     host: apiBaseUri.host,
     port: apiBaseUri.hasPort ? apiBaseUri.port : null,
     path: '/api/ws',
+    queryParameters: clientId == null ? null : {'client_id': clientId},
   );
 }

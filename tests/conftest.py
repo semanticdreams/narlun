@@ -53,3 +53,17 @@ async def cli(aiohttp_client, redis_url):
     await app['redis'].flushdb()
     client = await aiohttp_client(app, cookie_jar=aiohttp.DummyCookieJar())
     return client
+
+
+@pytest.fixture
+async def cli_factory(aiohttp_client, redis_url):
+    async def factory(*, push_service=None):
+        app = await create_app(
+            redis_url=redis_url,
+            enable_cors=False,
+            push_service=push_service,
+        )
+        await app['redis'].flushdb()
+        return await aiohttp_client(app, cookie_jar=aiohttp.DummyCookieJar())
+
+    return factory

@@ -48,6 +48,12 @@ class _WelcomeState extends State<WelcomeView> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: const [
+            Image(
+              image: AssetImage('assets/icon.png'),
+              width: 96,
+              height: 96,
+            ),
+            SizedBox(height: 20),
             Text(
               'Narlun',
               style: TextStyle(

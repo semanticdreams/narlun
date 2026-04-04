@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'appbar_avatar.dart';
 import 'conversations_view.dart';
 import 'home_tab_storage.dart';
+import 'invite_qr_button.dart';
 import 'location_service.dart';
 import 'messages_view.dart';
 import 'me_model.dart';
@@ -12,12 +13,14 @@ import 'nearby_users_view.dart';
 
 class HomeView extends StatelessWidget {
   final int? initialTabIndex;
+  final int? initialRoomIdToOpen;
   final LocationService? nearbyLocationService;
   final Widget? roomsView;
 
   const HomeView({
     super.key,
     this.initialTabIndex,
+    this.initialRoomIdToOpen,
     this.nearbyLocationService,
     this.roomsView,
   });
@@ -31,6 +34,7 @@ class HomeView extends StatelessWidget {
       initialIndex: resolvedInitialTabIndex,
       child: _HomeScaffold(
         nearbyLocationService: nearbyLocationService,
+        initialRoomIdToOpen: initialRoomIdToOpen,
         roomsView: roomsView,
       ),
     );
@@ -39,10 +43,12 @@ class HomeView extends StatelessWidget {
 
 class _HomeScaffold extends StatefulWidget {
   final LocationService? nearbyLocationService;
+  final int? initialRoomIdToOpen;
   final Widget? roomsView;
 
   const _HomeScaffold({
     required this.nearbyLocationService,
+    required this.initialRoomIdToOpen,
     required this.roomsView,
   });
 
@@ -123,7 +129,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Narlun'),
-        actions: const [AppBarAvatar()],
+        actions: const [InviteQrButton(), AppBarAvatar()],
         bottom: const TabBar(
           tabs: [
             Tab(icon: Icon(Icons.people_outline), text: 'Nearby'),
@@ -140,6 +146,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
           ),
           widget.roomsView ??
               ConversationsView(
+                initialRoomIdToOpen: widget.initialRoomIdToOpen,
                 showChrome: false,
                 onOpenNearby: () {
                   tabController.animateTo(0);

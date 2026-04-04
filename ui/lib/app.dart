@@ -5,6 +5,7 @@ import 'signin_view.dart';
 import 'signup_view.dart';
 import 'welcome_view.dart';
 import 'home_view.dart';
+import 'invite_accept_view.dart';
 import 'profile_view.dart';
 import 'me_model.dart';
 import 'set_page_title.dart';
@@ -102,7 +103,12 @@ class MyApp extends StatelessWidget {
               pageView = const HomeView();
               break;
             case '/rooms':
-              pageView = const HomeView(initialTabIndex: 1);
+              pageView = HomeView(
+                initialTabIndex: 1,
+                initialRoomIdToOpen: int.tryParse(
+                  uriData.queryParameters['open_room'] ?? '',
+                ),
+              );
               break;
             case '/nearby':
               pageView = const HomeView(initialTabIndex: 0);
@@ -113,6 +119,11 @@ class MyApp extends StatelessWidget {
             case '/signin':
               pageView = const SigninView();
               break;
+          }
+          if (pageView == null &&
+              uriData.pathSegments.length == 2 &&
+              uriData.pathSegments.first == 'invite') {
+            pageView = InviteAcceptView(token: uriData.pathSegments[1]);
           }
         }
 

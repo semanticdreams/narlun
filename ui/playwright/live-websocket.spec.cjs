@@ -163,3 +163,74 @@ test('install prompt can be triggered from the profile screen', async ({ page })
   await expect(page.getByText('Narlun is installing.').first()).toBeVisible();
   expect(await installPromptCallCount(page)).toBe(1);
 });
+
+test('home invite link sends a new user through signup into a direct room', async ({ browser, page }) => {
+  await browserSignup(page, harness.rootUrl, randomUsername('alice'));
+  const alice = await currentBrowserUser(page);
+  const browserJwt = await currentJwtCookie(page);
+
+  await page.getByRole('button', { name: 'Invite someone' }).click();
+  await expect(page.getByRole('heading', { name: 'Invite someone' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
+  const invite = await backendClient.createInvite(browserJwt);
+  const inviteLink = `${harness.rootUrl}/invite/${invite.token}`;
+
+  const inviteeContext = await browser.newContext();
+  const inviteePage = await inviteeContext.newPage();
+  try {
+    await inviteePage.goto(inviteLink);
+    await expect(
+      inviteePage.getByText('Choose a username to start instantly.'),
+    ).toBeVisible({ timeout: 20_000 });
+
+    const inviteeUsername = randomUsername('guest');
+    await inviteePage.locator('input:not([disabled])').first().fill(inviteeUsername);
+    await inviteePage.getByRole('button', { name: 'Sign Up' }).click();
+
+    await expect(inviteePage.getByRole('textbox')).toBeVisible({ timeout: 20_000 });
+    await expect(inviteePage.getByText(alice.username).first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Back' }).click();
+    await page.getByRole('tab', { name: 'Rooms' }).click();
+    await expect(page.getByText(inviteeUsername)).toBeVisible({ timeout: 20_000 });
+  } finally {
+    await inviteeContext.close();
+  }
+});
+
+test('room invite link sends a new user through signup into the existing room', async ({ browser, page }) => {
+  await browserSignup(page, harness.rootUrl, randomUsername('alice'));
+  const alice = await currentBrowserUser(page);
+  const browserJwt = await currentJwtCookie(page);
+  const bob = await backendClient.signupGuest(randomUsername('bob'));
+  const room = await bob.joinUser(alice.id);
+
+  await page.getByRole('tab', { name: 'Rooms' }).click();
+  await expect(page.getByText(bob.username)).toBeVisible();
+  await page.getByText(bob.username).last().click();
+  await expect(page.getByRole('textbox')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Invite people to this room' }).click();
+  await expect(page.getByRole('heading', { name: /Invite to/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
+  const invite = await backendClient.createInvite(browserJwt, room.id);
+  const inviteLink = `${harness.rootUrl}/invite/${invite.token}`;
+
+  const inviteeContext = await browser.newContext();
+  const inviteePage = await inviteeContext.newPage();
+  try {
+    await inviteePage.goto(inviteLink);
+    await expect(
+      inviteePage.getByText('Choose a username to start instantly.'),
+    ).toBeVisible({ timeout: 20_000 });
+
+    await inviteePage.locator('input:not([disabled])').first().fill(randomUsername('charlie'));
+    await inviteePage.getByRole('button', { name: 'Sign Up' }).click();
+
+    await expect(inviteePage.getByRole('textbox')).toBeVisible({ timeout: 20_000 });
+    await bob.sendMessage(room.id, 'welcome to the room');
+    await expect(inviteePage.getByText('welcome to the room')).toBeVisible({ timeout: 20_000 });
+  } finally {
+    await inviteeContext.close();
+  }
+});

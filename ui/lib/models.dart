@@ -136,7 +136,20 @@ class RoomSummary {
   }
 
   String displayTitleFor(SessionUser me) {
-    if (isGroup || !me.authenticated) {
+    if (isGroup) {
+      if (name != null && name!.isNotEmpty) {
+        return name!;
+      }
+      final participantNames = participants
+          .where((participant) => participant.id != me.id)
+          .map((participant) => participant.username)
+          .toList();
+      if (participantNames.isNotEmpty) {
+        return participantNames.join(', ');
+      }
+      return 'Group room';
+    }
+    if (!me.authenticated) {
       return name ?? '';
     }
     return otherParticipantFor(me)?.username ?? name ?? '';
@@ -147,6 +160,26 @@ class RoomSummary {
       return picture;
     }
     return otherParticipantFor(me)?.picture;
+  }
+}
+
+class InviteLink {
+  final String token;
+  final DateTime expiresAt;
+  final int? roomId;
+
+  const InviteLink({
+    required this.token,
+    required this.expiresAt,
+    this.roomId,
+  });
+
+  factory InviteLink.fromJson(Map<String, dynamic> json) {
+    return InviteLink(
+      token: json['token'] as String,
+      expiresAt: DateTime.parse(json['expires_at'] as String),
+      roomId: json['room_id'] as int?,
+    );
   }
 }
 

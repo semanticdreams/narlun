@@ -43,6 +43,7 @@ dependencies:
   timeago: ^3.2.2
   chat_bubbles: ^1.2.0
   web_socket_channel: ^3.0.3
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:

@@ -13,6 +13,7 @@ from app.util import create_random_avatar
 
 MESSAGE_TTL_SECONDS = 7 * 24 * 60 * 60
 ACTIVE_WINDOW_SECONDS = 3 * 24 * 60 * 60
+INVITE_TTL_SECONDS = 24 * 60 * 60
 MAX_NEARBY_RESULTS = 10
 MAX_GEO_RESULTS = 50
 MAX_ROOM_RESULTS = 30
@@ -40,6 +41,10 @@ class PermissionDenied(Exception):
 
 
 class StatusTooLong(Exception):
+    pass
+
+
+class InviteNotFound(Exception):
     pass
 
 
@@ -114,6 +119,9 @@ class RedisStore:
     def _room_messages_key(self, room_id):
         return f'room:{{{room_id}}}:messages'
 
+    def _invite_key(self, token):
+        return f'invite:{token}'
+
     def _username_index_key(self, username):
         return f'idx:username:{normalize_username(username)}'
 
@@ -129,6 +137,10 @@ class RedisStore:
 
     async def _load_user_hash(self, user_id):
         data = await self.redis.hgetall(self._user_key(user_id))
+        return data or None
+
+    async def _load_room_meta(self, room_id):
+        data = await self.redis.hgetall(self._room_meta_key(room_id))
         return data or None
 
     async def _resolve_username_id(self, username):
@@ -415,6 +427,64 @@ class RedisStore:
             await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
         return {'id': room_id}
 
+    async def create_invite(self, inviter_id, *, room_id=None):
+        if await self._load_user_hash(inviter_id) is None:
+            raise UserNotFound()
+
+        payload = {
+            'inviter_id': int(inviter_id),
+            'created_at': now_ts(),
+        }
+        if room_id is None:
+            payload['target'] = 'user'
+        else:
+            room_id = int(room_id)
+            meta = await self._load_room_meta(room_id)
+            if meta is None:
+                raise RoomNotFound()
+            if not await self.user_in_room(inviter_id, room_id):
+                raise PermissionDenied()
+            payload['target'] = 'room'
+            payload['room_id'] = room_id
+
+        token = secrets.token_urlsafe(18)
+        await self.redis.set(
+            self._invite_key(token),
+            json.dumps(payload),
+            ex=INVITE_TTL_SECONDS,
+        )
+        return {
+            'token': token,
+            'expires_at': ts_to_iso(payload['created_at'] + INVITE_TTL_SECONDS),
+            'room_id': payload.get('room_id'),
+        }
+
+    async def accept_invite(self, user_id, token):
+        invite_json = await self.redis.get(self._invite_key(token))
+        if invite_json is None:
+            raise InviteNotFound()
+
+        invite = json.loads(invite_json)
+        inviter_id = int(invite['inviter_id'])
+        if await self._load_user_hash(user_id) is None or await self._load_user_hash(inviter_id) is None:
+            raise InviteNotFound()
+
+        if invite['target'] == 'room':
+            room_id = int(invite['room_id'])
+            room = await self._add_user_to_room(
+                room_id,
+                user_id,
+                inviter_id=inviter_id,
+            )
+        else:
+            if int(user_id) == inviter_id:
+                raise PermissionDenied()
+            room_data = await self.join_user(inviter_id, user_id)
+            room = await self._serialize_room(room_data['id'])
+            if room is None:
+                raise RoomNotFound()
+        return room
+
     async def user_in_room(self, user_id, room_id):
         return bool(await self.redis.sismember(self._room_members_key(room_id), user_id))
 
@@ -479,6 +549,52 @@ class RedisStore:
 
     async def get_room_members(self, room_id):
         return sorted(int(member) for member in await self.redis.smembers(self._room_members_key(room_id)))
+
+    async def _add_user_to_room(self, room_id, user_id, *, inviter_id):
+        room_id = int(room_id)
+        user_id = int(user_id)
+        inviter_id = int(inviter_id)
+
+        meta_key = self._room_meta_key(room_id)
+        meta = await self.redis.hgetall(meta_key)
+        if not meta:
+            raise RoomNotFound()
+        if await self._load_user_hash(user_id) is None:
+            raise UserNotFound()
+
+        members_key = self._room_members_key(room_id)
+        if not await self.redis.sismember(members_key, inviter_id):
+            raise PermissionDenied()
+        if await self.redis.sismember(members_key, user_id):
+            room = await self._serialize_room(room_id)
+            if room is None:
+                raise RoomNotFound()
+            return room
+
+        timestamp_ms = now_ms()
+        existing_members = sorted(
+            int(member)
+            for member in await self.redis.smembers(members_key)
+        )
+        if not room_bool(meta.get('is_group')) and len(existing_members) >= 2:
+            dm_key = meta.get('dm_key') or ''
+            if dm_key:
+                await self.redis.delete(dm_key)
+            await self.redis.hset(meta_key, mapping={
+                'is_group': '1',
+                'dm_key': '',
+            })
+
+        all_members = sorted({*existing_members, user_id})
+        await self.redis.sadd(members_key, user_id)
+        await self.redis.hset(meta_key, mapping={'updated_at': timestamp_ms})
+        for member_id in all_members:
+            await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
+
+        room = await self._serialize_room(room_id)
+        if room is None:
+            raise RoomNotFound()
+        return room
 
     async def get_rooms(self, user_id):
         room_ids = await self.redis.zrevrange(self._user_rooms_key(user_id), 0, MAX_ROOM_RESULTS - 1)

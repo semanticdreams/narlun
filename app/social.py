@@ -1,6 +1,6 @@
 from aiohttp import web
 
-from app.redis_store import PermissionDenied, RoomNotFound, UserNotFound
+from app.redis_store import InviteNotFound, PermissionDenied, RoomNotFound, UserNotFound
 from app.util import InvalidUsage, authenticated, jsonify
 
 
@@ -25,6 +25,15 @@ class NoSuchUserError(InvalidUsage):
 class InvalidRoomError(InvalidUsage):
     code = 1003
     message = 'Invalid room'
+
+    def __init__(self, message=None):
+        if message is not None:
+            self.message = message
+
+
+class InvalidInviteError(InvalidUsage):
+    code = 1004
+    message = 'Invalid invite'
 
     def __init__(self, message=None):
         if message is not None:
@@ -89,6 +98,41 @@ async def send_message(req):
     await req.store.publish_room_message(req.data['room_id'], message)
     await req.store.publish_rooms_changed(await req.store.get_room_members(req.data['room_id']))
     return jsonify(message)
+
+
+@routes.post('/create-invite')
+@authenticated
+async def create_invite(req):
+    room_id = req.data.get('room_id')
+    try:
+        invite = await req.store.create_invite(req.user['id'], room_id=room_id)
+    except RoomNotFound:
+        raise NoSuchRoomError()
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    return jsonify(invite)
+
+
+@routes.post('/accept-invite')
+@authenticated
+async def accept_invite(req):
+    token = req.data.get('token', '')
+    if not token:
+        raise InvalidInviteError()
+
+    try:
+        room = await req.store.accept_invite(req.user['id'], token)
+    except InviteNotFound:
+        raise InvalidInviteError(message='Invite is invalid or has expired')
+    except RoomNotFound:
+        raise InvalidInviteError(message='Invite room is no longer available')
+    except PermissionDenied as exc:
+        raise InvalidInviteError(message=str(exc) or 'Invite could not be accepted')
+    except UserNotFound:
+        raise InvalidInviteError(message='Invite is no longer valid')
+
+    await req.store.publish_rooms_changed(await req.store.get_room_members(room['id']))
+    return jsonify(room)
 
 
 @routes.get('/get-rooms')

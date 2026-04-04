@@ -1,9 +1,11 @@
 import app.redis_store as redis_store
 from tests.helpers import (
+    accept_invite,
     BERLIN,
     HAMBURG,
     MADRID,
     checkin,
+    create_invite,
     create_group_room,
     get_messages,
     get_rooms,
@@ -93,3 +95,43 @@ async def test_message_ordering_within_one_second(cli, monkeypatch):
     assert response.status == 200
     messages = await response.json()
     assert [message['body'] for message in messages[:2]] == ['second', 'first']
+
+
+async def test_user_invite_accept_creates_direct_room(cli):
+    users = [await signup(cli) for _ in range(2)]
+
+    invite = await create_invite(cli, users[0]['jwt'])
+    response = await accept_invite(cli, users[1]['jwt'], invite['token'])
+    assert response.status == 200
+    room = await response.json()
+
+    assert room['is_group'] is False
+    participant_ids = sorted(participant['id'] for participant in room['participants'])
+    assert participant_ids == sorted([users[0]['user']['id'], users[1]['user']['id']])
+
+
+async def test_room_invite_adds_user_and_converts_dm_to_group(cli):
+    users = [await signup(cli) for _ in range(3)]
+    dm_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    invite = await create_invite(cli, users[0]['jwt'], room_id=dm_room['id'])
+
+    response = await accept_invite(cli, users[2]['jwt'], invite['token'])
+    assert response.status == 200
+    room = await response.json()
+
+    assert room['id'] == dm_room['id']
+    assert room['is_group'] is True
+    participant_ids = sorted(participant['id'] for participant in room['participants'])
+    assert participant_ids == sorted(user['user']['id'] for user in users)
+
+    recreated = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    assert recreated['id'] != dm_room['id']
+
+
+async def test_invite_requires_valid_token(cli):
+    created = await signup(cli)
+
+    response = await accept_invite(cli, created['jwt'], 'invalid-token')
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1004

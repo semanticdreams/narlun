@@ -93,6 +93,28 @@ async def create_group_room(cli, jwt, name, user_ids):
     return await response.json()
 
 
+async def create_invite(cli, jwt, room_id=None):
+    payload = {}
+    if room_id is not None:
+        payload['room_id'] = room_id
+    response = await cli.post(
+        '/api/social/create-invite',
+        json=payload,
+        headers=auth_headers(jwt),
+    )
+    assert response.status == 200
+    return await response.json()
+
+
+async def accept_invite(cli, jwt, token):
+    response = await cli.post(
+        '/api/social/accept-invite',
+        json={'token': token},
+        headers=auth_headers(jwt),
+    )
+    return response
+
+
 async def send_message(cli, jwt, room_id, body):
     response = await cli.post(
         '/api/social/send-message',

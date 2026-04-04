@@ -7,6 +7,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import 'appbar_avatar.dart';
 import 'avatar_image.dart';
 import 'http.dart';
+import 'invite_qr_button.dart';
 import 'install_prompt_actions.dart';
 import 'install_prompt_service.dart';
 import 'locator.dart';
@@ -21,6 +22,7 @@ class ConversationsView extends StatefulWidget {
   final WebsocketService? websocketService;
   final bool showChrome;
   final VoidCallback? onOpenNearby;
+  final int? initialRoomIdToOpen;
 
   const ConversationsView({
     super.key,
@@ -28,6 +30,7 @@ class ConversationsView extends StatefulWidget {
     this.websocketService,
     this.showChrome = true,
     this.onOpenNearby,
+    this.initialRoomIdToOpen,
   });
 
   @override
@@ -46,6 +49,8 @@ class _ConversationsState extends State<ConversationsView> {
   Timer? installSuggestionTimer;
   bool _installSuggestionEligible = false;
   bool _loadingInitialRooms = true;
+  bool _openedInitialRoom = false;
+  bool _reportedMissingInitialRoom = false;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -66,6 +71,7 @@ class _ConversationsState extends State<ConversationsView> {
           ..addAll(resp);
         _loadingInitialRooms = false;
       });
+      unawaited(_openInitialRoomIfNeeded());
     } on UnauthorizedResponse {
       if (!mounted) {
         return;
@@ -83,6 +89,48 @@ class _ConversationsState extends State<ConversationsView> {
         _loadingInitialRooms = false;
       });
       _showRefreshFailure('Could not refresh rooms. Trying again soon.');
+    }
+  }
+
+  Future<void> _openInitialRoomIfNeeded() async {
+    final roomId = widget.initialRoomIdToOpen;
+    if (_openedInitialRoom || roomId == null || !mounted) {
+      return;
+    }
+    final currentUser = Provider.of<MeModel>(context, listen: false).data;
+    if (currentUser == null || !currentUser.authenticated) {
+      return;
+    }
+    RoomSummary? room;
+    for (final candidate in rooms) {
+      if (candidate.id == roomId) {
+        room = candidate;
+        break;
+      }
+    }
+    if (room == null) {
+      if (!_loadingInitialRooms && !_reportedMissingInitialRoom) {
+        _reportedMissingInitialRoom = true;
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('That invite room is no longer available.')),
+        );
+      }
+      return;
+    }
+    _openedInitialRoom = true;
+    final roomDeleted = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MessagesView(
+          room: room!,
+          me: currentUser,
+          httpService: httpService,
+          websocketService: websocketService,
+        ),
+      ),
+    );
+    if (roomDeleted == true && mounted) {
+      await updateRooms();
     }
   }
 
@@ -246,7 +294,12 @@ class _ConversationsState extends State<ConversationsView> {
                             context,
                             MaterialPageRoute(
                               builder: (context) =>
-                                  MessagesView(room: room, me: currentUser),
+                                  MessagesView(
+                                    room: room,
+                                    me: currentUser,
+                                    httpService: httpService,
+                                    websocketService: websocketService,
+                                  ),
                             ),
                           );
                           if (roomDeleted == true) {
@@ -265,7 +318,10 @@ class _ConversationsState extends State<ConversationsView> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Rooms'), actions: const [AppBarAvatar()]),
+      appBar: AppBar(
+        title: const Text('Rooms'),
+        actions: const [InviteQrButton(), AppBarAvatar()],
+      ),
       body: content,
     );
   }

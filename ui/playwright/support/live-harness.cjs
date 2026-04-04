@@ -224,6 +224,16 @@ class BackendClient {
     });
   }
 
+  async createInvite(jwtCookie, roomId) {
+    const body = roomId === undefined ? {} : { room_id: roomId };
+    const response = await this.request('POST', '/social/create-invite', {
+      cookie: jwtCookie,
+      body,
+      expectedStatus: 200,
+    });
+    return response.json;
+  }
+
   async request(method, pathName, { cookie, body, expectedStatus }) {
     const headers = {};
     if (body !== undefined) {
@@ -271,6 +281,10 @@ class BackendSession {
 
   async signout() {
     return this.client.signout(this.jwtCookie);
+  }
+
+  async createInvite(roomId) {
+    return this.client.createInvite(this.jwtCookie, roomId);
   }
 }
 

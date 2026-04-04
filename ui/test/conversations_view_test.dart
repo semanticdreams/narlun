@@ -38,6 +38,10 @@ class FakeRoomsHttpService extends HttpService {
   var getRoomsCalls = 0;
   var clearedLocalSession = false;
 
+  void queueRoomsResponse(Object response) {
+    _responses.add(response);
+  }
+
   @override
   Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
     getRoomsCalls += 1;
@@ -63,6 +67,10 @@ class FakeRoomsWebsocketService extends WebsocketService {
 
   final StreamController<Map<String, dynamic>> _roomsChangedController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _messagesController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _roomDeletedController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _connectionController =
       StreamController<String>.broadcast();
 
@@ -70,8 +78,22 @@ class FakeRoomsWebsocketService extends WebsocketService {
   Future<void> ensureConnected() async {}
 
   @override
+  Future<void> subscribeRoom(roomId) async {}
+
+  @override
+  Future<void> unsubscribeRoom(roomId) async {}
+
+  @override
   Stream<Map<String, dynamic>> roomsChangedStream() =>
       _roomsChangedController.stream;
+
+  @override
+  Stream<Map<String, dynamic>> messagesStream(roomId) =>
+      _messagesController.stream;
+
+  @override
+  Stream<Map<String, dynamic>> roomDeletedStream(roomId) =>
+      _roomDeletedController.stream;
 
   @override
   Stream<String> get connectionEvents => _connectionController.stream;
@@ -261,5 +283,54 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(openNearbyCalls, 1);
+  });
+
+  testWidgets('opens a requested room after the rooms list loads', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    httpService
+      .._responses.clear()
+      ..queueRoomsResponse([
+        RoomSummary(
+          id: 7,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'bob'),
+          ],
+        ),
+      ]);
+    final installPromptService = FakeInstallPromptService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+            initialRoomIdToOpen: 7,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('bob'), findsWidgets);
   });
 }

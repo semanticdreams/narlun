@@ -31,17 +31,43 @@ class FakeHttpService extends HttpService {
 
   final Queue<Future<List<ChatMessage>> Function(int roomId)> _messageHandlers =
       Queue<Future<List<ChatMessage>> Function(int roomId)>();
+  final Queue<Future<List<RoomSummary>> Function()> _roomHandlers =
+      Queue<Future<List<RoomSummary>> Function()>();
   var getMessagesCalls = 0;
+  var getRoomsCalls = 0;
   var clearedLocalSession = false;
 
   void enqueueMessages(Future<List<ChatMessage>> Function(int roomId) handler) {
     _messageHandlers.add(handler);
   }
 
+  void enqueueRooms(Future<List<RoomSummary>> Function() handler) {
+    _roomHandlers.add(handler);
+  }
+
   @override
   Future<List<ChatMessage>> get_messages(room_id, {bool silentErrors = false}) async {
     getMessagesCalls += 1;
     return _messageHandlers.removeFirst()(room_id as int);
+  }
+
+  @override
+  Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
+    getRoomsCalls += 1;
+    if (_roomHandlers.isEmpty) {
+      return [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ];
+    }
+    return _roomHandlers.removeFirst()();
   }
 
   @override
@@ -60,6 +86,8 @@ class FakeWebsocketService extends WebsocketService {
   final StreamController<Map<String, dynamic>> _messagesController =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _roomDeletedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _roomsChangedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _connectionController =
       StreamController<String>.broadcast();
@@ -98,6 +126,10 @@ class FakeWebsocketService extends WebsocketService {
       );
 
   @override
+  Stream<Map<String, dynamic>> roomsChangedStream() =>
+      _roomsChangedController.stream;
+
+  @override
   Stream<String> get connectionEvents => _connectionController.stream;
 
   void emitMessage(int roomId, List<dynamic> messages) {
@@ -116,6 +148,10 @@ class FakeWebsocketService extends WebsocketService {
 
   void emitConnection(String event) {
     _connectionController.add(event);
+  }
+
+  void emitRoomsChanged() {
+    _roomsChangedController.add({'type': 'rooms-changed', 'data': {}});
   }
 }
 
@@ -194,9 +230,35 @@ void main() {
     },
   );
 
-  testWidgets('refreshes room history after a reconnect event', (tester) async {
+  testWidgets('refreshes room history when a new fetch succeeds', (tester) async {
     final websocketService = FakeWebsocketService();
     final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
     httpService.enqueueMessages((_) async => []);
     httpService.enqueueMessages(
       (_) async => [
@@ -217,11 +279,61 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    final state = tester.state(find.byType(MessagesView)) as dynamic;
+    await state.update_messages(silentErrors: true);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recovered message'), findsOneWidget);
+  });
+
+  testWidgets('refreshes the room title when membership changes', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: true,
+          updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+            RoomParticipant(id: 3, username: 'charlie'),
+          ],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('other'), findsWidgets);
+
     websocketService.emitConnection('reconnected');
     await tester.pumpAndSettle();
 
-    expect(httpService.getMessagesCalls, 2);
-    expect(find.text('Recovered message'), findsOneWidget);
+    expect(find.text('other, charlie'), findsOneWidget);
   });
 
   testWidgets('pops the room screen when the room is deleted', (tester) async {

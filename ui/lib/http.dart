@@ -258,6 +258,26 @@ class HttpService {
     return body['id'] as int;
   }
 
+  Future<InviteLink> create_invite({int? roomId}) async {
+    final payload = <String, dynamic>{};
+    if (roomId != null) {
+      payload['room_id'] = roomId;
+    }
+    final resp = await client.post(
+      Uri.parse(baseurl + '/social/create-invite'),
+      body: jsonEncode(payload),
+    );
+    return InviteLink.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<RoomSummary> accept_invite(String token) async {
+    final resp = await client.post(
+      Uri.parse(baseurl + '/social/accept-invite'),
+      body: jsonEncode({'token': token}),
+    );
+    return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
   Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
     final resp = await client.get(
       Uri.parse(baseurl + '/social/get-rooms'),

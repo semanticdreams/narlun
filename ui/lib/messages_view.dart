@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'http.dart';
+import 'invite_qr_button.dart';
 import 'locator.dart';
 import 'models.dart';
 import 'session_actions.dart';
@@ -17,12 +18,12 @@ class MessagesView extends StatefulWidget {
   final WebsocketService? websocketService;
 
   const MessagesView({
-    Key? key,
+    super.key,
     required this.room,
     required this.me,
     this.httpService,
     this.websocketService,
-  }) : super(key: key);
+  });
 
   @override
   State<MessagesView> createState() => MessagesState();
@@ -31,6 +32,7 @@ class MessagesView extends StatefulWidget {
 class MessagesState extends State<MessagesView> {
   late final HttpService httpService;
   late final WebsocketService websocketService;
+  late RoomSummary room;
 
   final List<ChatMessage> messages = [];
   final messageController = TextEditingController();
@@ -40,6 +42,7 @@ class MessagesState extends State<MessagesView> {
   StreamSubscription? messagesStreamSubscription;
   StreamSubscription? roomDeletedSubscription;
   StreamSubscription? connectionEventsSubscription;
+  StreamSubscription? roomsChangedSubscription;
 
   bool _firstAutoscrollExecuted = false;
   bool _shouldAutoscroll = false;
@@ -76,7 +79,7 @@ class MessagesState extends State<MessagesView> {
   Future<void> update_messages({bool silentErrors = false}) async {
     try {
       final resp = await httpService.get_messages(
-        widget.room.id,
+        room.id,
         silentErrors: silentErrors,
       );
       if (!mounted || _roomClosed) {
@@ -102,6 +105,44 @@ class MessagesState extends State<MessagesView> {
       } else {
         rethrow;
       }
+    } catch (_) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _showRefreshFailure('Could not refresh this room. Trying again soon.');
+    }
+  }
+
+  Future<void> _refreshRoomSummary({bool silentErrors = false}) async {
+    try {
+      final rooms = await httpService.get_rooms(silentErrors: silentErrors);
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      RoomSummary? updatedRoom;
+      for (final candidate in rooms) {
+        if (candidate.id == room.id) {
+          updatedRoom = candidate;
+          break;
+        }
+      }
+      if (updatedRoom == null) {
+        await _handleRoomDeleted();
+        return;
+      }
+      setState(() {
+        room = updatedRoom!;
+      });
+    } on UnauthorizedResponse {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
     } catch (_) {
       if (!mounted || _roomClosed) {
         return;
@@ -139,6 +180,7 @@ class MessagesState extends State<MessagesView> {
     httpService =
         widget.httpService ??
         Provider.of<HttpService>(context, listen: false);
+    room = widget.room;
 
     _scrollController.addListener(_scrollListener);
     messageFocusNode = FocusNode();
@@ -166,6 +208,9 @@ class MessagesState extends State<MessagesView> {
         .listen((_) async {
           await _handleRoomDeleted();
         });
+    roomsChangedSubscription = websocketService.roomsChangedStream().listen((_) {
+      unawaited(_refreshRoomSummary(silentErrors: true));
+    });
     connectionEventsSubscription = websocketService.connectionEvents.listen((
       event,
     ) async {
@@ -173,6 +218,7 @@ class MessagesState extends State<MessagesView> {
         return;
       }
       if (event == 'reconnected') {
+        await _refreshRoomSummary(silentErrors: true);
         await update_messages(silentErrors: true);
       } else if (event == 'signed-out') {
         await _handleSessionEnded();
@@ -185,7 +231,8 @@ class MessagesState extends State<MessagesView> {
         return;
       }
 
-      await websocketService.subscribeRoom(widget.room.id);
+      await websocketService.subscribeRoom(room.id);
+      await _refreshRoomSummary(silentErrors: true);
       await update_messages(silentErrors: true);
     } on RoomUnavailable {
       await _handleRoomDeleted();
@@ -217,10 +264,11 @@ class MessagesState extends State<MessagesView> {
 
   @override
   void dispose() {
-    websocketService.unsubscribeRoom(widget.room.id);
+    websocketService.unsubscribeRoom(room.id);
     messagesStreamSubscription?.cancel();
     roomDeletedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
+    roomsChangedSubscription?.cancel();
     _scrollController.removeListener(_scrollListener);
     messageController.dispose();
     messageFocusNode.dispose();
@@ -232,7 +280,7 @@ class MessagesState extends State<MessagesView> {
     final body = messageController.text;
     if (body.isNotEmpty) {
       try {
-        await httpService.send_message(widget.room.id, body);
+        await httpService.send_message(room.id, body);
         messageController.text = '';
       } on UnauthorizedResponse {
         if (_roomClosed || !mounted) {
@@ -259,7 +307,8 @@ class MessagesState extends State<MessagesView> {
     return Scaffold(
       backgroundColor: Colors.purple[50],
       appBar: AppBar(
-        title: Text(widget.room.displayTitleFor(widget.me)),
+        title: Text(room.displayTitleFor(widget.me)),
+        actions: [InviteQrButton(room: room)],
       ),
       body: Column(
         children: [

@@ -14,6 +14,7 @@ class AppBarAvatar extends StatelessWidget {
         return SizedBox(
           width: 58,
           child: IconButton(
+            tooltip: 'Profile',
             icon: AvatarImage(picture: me.data?.picture),
             onPressed: () {
               Navigator.pushNamed(context, '/profile');

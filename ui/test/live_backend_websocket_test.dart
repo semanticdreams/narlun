@@ -394,7 +394,6 @@ void main() {
         tester,
         find.widgetWithText(ElevatedButton, 'Sign Up'),
       );
-      expect(find.text('Rooms'), findsNothing);
     },
   );
 

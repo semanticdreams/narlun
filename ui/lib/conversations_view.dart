@@ -7,6 +7,8 @@ import 'package:timeago/timeago.dart' as timeago;
 import 'appbar_avatar.dart';
 import 'avatar_image.dart';
 import 'http.dart';
+import 'install_prompt_actions.dart';
+import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'messages_view.dart';
@@ -26,12 +28,16 @@ class ConversationsView extends StatefulWidget {
 }
 
 class _ConversationsState extends State<ConversationsView> {
+  static const _installSuggestionDelay = Duration(seconds: 8);
+
   late final WebsocketService websocketService;
   late final HttpService httpService;
 
   final List<RoomSummary> rooms = [];
   StreamSubscription? roomsChangedSubscription;
   StreamSubscription? connectionEventsSubscription;
+  Timer? installSuggestionTimer;
+  bool _installSuggestionEligible = false;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -75,6 +81,14 @@ class _ConversationsState extends State<ConversationsView> {
     httpService =
         widget.httpService ??
         Provider.of<HttpService>(context, listen: false);
+    installSuggestionTimer = Timer(_installSuggestionDelay, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _installSuggestionEligible = true;
+      });
+    });
     unawaited(update_rooms(silentErrors: true));
     unawaited(websocketService.ensureConnected());
     roomsChangedSubscription = websocketService.roomsChangedStream().listen(
@@ -91,6 +105,7 @@ class _ConversationsState extends State<ConversationsView> {
 
   @override
   void dispose() {
+    installSuggestionTimer?.cancel();
     roomsChangedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
     super.dispose();
@@ -100,11 +115,60 @@ class _ConversationsState extends State<ConversationsView> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Rooms'), actions: const [AppBarAvatar()]),
-      body: Consumer<MeModel>(
-        builder: (context, meModel, child) {
+      body: Consumer2<MeModel, InstallPromptService>(
+        builder: (context, meModel, installPromptService, child) {
           final currentUser = meModel.data;
           return ListView(
             children: [
+              if (currentUser?.authenticated == true &&
+                  _installSuggestionEligible &&
+                  installPromptService.shouldShowSuggestion)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Install Narlun',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Add Narlun to your home screen for faster launch and a more app-like chat experience.',
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              FilledButton(
+                                onPressed: () {
+                                  unawaited(
+                                    handleInstallRequest(
+                                      context,
+                                      installPromptService,
+                                    ),
+                                  );
+                                },
+                                child: const Text('Install app'),
+                              ),
+                              TextButton(
+                                onPressed: installPromptService.dismissSuggestion,
+                                child: const Text('Not now'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               for (final room in rooms)
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 4.0),

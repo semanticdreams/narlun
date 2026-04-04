@@ -5,6 +5,10 @@ const {
   LiveHarness,
   randomUsername,
 } = require('./support/live-harness.cjs');
+const {
+  dispatchInstallPrompt,
+  installPromptCallCount,
+} = require('./support/install-prompt.cjs');
 
 let harness;
 let backendClient;
@@ -43,6 +47,9 @@ test.beforeEach(async ({ page }) => {
   await harness.start();
   backendClient = new BackendClient(harness.apiUrl);
   await page.context().clearCookies();
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
   await page.goto(harness.rootUrl);
 });
 
@@ -113,4 +120,22 @@ test('room websocket reconnect survives a backend restart in the browser', async
 
   await bob.sendMessage(room.id, 'message after restart');
   await expect(page.getByText('message after restart')).toBeVisible({ timeout: 20_000 });
+});
+
+test('install prompt can be triggered from the profile screen', async ({ page }) => {
+  const username = randomUsername('alice');
+  await expect(
+    page.getByText('Choose a username to start instantly.'),
+  ).toBeVisible({ timeout: 20_000 });
+  await dispatchInstallPrompt(page);
+  await page.locator('input:not([disabled])').first().fill(username);
+  await page.getByRole('button', { name: 'Sign Up' }).click();
+  await expect(page.getByText('Rooms')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Profile' }).click();
+  await expect(page.getByText('Profile')).toBeVisible();
+  await page.getByRole('button', { name: 'Install app' }).click();
+
+  await expect(page.getByText('Narlun is installing.').first()).toBeVisible();
+  expect(await installPromptCallCount(page)).toBe(1);
 });

@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import 'avatar_image.dart';
 import 'http.dart';
 import 'image_picker.dart';
+import 'install_prompt_actions.dart';
+import 'install_prompt_service.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'profile_form.dart';
@@ -58,7 +60,7 @@ class ProfileView extends StatelessWidget {
       body: Consumer<MeModel>(
         builder: (context, me, child) {
           final SessionUser? currentUser = me.data;
-          return Container(
+          return SingleChildScrollView(
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
@@ -104,6 +106,26 @@ class ProfileView extends StatelessWidget {
                   ],
                 ),
                 if (currentUser != null) ProfileForm(data: currentUser),
+                Consumer<InstallPromptService>(
+                  builder: (context, installPromptService, child) {
+                    if (!installPromptService.isInstallAvailable) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            handleInstallRequest(context, installPromptService);
+                          },
+                          icon: const Icon(Icons.download_for_offline_outlined),
+                          label: const Text('Install app'),
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,

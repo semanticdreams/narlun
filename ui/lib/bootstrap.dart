@@ -5,6 +5,7 @@ import 'package:url_strategy/url_strategy.dart';
 import 'app.dart';
 import 'config.dart';
 import 'http.dart';
+import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 
@@ -45,6 +46,10 @@ Widget buildNarlunApp() {
       Provider<HttpService>(
         create: (_) => HttpService(),
         dispose: (_, httpService) => httpService.close(),
+      ),
+      ChangeNotifierProvider<InstallPromptService>(
+        lazy: false,
+        create: (_) => createInstallPromptService(),
       ),
       ChangeNotifierProvider(create: (_) => MeModel()),
     ],

@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:narlun/conversations_view.dart';
 import 'package:narlun/dialog_service.dart';
 import 'package:narlun/http.dart';
+import 'package:narlun/install_prompt_service.dart';
 import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/models.dart';
@@ -78,6 +79,43 @@ class FakeRoomsWebsocketService extends WebsocketService {
   }
 }
 
+class FakeInstallPromptService extends InstallPromptService {
+  FakeInstallPromptService({
+    this.available = false,
+    this.suggest = false,
+  });
+
+  bool available;
+  bool suggest;
+  int requestInstallCalls = 0;
+  int dismissCalls = 0;
+
+  @override
+  bool get isInstallAvailable => available;
+
+  @override
+  bool get isInstalled => false;
+
+  @override
+  bool get shouldShowSuggestion => suggest;
+
+  @override
+  void dismissSuggestion() {
+    dismissCalls += 1;
+    suggest = false;
+    notifyListeners();
+  }
+
+  @override
+  Future<InstallPromptOutcome> requestInstall() async {
+    requestInstallCalls += 1;
+    available = false;
+    suggest = false;
+    notifyListeners();
+    return InstallPromptOutcome.accepted;
+  }
+}
+
 void main() {
   setUp(() async {
     await setupLocator(reset: true, dialogService: DialogService());
@@ -92,25 +130,31 @@ void main() {
   ) async {
     final websocketService = FakeRoomsWebsocketService();
     final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final installPromptService = FakeInstallPromptService();
 
     await tester.pumpWidget(
-      Provider<HttpService>.value(
-        value: httpService,
-        child: ChangeNotifierProvider(
-          create: (_) => MeModel()
-            ..setData(
-              const SessionUser(authenticated: true, id: 1, username: 'me'),
-            ),
-          child: MaterialApp(
-            initialRoute: '/rooms',
-            routes: {
-              '/': (_) => const Scaffold(body: Text('Welcome landing')),
-              '/rooms': (_) => ConversationsView(
-                    httpService: httpService,
-                    websocketService: websocketService,
-                  ),
-            },
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
           ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          initialRoute: '/rooms',
+          routes: {
+            '/': (_) => const Scaffold(body: Text('Welcome landing')),
+            '/rooms': (_) => ConversationsView(
+                  httpService: httpService,
+                  websocketService: websocketService,
+                ),
+          },
         ),
       ),
     );
@@ -122,5 +166,54 @@ void main() {
 
     expect(httpService.clearedLocalSession, isTrue);
     expect(find.text('Welcome landing'), findsOneWidget);
+  });
+
+  testWidgets('shows a dismissible install suggestion on the rooms screen', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final installPromptService = FakeInstallPromptService(
+      available: true,
+      suggest: true,
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Install Narlun'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 8));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Install Narlun'), findsOneWidget);
+    expect(find.text('Install app'), findsOneWidget);
+
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+
+    expect(installPromptService.dismissCalls, 1);
+    expect(find.text('Install Narlun'), findsNothing);
   });
 }

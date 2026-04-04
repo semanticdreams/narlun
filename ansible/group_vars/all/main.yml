@@ -1,0 +1,106 @@
+---
+app_name: narlun
+app_user: narlun
+app_group: "{{ app_user }}"
+app_home: "/home/{{ app_user }}"
+app_dir: "{{ app_home }}/app"
+config_dir: "{{ app_home }}/config"
+log_dir: "{{ app_home }}/log"
+web_root_dir: "/var/www/{{ app_name }}"
+backend_service_name: "{{ app_name }}-backend"
+backend_bind_host: 127.0.0.1
+backend_bind_port: 3000
+
+nginx_server_name: narlun.com
+nginx_listen_port: 80
+nginx_enable_https: true
+nginx_redirect_http_to_https: true
+nginx_use_letsencrypt: true
+nginx_acme_webroot: /var/www/letsencrypt
+nginx_client_max_body_size: 12m
+nginx_api_proxy_connect_timeout: 60s
+nginx_api_proxy_read_timeout: 600s
+nginx_api_proxy_send_timeout: 600s
+nginx_websocket_proxy_read_timeout: 3600s
+nginx_websocket_proxy_send_timeout: 3600s
+letsencrypt_email: admin@narlun.com
+letsencrypt_staging: false
+letsencrypt_live_dir: "/etc/letsencrypt/live/{{ nginx_server_name }}"
+letsencrypt_fullchain_path: "{{ letsencrypt_live_dir }}/fullchain.pem"
+letsencrypt_privkey_path: "{{ letsencrypt_live_dir }}/privkey.pem"
+nginx_fallback_certificate: "{{ config_dir }}/tls/selfsigned.crt"
+nginx_fallback_certificate_key: "{{ config_dir }}/tls/selfsigned.key"
+nginx_ssl_certificate: "{{ letsencrypt_fullchain_path if nginx_use_letsencrypt else nginx_fallback_certificate }}"
+nginx_ssl_certificate_key: "{{ letsencrypt_privkey_path if nginx_use_letsencrypt else nginx_fallback_certificate_key }}"
+nginx_selfsigned_subject: "/CN={{ nginx_server_name }}"
+nginx_log_dir: /var/log/nginx
+public_scheme: "{{ 'https' if nginx_enable_https else 'http' }}"
+public_host: "{{ ansible_host | default(inventory_hostname) }}"
+domain: "{{ public_scheme }}://{{ nginx_server_name if nginx_server_name not in ['_', '', 'localhost'] else public_host }}"
+
+frontend_error_log_path: "{{ log_dir }}/frontend-errors.jsonl"
+redis_url: redis://localhost:6379
+
+backend_env:
+  SECRET_KEY: "{{ secret_key }}"
+  PORT: "{{ backend_bind_port }}"
+  REDIS_URL: "{{ redis_url }}"
+  DOMAIN: "{{ domain }}"
+  WEB_ROOT: "{{ web_root_dir }}"
+  FRONTEND_ERROR_LOG_PATH: "{{ frontend_error_log_path }}"
+  PUSH_VAPID_PUBLIC_KEY: "{{ push_vapid_public_key }}"
+  PUSH_VAPID_PRIVATE_KEY: "{{ push_vapid_private_key }}"
+  PUSH_VAPID_SUBJECT: "{{ push_vapid_subject }}"
+
+backend_extra_env: {}
+
+provision_apt_packages:
+  - acl
+  - build-essential
+  - ca-certificates
+  - cargo
+  - curl
+  - libcairo2
+  - libcairo2-dev
+  - libffi-dev
+  - libjpeg-dev
+  - libssl-dev
+  - nginx
+  - openssl
+  - pkg-config
+  - python3
+  - python3-dev
+  - python3-pip
+  - python3-venv
+  - redis-server
+  - rsync
+  - zlib1g-dev
+
+letsencrypt_packages:
+  - certbot
+
+deploy_source_excludes:
+  - .git
+  - .gitignore
+  - .venv
+  - __pycache__
+  - ansible
+  - build
+  - dist
+  - node_modules
+  - tests
+  - TODO
+  - ui
+  - "*.pyc"
+
+deploy_rsync_opts: "{{ deploy_source_excludes | map('regex_replace', '^(.*)$', '--exclude=\\1') | list }}"
+
+deploy_cleanup_paths:
+  - "{{ app_dir }}/.git"
+  - "{{ app_dir }}/ansible"
+  - "{{ app_dir }}/build"
+  - "{{ app_dir }}/dist"
+  - "{{ app_dir }}/node_modules"
+  - "{{ app_dir }}/tests"
+  - "{{ app_dir }}/TODO"
+  - "{{ app_dir }}/ui"

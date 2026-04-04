@@ -1,0 +1,95 @@
+---
+- name: Deploy Narlun application
+  hosts: app
+  become: true
+  vars:
+    local_repo_root: "{{ lookup('ansible.builtin.env', 'NARLUN_REPO_ROOT') | default((playbook_dir, '..') | path_join, true) }}"
+
+  pre_tasks:
+    - name: Ensure deploy source exists
+      ansible.builtin.stat:
+        path: "{{ local_repo_root }}/pyproject.toml"
+      delegate_to: localhost
+      become: false
+      register: local_repo_root_stat
+
+    - name: Validate deploy source
+      ansible.builtin.assert:
+        that:
+          - local_repo_root_stat.stat.exists
+        fail_msg: "Set NARLUN_REPO_ROOT to the repository root before running deploy."
+
+    - name: Build production web bundle locally
+      ansible.builtin.command:
+        cmd: ./tool/build_web.sh
+        chdir: "{{ local_repo_root }}/ui"
+      delegate_to: localhost
+      become: false
+
+  tasks:
+    - name: Ensure remote directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default(app_user) }}"
+        group: "{{ item.group | default(app_group) }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ app_dir }}", mode: "0755" }
+        - { path: "{{ web_root_dir }}", mode: "0755" }
+
+    - name: Synchronize backend source
+      ansible.posix.synchronize:
+        src: "{{ local_repo_root }}/"
+        dest: "{{ app_dir }}/"
+        delete: true
+        mode: push
+        rsync_path: "sudo -u {{ app_user }} rsync"
+        rsync_opts: "{{ deploy_rsync_opts }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Synchronize built frontend
+      ansible.posix.synchronize:
+        src: "{{ local_repo_root }}/ui/build/web/"
+        dest: "{{ web_root_dir }}/"
+        delete: true
+        mode: push
+        rsync_path: "sudo -u {{ app_user }} rsync"
+      delegate_to: localhost
+      become: false
+
+    - name: Remove stale excluded paths from remote app tree
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ deploy_cleanup_paths }}"
+
+    - name: Ensure application tree ownership
+      ansible.builtin.file:
+        path: "{{ item }}"
+        recurse: true
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+      loop:
+        - "{{ app_dir }}"
+        - "{{ web_root_dir }}"
+
+    - name: Install backend dependencies with uv
+      ansible.builtin.command:
+        cmd: uv sync --frozen --no-dev
+        chdir: "{{ app_dir }}"
+      become_user: "{{ app_user }}"
+      environment:
+        HOME: "{{ app_home }}"
+
+    - name: Restart backend service
+      ansible.builtin.systemd:
+        name: "{{ backend_service_name }}"
+        state: restarted
+        enabled: true
+
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

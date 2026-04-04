@@ -1,0 +1,21 @@
+# Managed by Ansible
+[Unit]
+Description=Narlun backend
+After=network-online.target redis-server.service
+Wants=network-online.target
+ConditionPathExists={{ config_dir }}/backend.env
+ConditionPathExists={{ app_dir }}/app/app.py
+ConditionPathExists={{ app_dir }}/.venv/bin/python
+
+[Service]
+User={{ app_user }}
+Group={{ app_group }}
+WorkingDirectory={{ app_dir }}
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile={{ config_dir }}/backend.env
+ExecStart={{ app_dir }}/.venv/bin/python -m app.app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

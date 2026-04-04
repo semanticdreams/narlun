@@ -1,4 +1,4 @@
-.PHONY: test run lint cov secret-key
+.PHONY: test run lint cov secret-key provision deploy
 
 run:
 	uv run python -m app.app
@@ -14,3 +14,9 @@ cov:
 
 secret-key:
 	python -c 'import secrets; secrets.token_hex(52)'
+
+provision:
+	$(MAKE) -C ansible provision
+
+deploy:
+	NARLUN_REPO_ROOT=$(CURDIR) $(MAKE) -C ansible deploy

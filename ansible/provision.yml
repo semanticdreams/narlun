@@ -1,0 +1,286 @@
+---
+- name: Provision Narlun host
+  hosts: app
+  become: true
+
+  pre_tasks:
+    - name: Ensure host OS is supported
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == "Debian"
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_version is version('24.04', '>=')
+        fail_msg: "This playbook targets Ubuntu 24.04 or newer."
+
+    - name: Ensure secrets are configured
+      ansible.builtin.assert:
+        that:
+          - secret_key is defined
+          - secret_key | length >= 64
+          - push_vapid_public_key is defined
+          - push_vapid_public_key | length > 32
+          - push_vapid_private_key is defined
+          - push_vapid_private_key | length > 32
+          - push_vapid_subject is defined
+          - push_vapid_subject not in ["", "change-me"]
+        fail_msg: "Update ansible/group_vars/all/vault.yml with real app secrets before provisioning."
+
+    - name: Validate HTTPS configuration
+      ansible.builtin.assert:
+        that:
+          - not (nginx_use_letsencrypt | bool) or (nginx_enable_https | bool)
+          - not (nginx_use_letsencrypt | bool) or (letsencrypt_email not in ["", "admin@example.com"])
+          - not (nginx_use_letsencrypt | bool) or (nginx_server_name not in ["", "_", "localhost"])
+        fail_msg: "Let's Encrypt requires nginx_enable_https=true plus real letsencrypt_email and nginx_server_name values."
+
+  tasks:
+    - name: Install required system packages
+      ansible.builtin.apt:
+        name: "{{ provision_apt_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Install Let's Encrypt packages
+      ansible.builtin.apt:
+        name: "{{ letsencrypt_packages }}"
+        state: present
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+
+    - name: Install uv CLI for Python dependency management
+      ansible.builtin.pip:
+        name: uv
+        state: present
+        executable: pip3
+        extra_args: --break-system-packages
+
+    - name: Ensure redis is enabled
+      ansible.builtin.service:
+        name: redis-server
+        state: started
+        enabled: true
+
+    - name: Create application group
+      ansible.builtin.group:
+        name: "{{ app_group }}"
+        state: present
+
+    - name: Create application user
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        group: "{{ app_group }}"
+        create_home: true
+        home: "{{ app_home }}"
+        shell: /bin/bash
+        state: present
+
+    - name: Ensure application directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default(app_user) }}"
+        group: "{{ item.group | default(app_group) }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ app_home }}", mode: "0755" }
+        - { path: "{{ app_dir }}", mode: "0755" }
+        - { path: "{{ config_dir }}", mode: "0755" }
+        - { path: "{{ log_dir }}", mode: "0755" }
+        - { path: "{{ web_root_dir }}", mode: "0755" }
+        - { path: "{{ nginx_acme_webroot }}", owner: root, group: root, mode: "0755" }
+
+    - name: Ensure frontend error log file exists
+      ansible.builtin.file:
+        path: "{{ frontend_error_log_path }}"
+        state: touch
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: "0640"
+
+    - name: Ensure TLS directory exists
+      ansible.builtin.file:
+        path: "{{ config_dir }}/tls"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      when: nginx_enable_https | bool
+
+    - name: Ensure Certbot renewal hook directory exists
+      ansible.builtin.file:
+        path: /etc/letsencrypt/renewal-hooks/post
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+
+    - name: Reload nginx after successful certificate renewals
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/renewal-hooks/post/reload-nginx.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          systemctl reload nginx
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+
+    - name: Generate fallback self-signed certificate
+      ansible.builtin.command:
+        cmd: >
+          openssl req -x509 -nodes -newkey rsa:4096
+          -keyout {{ nginx_fallback_certificate_key }}
+          -out {{ nginx_fallback_certificate }}
+          -days 365
+          -subj "{{ nginx_selfsigned_subject }}"
+      args:
+        creates: "{{ nginx_fallback_certificate }}"
+      when: nginx_enable_https | bool
+
+    - name: Ensure fallback TLS file permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ nginx_fallback_certificate }}", mode: "0644" }
+        - { path: "{{ nginx_fallback_certificate_key }}", mode: "0640" }
+      when: nginx_enable_https | bool
+
+    - name: Check for existing TLS certificate
+      ansible.builtin.stat:
+        path: "{{ nginx_ssl_certificate }}"
+      register: nginx_cert_stat
+      when: nginx_enable_https | bool
+
+    - name: Select active TLS certificate
+      ansible.builtin.set_fact:
+        nginx_active_ssl_certificate: "{{ nginx_ssl_certificate if nginx_cert_stat.stat.exists else nginx_fallback_certificate }}"
+        nginx_active_ssl_certificate_key: "{{ nginx_ssl_certificate_key if nginx_cert_stat.stat.exists else nginx_fallback_certificate_key }}"
+      when: nginx_enable_https | bool
+
+    - name: Write backend environment file
+      ansible.builtin.template:
+        src: templates/backend.env.j2
+        dest: "{{ config_dir }}/backend.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: "0640"
+
+    - name: Install systemd service
+      ansible.builtin.template:
+        src: templates/narlun-backend.service.j2
+        dest: "/etc/systemd/system/{{ backend_service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+
+    - name: Install nginx site
+      ansible.builtin.template:
+        src: templates/narlun-nginx.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app_name }}.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload nginx
+
+    - name: Enable nginx site
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ app_name }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ app_name }}.conf"
+        state: link
+      notify:
+        - Reload nginx
+
+    - name: Disable default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify:
+        - Reload nginx
+
+    - name: Ensure backend service is enabled
+      ansible.builtin.systemd:
+        name: "{{ backend_service_name }}"
+        enabled: true
+        daemon_reload: true
+
+    - name: Ensure nginx is enabled
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Flush bootstrap handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Request Let's Encrypt certificate
+      ansible.builtin.command:
+        cmd: >
+          certbot certonly --webroot
+          --webroot-path {{ nginx_acme_webroot }}
+          --non-interactive --agree-tos
+          --email {{ letsencrypt_email }}
+          -d {{ nginx_server_name }}
+          {% if letsencrypt_staging | bool %}--staging{% endif %}
+      args:
+        creates: "{{ letsencrypt_fullchain_path }}"
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+
+    - name: Refresh TLS certificate state after Let's Encrypt
+      ansible.builtin.stat:
+        path: "{{ nginx_ssl_certificate }}"
+      register: nginx_cert_stat_post
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+
+    - name: Select final active TLS certificate
+      ansible.builtin.set_fact:
+        nginx_active_ssl_certificate: "{{ nginx_ssl_certificate if nginx_cert_stat_post.stat.exists else nginx_fallback_certificate }}"
+        nginx_active_ssl_certificate_key: "{{ nginx_ssl_certificate_key if nginx_cert_stat_post.stat.exists else nginx_fallback_certificate_key }}"
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+
+    - name: Reinstall nginx site with final TLS certificate
+      ansible.builtin.template:
+        src: templates/narlun-nginx.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app_name }}.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - nginx_enable_https | bool
+        - nginx_use_letsencrypt | bool
+      notify:
+        - Reload nginx
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Validate nginx configuration
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+      listen: Reload nginx
+
+    - name: Reload nginx service
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+      listen: Reload nginx

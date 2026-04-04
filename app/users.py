@@ -1,4 +1,5 @@
 import datetime
+import logging
 
 import jwt
 from aiohttp import web
@@ -6,10 +7,11 @@ from aiohttp import web
 import config
 from app.redis_store import UserNotFound, UsernameAlreadyExists
 from app.util import InvalidUsage, authenticated, is_request_secure, jsonify, no_content
-from app.websocket import close_user_websockets
+from app.websocket import notify_local_signout
 
 
 routes = web.RouteTableDef()
+logger = logging.getLogger(__name__)
 
 
 class UsernameExistsError(InvalidUsage):
@@ -150,7 +152,11 @@ async def signout(req):
     resp = no_content()
     resp.del_cookie('jwt', path='/api')
     if req.user.get('authenticated'):
-        await close_user_websockets(req.user['id'], send_signout=True)
+        await notify_local_signout(req.user['id'])
+        try:
+            await req.store.publish_signout(req.user['id'])
+        except Exception:
+            logger.exception('Failed to publish signout event', extra={'user_id': req.user['id']})
         if not req.user['has_password']:
             await req.store.delete_account(req.user['id'])
     return resp
@@ -159,7 +165,11 @@ async def signout(req):
 @routes.delete('/me')
 @authenticated
 async def delete_account(req):
-    await close_user_websockets(req.user['id'], send_signout=True)
+    await notify_local_signout(req.user['id'])
+    try:
+        await req.store.publish_signout(req.user['id'])
+    except Exception:
+        logger.exception('Failed to publish delete-account signout event', extra={'user_id': req.user['id']})
     await req.store.delete_account(req.user['id'])
     resp = no_content()
     resp.del_cookie('jwt', path='/api')

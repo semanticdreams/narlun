@@ -15,12 +15,22 @@ active_sockets = {}
 logger = logging.getLogger(__name__)
 
 
-async def close_user_websockets(user_id, *, send_signout=False):
-    sockets = list(active_sockets.get(int(user_id), set()))
-    for ws in sockets:
-        if send_signout and not ws.closed:
-            await _send_event(ws, 'signout', {'type': 'signout'})
+async def _close_socket_after_grace_period(ws):
+    await asyncio.sleep(0.2)
+    if not ws.closed:
         await ws.close()
+
+
+async def notify_local_signout(user_id):
+    sockets = list(active_sockets.get(int(user_id), set()))
+    if not sockets:
+        return
+    for ws in sockets:
+        try:
+            await _send_event(ws, 'signout', {'type': 'signout'})
+        except Exception:
+            logger.exception('Failed to send local signout event', extra={'user_id': user_id})
+        asyncio.create_task(_close_socket_after_grace_period(ws))
 
 
 async def _send_event(ws, event_type, data):
@@ -81,7 +91,7 @@ async def websocket_handler(req):
                         continue
                     if data['type'] == 'signout':
                         await _send_event(ws, 'signout', data)
-                        await ws.close()
+                        asyncio.create_task(_close_socket_after_grace_period(ws))
                         break
                     if data['type'] == 'room-deleted':
                         room_id = data.get('room_id')

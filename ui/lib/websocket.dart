@@ -1,18 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'config.dart';
+import 'http_client_default.dart'
+    if (dart.library.html) 'http_client_browser.dart'
+    as session_http;
 import 'ws_channel_default.dart'
     if (dart.library.html) 'ws_channel_browser.dart';
 
 typedef WebSocketConnector =
     WebSocketChannel Function(Uri uri, {Map<String, dynamic>? headers});
-
-typedef JwtTokenProvider = Future<String?> Function();
 
 class RoomUnavailable implements Exception {
   final int roomId;
@@ -28,13 +27,11 @@ class WebsocketService {
   WebsocketService({
     String? baseurl,
     WebSocketConnector? connector,
-    JwtTokenProvider? jwtTokenProvider,
     Duration reconnectDelay = const Duration(seconds: 1),
     Duration maxReconnectDelay = const Duration(seconds: 30),
     Duration subscriptionTimeout = const Duration(seconds: 5),
   }) : baseurl = baseurl ?? Environment().config.apiUrl,
        _connector = connector ?? connectWsChannel,
-       _jwtTokenProvider = jwtTokenProvider ?? _defaultJwtTokenProvider,
        _initialReconnectDelay = reconnectDelay,
        _maxReconnectDelay = maxReconnectDelay,
        _subscriptionTimeout = subscriptionTimeout,
@@ -42,7 +39,6 @@ class WebsocketService {
 
   final String baseurl;
   final WebSocketConnector _connector;
-  final JwtTokenProvider _jwtTokenProvider;
   final Duration _initialReconnectDelay;
   final Duration _maxReconnectDelay;
   final Duration _subscriptionTimeout;
@@ -62,33 +58,12 @@ class WebsocketService {
   final Set<int> _activeRoomSubscriptions = <int>{};
   final Map<int, Completer<void>> _pendingSubscriptions = {};
 
-  static Future<String?> _defaultJwtTokenProvider() async {
-    if (kIsWeb) {
-      return null;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('jwt');
-  }
-
-  String? _extractJwtValue(String? cookie) {
-    if (cookie == null || cookie.isEmpty) {
-      return null;
-    }
-    if (cookie.startsWith('jwt=')) {
-      return cookie.substring(4);
-    }
-    return cookie;
-  }
-
   Future<Map<String, dynamic>?> _buildHeaders() async {
-    if (kIsWeb) {
+    final sessionCookie = await session_http.readSessionCookie();
+    if (sessionCookie == null || sessionCookie.isEmpty) {
       return null;
     }
-    final jwt = _extractJwtValue(await _jwtTokenProvider());
-    if (jwt == null) {
-      return null;
-    }
-    return {'Authorization': 'Bearer $jwt'};
+    return {'Cookie': sessionCookie};
   }
 
   Future<void> reconnect() async {
@@ -123,14 +98,7 @@ class WebsocketService {
       return;
     }
 
-    final baseuri = Uri.parse(baseurl);
-    final scheme = baseuri.scheme == 'https' ? 'wss' : 'ws';
-    final wsUri = Uri(
-      scheme: scheme,
-      host: baseuri.host,
-      port: baseuri.port,
-      path: '/api/ws',
-    );
+    final wsUri = createWebSocketUri(baseurl);
 
     late final WebSocketChannel channel;
     try {

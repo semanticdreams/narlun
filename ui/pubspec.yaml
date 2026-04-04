@@ -1,5 +1,5 @@
 name: narlun
-description: A new Flutter project.
+description: Web-first nearby chat PWA.
 
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -31,10 +31,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.2
+  cupertino_icons: ^1.0.8
   http: ^1.1.2
   provider: ^6.0.2
   url_strategy: ^0.2.0
@@ -42,18 +39,13 @@ dependencies:
   get_it: ^7.2.0
   http_interceptor: ^2.0.0
   username_gen: ^1.0.4
-  shared_preferences: ^2.5.3
-  file_picker: ^6.1.1
   geolocator: ^10.1.0
   timeago: ^3.2.2
   chat_bubbles: ^1.2.0
   web_socket_channel: ^3.0.3
-  sentry_flutter: ^7.13.2
 
 dev_dependencies:
   flutter_test:
-    sdk: flutter
-  integration_test:
     sdk: flutter
   stream_channel: ^2.1.4
 
@@ -63,10 +55,6 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^3.0.1
-  flutter_launcher_icons:
-    git:
-      url: https://github.com/Davenchy/flutter_launcher_icons.git
-      ref: fixMinSdkParseFlutter2.8
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -110,12 +98,3 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/custom-fonts/#from-packages
-
-flutter_icons:
-  android: "launcher_icon"
-  ios: true
-  image_path: "assets/icon.png"
-  remove_alpha_ios: true
-
-dependency_overrides:
-  win32: ^5.5.1

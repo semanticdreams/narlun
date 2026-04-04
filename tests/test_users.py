@@ -1,6 +1,13 @@
 import io
 
-from tests.helpers import create_avatar_bytes, random_username, signin, signup, update_profile
+from tests.helpers import (
+    auth_headers,
+    create_avatar_bytes,
+    random_username,
+    signin,
+    signup,
+    update_profile,
+)
 
 
 async def test_guest_signup_password_upgrade_and_signin(cli):
@@ -27,7 +34,7 @@ async def test_guest_signup_password_upgrade_and_signin(cli):
     assert me['about_me'] == 'hello'
     assert me['phone'] == '123'
 
-    await cli.post('/api/users/signout', cookies={'jwt': created['jwt']})
+    await cli.post('/api/users/signout', headers=auth_headers(created['jwt']))
 
     response = await signin(cli, created['username'], 'correct horse battery')
     assert response.status == 200
@@ -39,7 +46,10 @@ async def test_guest_signup_password_upgrade_and_signin(cli):
 async def test_guest_signout_deletes_account(cli):
     created = await signup(cli)
 
-    response = await cli.post('/api/users/signout', cookies={'jwt': created['jwt']})
+    response = await cli.post(
+        '/api/users/signout',
+        headers=auth_headers(created['jwt']),
+    )
     assert response.status == 204
 
     response = await signin(cli, created['username'], 'does-not-matter')
@@ -55,7 +65,7 @@ async def test_avatar_upload_and_fetch(cli):
     response = await cli.post(
         '/api/users/upload-profile-picture',
         data={'file': io.BytesIO(avatar)},
-        cookies={'jwt': created['jwt']},
+        headers=auth_headers(created['jwt']),
     )
     assert response.status == 200
     body = await response.json()
@@ -74,7 +84,7 @@ async def test_invalid_avatar_upload_returns_usage_error(cli):
     response = await cli.post(
         '/api/users/upload-profile-picture',
         data={'file': io.BytesIO(b'not-an-image')},
-        cookies={'jwt': created['jwt']},
+        headers=auth_headers(created['jwt']),
     )
     assert response.status == 400
     body = await response.json()
@@ -87,7 +97,7 @@ async def test_delete_account_removes_permanent_user(cli):
     response = await update_profile(cli, created['jwt'], password='permanent123')
     assert response.status == 200
 
-    response = await cli.delete('/api/users/me', cookies={'jwt': created['jwt']})
+    response = await cli.delete('/api/users/me', headers=auth_headers(created['jwt']))
     assert response.status == 204
 
     response = await signin(cli, username, 'permanent123')

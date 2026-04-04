@@ -2,6 +2,7 @@ import socket
 import subprocess
 import time
 
+import aiohttp
 import pytest
 
 from app.app import create_app
@@ -50,5 +51,5 @@ def redis_url(tmp_path_factory):
 async def cli(aiohttp_client, redis_url):
     app = await create_app(redis_url=redis_url, enable_cors=False)
     await app['redis'].flushdb()
-    client = await aiohttp_client(app)
+    client = await aiohttp_client(app, cookie_jar=aiohttp.DummyCookieJar())
     return client

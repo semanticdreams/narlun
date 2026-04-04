@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'http.dart';
 import 'me_model.dart';
 
-
 class ProfileForm extends StatefulWidget {
   final dynamic data;
 
@@ -15,7 +14,6 @@ class ProfileForm extends StatefulWidget {
     return ProfileFormState();
   }
 }
-
 
 class ProfileFormState extends State<ProfileForm> {
   final HttpService httpService = HttpService();

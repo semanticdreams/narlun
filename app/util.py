@@ -63,14 +63,6 @@ def is_request_secure(req):
 
 
 def get_token_from_request(req):
-    auth_header = req.headers.get('Authorization', '')
-    if auth_header.startswith('Bearer '):
-        return auth_header.split(' ', 1)[1]
-
-    token = req.query.get('token')
-    if token:
-        return token
-
     return req.cookies.get('jwt')
 
 

@@ -1,5 +1,3 @@
-import 'package:flutter/widgets.dart';
-
 class AlertRequest {
   final String title;
   final String description;

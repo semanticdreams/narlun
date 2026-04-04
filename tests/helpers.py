@@ -32,6 +32,10 @@ async def signup(cli, username=None):
     }
 
 
+def auth_headers(jwt):
+    return {'Cookie': f'jwt={jwt}'}
+
+
 async def signin(cli, username, password):
     response = await cli.post(
         '/api/users/signin',
@@ -44,7 +48,7 @@ async def update_profile(cli, jwt, **payload):
     response = await cli.post(
         '/api/users/update-profile',
         json=payload,
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     return response
 
@@ -54,7 +58,7 @@ async def upload_avatar(cli, jwt, avatar_bytes):
     response = await cli.post(
         '/api/users/upload-profile-picture',
         data=data,
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     return response
 
@@ -63,7 +67,7 @@ async def checkin(cli, jwt, location):
     response = await cli.post(
         '/api/social/checkin',
         json={'lat': location[0], 'lon': location[1]},
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     assert response.status == 200
     return await response.json()
@@ -73,7 +77,7 @@ async def join_user(cli, jwt, user_id):
     response = await cli.post(
         '/api/social/join-user',
         json={'user_id': user_id},
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     assert response.status == 200
     return await response.json()
@@ -83,7 +87,7 @@ async def create_group_room(cli, jwt, name, user_ids):
     response = await cli.post(
         '/api/social/create-room',
         json={'name': name, 'user_ids': user_ids},
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     assert response.status == 200
     return await response.json()
@@ -93,14 +97,14 @@ async def send_message(cli, jwt, room_id, body):
     response = await cli.post(
         '/api/social/send-message',
         json={'room_id': room_id, 'body': body},
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     assert response.status == 200
     return await response.json()
 
 
 async def get_rooms(cli, jwt):
-    response = await cli.get('/api/social/get-rooms', cookies={'jwt': jwt})
+    response = await cli.get('/api/social/get-rooms', headers=auth_headers(jwt))
     assert response.status == 200
     return await response.json()
 
@@ -109,6 +113,6 @@ async def get_messages(cli, jwt, room_id):
     response = await cli.post(
         '/api/social/get-messages',
         json={'room_id': room_id},
-        cookies={'jwt': jwt},
+        headers=auth_headers(jwt),
     )
     return response

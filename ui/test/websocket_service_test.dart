@@ -86,7 +86,6 @@ void main() {
       final service = WebsocketService(
         baseurl: 'http://example.com/api',
         connector: (uri, {headers}) => channels[channelIndex++],
-        jwtTokenProvider: () async => null,
         reconnectDelay: const Duration(milliseconds: 10),
         maxReconnectDelay: const Duration(milliseconds: 20),
         subscriptionTimeout: const Duration(milliseconds: 200),
@@ -159,7 +158,6 @@ void main() {
           }
           throw outcome;
         },
-        jwtTokenProvider: () async => null,
         reconnectDelay: const Duration(milliseconds: 10),
         maxReconnectDelay: const Duration(milliseconds: 20),
         subscriptionTimeout: const Duration(milliseconds: 200),
@@ -204,7 +202,6 @@ void main() {
       final service = WebsocketService(
         baseurl: 'http://example.com/api',
         connector: (uri, {headers}) => channels[channelIndex++],
-        jwtTokenProvider: () async => null,
         reconnectDelay: const Duration(milliseconds: 10),
         maxReconnectDelay: const Duration(milliseconds: 20),
         subscriptionTimeout: const Duration(milliseconds: 200),
@@ -269,7 +266,6 @@ void main() {
           connectCount += 1;
           return channel;
         },
-        jwtTokenProvider: () async => null,
         reconnectDelay: const Duration(milliseconds: 10),
         maxReconnectDelay: const Duration(milliseconds: 20),
         subscriptionTimeout: const Duration(milliseconds: 200),

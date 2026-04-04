@@ -18,6 +18,7 @@ PORT = 3000
 REDIS_URL = 'redis://localhost:6379'
 
 DOMAIN = 'https://narlun.com'
+WEB_ROOT = ''
 
 # load local config
 if app_settings := os.environ.get('APP_SETTINGS'):

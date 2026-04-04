@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 
 import 'avatar_image.dart';
 import 'http.dart';
+import 'image_picker.dart';
 import 'me_model.dart';
 import 'profile_form.dart';
 
@@ -72,10 +72,8 @@ class ProfileView extends StatelessWidget {
                       child: TextButton(
                         child: const Text('Upload picture'),
                         onPressed: () async {
-                          FilePickerResult? result = await FilePicker.platform
-                              .pickFiles();
-                          if (result != null) {
-                            final file = result.files.single.bytes!;
+                          final file = await pickImageBytes();
+                          if (file != null) {
                             final data = await httpService
                                 .upload_profile_picture(file);
                             Provider.of<MeModel>(

@@ -41,7 +41,10 @@ class _SessionWatcherState extends State<SessionWatcher> {
       return;
     }
     Provider.of<MeModel>(context, listen: false).reset();
-    widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (route) => false);
+    widget.navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      '/',
+      (route) => false,
+    );
   }
 
   @override

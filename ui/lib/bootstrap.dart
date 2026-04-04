@@ -7,48 +7,47 @@ import 'config.dart';
 import 'locator.dart';
 import 'me_model.dart';
 
+Object? _e2eSemanticsHandle;
+
 Future<void> initializeApp({
   String? environment,
   String? apiUrlOverride,
 }) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (const bool.fromEnvironment('ENABLE_E2E_SEMANTICS', defaultValue: false)) {
+    _e2eSemanticsHandle ??= WidgetsBinding.instance.ensureSemantics();
+  }
   setPathUrlStrategy();
 
-  final selectedEnvironment = (environment ??
-          const String.fromEnvironment(
-            'ENV',
-            defaultValue: Environment.PROD,
-          ))
-      .toUpperCase();
-  final selectedApiUrl = apiUrlOverride ??
+  final selectedEnvironment =
+      (environment ??
+              const String.fromEnvironment(
+                'ENV',
+                defaultValue: Environment.PROD,
+              ))
+          .toUpperCase();
+  final selectedApiUrl =
+      apiUrlOverride ??
       const String.fromEnvironment('API_URL', defaultValue: '');
 
-  Environment().initConfig(
-    selectedEnvironment,
-    apiUrlOverride: selectedApiUrl,
-  );
+  Environment().initConfig(selectedEnvironment, apiUrlOverride: selectedApiUrl);
   await setupLocator(reset: true);
 }
 
 Widget buildNarlunApp() {
+  final colorScheme = ColorScheme.fromSeed(
+    seedColor: const Color(0xFF5F4484),
+    brightness: Brightness.light,
+  );
   return ChangeNotifierProvider(
     create: (_) => MeModel(),
     child: MyApp(
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
     ),
   );
 }
 
-Future<void> bootstrapApp({
-  String? environment,
-  String? apiUrlOverride,
-}) async {
-  await initializeApp(
-    environment: environment,
-    apiUrlOverride: apiUrlOverride,
-  );
+Future<void> bootstrapApp({String? environment, String? apiUrlOverride}) async {
+  await initializeApp(environment: environment, apiUrlOverride: apiUrlOverride);
   runApp(buildNarlunApp());
 }

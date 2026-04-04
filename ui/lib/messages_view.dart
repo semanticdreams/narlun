@@ -94,7 +94,7 @@ class MessagesState extends State<MessagesView> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('This room is no longer available.')),
     );
-    Navigator.pop(context);
+    Navigator.pop(context, true);
   }
 
   Future _handleSessionEnded() async {
@@ -273,6 +273,7 @@ class MessagesState extends State<MessagesView> {
               children: [
                 Expanded(
                   child: TextField(
+                    key: const Key('message-input-field'),
                     autofocus: true,
                     focusNode: messageFocusNode,
                     controller: messageController,
@@ -290,14 +291,19 @@ class MessagesState extends State<MessagesView> {
                 SizedBox(width: 4),
                 CircleAvatar(
                   backgroundColor: Theme.of(context).primaryColor,
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.send,
-                      color: Theme.of(context).colorScheme.onPrimary,
+                  child: Semantics(
+                    label: 'message-send',
+                    button: true,
+                    child: IconButton(
+                      key: const Key('message-send-button'),
+                      icon: Icon(
+                        Icons.send,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                      onPressed: () async {
+                        await send_message();
+                      },
                     ),
-                    onPressed: () async {
-                      await send_message();
-                    },
                   ),
                 ),
               ],

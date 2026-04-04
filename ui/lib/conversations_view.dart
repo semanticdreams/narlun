@@ -81,6 +81,7 @@ class _ConversationsState extends State<ConversationsView> {
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 4.0),
                   child: ListTile(
+                    key: ValueKey('room-${room['id']}'),
                     leading: AvatarImage(
                       picture: room['is_group'] || !me.data!['authenticated']
                           ? room['picture']
@@ -104,26 +105,22 @@ class _ConversationsState extends State<ConversationsView> {
                           : '',
                     ),
                     onTap: () async {
-                      Navigator.push(
+                      final roomDeleted = await Navigator.push<bool>(
                         context,
                         MaterialPageRoute(
                           builder: (context) =>
                               MessagesView(room: room, me: me),
                         ),
                       );
+                      if (roomDeleted == true) {
+                        await update_rooms();
+                      }
                     },
                   ),
                 ), // TODO subtitle should be different for group, needs name
             ],
           );
         },
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // Add your onPressed code here!
-        },
-        backgroundColor: Colors.purple,
-        child: const Icon(Icons.add),
       ),
     );
   }

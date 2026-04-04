@@ -30,9 +30,11 @@
 .pub-cache/
 .pub/
 /build/
+node_modules/
+playwright-report/
+test-results/
 
 # Web related
-lib/generated_plugin_registrant.dart
 
 # Symbolication related
 app.*.symbols

@@ -51,7 +51,6 @@ class FakeWebsocketService extends WebsocketService {
     : super(
         baseurl: 'http://example.com/api',
         connector: (uri, {headers}) => throw UnimplementedError(),
-        jwtTokenProvider: () async => null,
       );
 
   final StreamController<Map<String, dynamic>> _messagesController =

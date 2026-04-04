@@ -14,13 +14,19 @@ class DialogService {
 
   /// Calls the dialog listener and returns a Future that will wait for dialogComplete.
 
-  Future<AlertResponse>? showDialog(
-      {required String title,
-      required String description,
-      String buttonTitle = 'OK'}) {
+  Future<AlertResponse>? showDialog({
+    required String title,
+    required String description,
+    String buttonTitle = 'OK',
+  }) {
     _dialogCompleter = Completer<AlertResponse>();
-    _showDialogListener?.call(AlertRequest(
-        title: title, description: description, buttonTitle: buttonTitle));
+    _showDialogListener?.call(
+      AlertRequest(
+        title: title,
+        description: description,
+        buttonTitle: buttonTitle,
+      ),
+    );
     return _dialogCompleter?.future;
   }
 

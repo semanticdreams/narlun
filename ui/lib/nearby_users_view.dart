@@ -1,31 +1,23 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'dart:collection';
-import 'dart:io';
 import 'dart:ui';
 import 'package:provider/provider.dart';
-import 'package:url_strategy/url_strategy.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:chat_bubbles/chat_bubbles.dart';
 
 import 'avatar_image.dart';
 import 'http.dart';
-import 'image_url.dart';
 import 'locator.dart';
-import 'dialog_manager.dart';
 import 'dialog_service.dart';
 import 'me_model.dart';
 
-DialogService _dialogService = locator<DialogService>();
+final DialogService _dialogService = locator<DialogService>();
 
 class NearbyUsersView extends StatefulWidget {
-  Function(int) on_user_joined;
+  const NearbyUsersView({super.key, required this.onUserJoined});
 
-  NearbyUsersView({required this.on_user_joined});
+  final FutureOr<void> Function(int) onUserJoined;
 
   @override
   _NearbyUsersState createState() => _NearbyUsersState();
@@ -35,8 +27,6 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   final HttpService httpService = HttpService();
 
   final nearby_users = [];
-
-  //final ScrollController controller = ScrollController();
 
   Future checkin() async {
     final me = Provider.of<MeModel>(context, listen: false);
@@ -83,8 +73,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
 
   Future join_user(user) async {
     final resp = await httpService.join_user(user['id']);
-    final room_id = resp['id'];
-    await widget.on_user_joined(room_id);
+    final roomId = resp['id'];
+    await Future.sync(() => widget.onUserJoined(roomId));
   }
 
   @override
@@ -95,7 +85,6 @@ class _NearbyUsersState extends State<NearbyUsersView> {
 
   @override
   void dispose() {
-    //controller.dispose();
     super.dispose();
   }
 
@@ -127,18 +116,16 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        user['distance'].toString() + 'm away',
+                        '${user['distance']}m away',
                         textAlign: TextAlign.right,
                       ),
-                      SizedBox(height: 4),
+                      const SizedBox(height: 4),
                       Text(
-                        'last seen ' +
-                            timeago.format(DateTime.parse(user['last_seen'])),
+                        'last seen ${timeago.format(DateTime.parse(user['last_seen']))}',
                         textAlign: TextAlign.right,
                       ),
                     ],
                   ),
-                  //trailing: Icon(Icons.more_vert),
                   onTap: () async {
                     await join_user(user);
                   },

@@ -1,6 +1,5 @@
 abstract class BaseConfig {
   String get apiUrl;
-  String get sentryDsn;
 }
 
 class OverrideConfig implements BaseConfig {
@@ -16,24 +15,16 @@ class OverrideConfig implements BaseConfig {
     }
     return delegate.apiUrl;
   }
-
-  @override
-  String get sentryDsn => delegate.sentryDsn;
 }
 
 class DevConfig implements BaseConfig {
   @override
   String get apiUrl => "http://localhost:3000/api";
-  @override
-  String get sentryDsn => "";
 }
 
 class ProdConfig implements BaseConfig {
   @override
-  String get apiUrl => "https://narlun.com/api";
-  @override
-  String get sentryDsn =>
-      "https://110dcdf879bb4c0184543ef262562aff@o176309.ingest.sentry.io/6520711";
+  String get apiUrl => "/api";
 }
 
 class Environment {

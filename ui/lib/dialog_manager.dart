@@ -32,20 +32,23 @@ class _DialogManagerState extends State<DialogManager> {
   void _showDialog(AlertRequest request) async {
     confirmed = false;
     await showDialog<void>(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-              title: Text(request.title),
-              content: Text(request.description),
-              actions: [
-                TextButton(
-                    child: Text(request.buttonTitle),
-                    onPressed: () {
-                      confirmed = true;
-                      Navigator.of(context).pop();
-                    }),
-              ]);
-        });
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(request.title),
+          content: Text(request.description),
+          actions: [
+            TextButton(
+              child: Text(request.buttonTitle),
+              onPressed: () {
+                confirmed = true;
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
     _dialogService.dialogComplete(AlertResponse(confirmed: confirmed));
   }
 }

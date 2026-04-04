@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import aiohttp_cors
 import sentry_sdk
@@ -56,6 +57,7 @@ async def create_app(*, redis_url=None, enable_cors=True):
     app.router.add_get('/api/ws', websocket_handler)
     app.add_subapp('/api/users', create_users_app())
     app.add_subapp('/api/social', create_social_app())
+    _configure_web_routes(app)
 
     if enable_cors:
         cors = aiohttp_cors.setup(app, defaults={
@@ -73,6 +75,34 @@ async def create_app(*, redis_url=None, enable_cors=True):
 
     app.on_cleanup.append(close_store)
     return app
+
+
+def _configure_web_routes(app):
+    web_root = getattr(config, 'WEB_ROOT', '')
+    if not web_root:
+        return
+
+    web_dir = Path(web_root).resolve()
+    index_path = web_dir / 'index.html'
+    if not index_path.is_file():
+        raise FileNotFoundError(f'WEB_ROOT does not contain index.html: {web_dir}')
+
+    async def serve_index(_req):
+        return web.FileResponse(index_path)
+
+    async def serve_web(req):
+        relative_path = Path(req.match_info.get('path_info', '')).as_posix().lstrip('/')
+        if relative_path == 'api' or relative_path.startswith('api/'):
+            raise web.HTTPNotFound()
+        candidate = (web_dir / relative_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(web_dir):
+            return web.FileResponse(candidate)
+        if Path(relative_path).suffix:
+            raise web.HTTPNotFound()
+        return await serve_index(req)
+
+    app.router.add_get('/', serve_index)
+    app.router.add_get('/{path_info:.*}', serve_web)
 
 
 if __name__ == '__main__':

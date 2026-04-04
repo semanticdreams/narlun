@@ -8,3 +8,19 @@ WebSocketChannel connectWsChannel(Uri uri, {Map<String, dynamic>? headers}) {
     pingInterval: const Duration(seconds: 5),
   );
 }
+
+Uri createWebSocketUri(String apiBaseUrl) {
+  final apiBaseUri = Uri.parse(apiBaseUrl);
+  if (!apiBaseUri.hasScheme || apiBaseUri.host.isEmpty) {
+    throw StateError(
+      'A fully qualified API URL is required outside the browser runtime.',
+    );
+  }
+
+  return Uri(
+    scheme: apiBaseUri.scheme == 'https' ? 'wss' : 'ws',
+    host: apiBaseUri.host,
+    port: apiBaseUri.hasPort ? apiBaseUri.port : null,
+    path: '/api/ws',
+  );
+}

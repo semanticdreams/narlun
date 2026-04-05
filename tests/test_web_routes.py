@@ -36,3 +36,6 @@ async def test_web_root_serves_spa_routes_without_swallowing_api_or_missing_asse
 
     missing_api = await client.get('/api/does-not-exist')
     assert missing_api.status == 404
+
+    hidden_probe = await client.get('/.git/config')
+    assert hidden_probe.status == 404

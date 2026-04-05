@@ -1,0 +1,84 @@
+---
+- name: Download Narlun logs
+  hosts: app
+  become: true
+  vars:
+    local_log_root: "{{ lookup('ansible.builtin.env', 'NARLUN_LOG_DOWNLOAD_DIR') | default((playbook_dir, '..', 'data', 'logs') | path_join, true) }}"
+    log_since_effective: "{{ log_since | default('24 hours ago', true) }}"
+    file_logs_to_download:
+      - "{{ frontend_error_log_path }}"
+      - "{{ nginx_access_log_path }}"
+      - "{{ nginx_error_log_path }}"
+
+  pre_tasks:
+    - name: Set log download paths for this run
+      ansible.builtin.set_fact:
+        log_download_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+        local_log_dir: "{{ local_log_root }}/{{ inventory_hostname }}-{{ ansible_date_time.iso8601_basic_short }}"
+        remote_log_export_dir: "/tmp/{{ app_name }}-logs-{{ ansible_date_time.iso8601_basic_short }}"
+        backend_journal_export_path: "/tmp/{{ app_name }}-logs-{{ ansible_date_time.iso8601_basic_short }}/{{ backend_service_name }}.journal.log"
+
+    - name: Ensure local log download directory exists
+      ansible.builtin.file:
+        path: "{{ local_log_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+
+    - name: Ensure remote temporary export directory exists
+      ansible.builtin.file:
+        path: "{{ remote_log_export_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+  tasks:
+    - name: Collect and download logs
+      block:
+        - name: Export backend journal to a temporary file
+          ansible.builtin.shell: >
+            journalctl -u {{ backend_service_name | quote }}
+            {% if log_since_effective != 'all' %}
+            --since {{ log_since_effective | quote }}
+            {% endif %}
+            --no-pager -o short-iso > {{ backend_journal_export_path | quote }}
+          args:
+            executable: /bin/bash
+
+        - name: Download backend journal export
+          ansible.builtin.fetch:
+            src: "{{ backend_journal_export_path }}"
+            dest: "{{ local_log_dir }}/"
+            flat: true
+
+        - name: Check which file-backed logs exist
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          loop: "{{ file_logs_to_download }}"
+          register: file_log_stats
+
+        - name: Download file-backed logs
+          ansible.builtin.fetch:
+            src: "{{ item.item }}"
+            dest: "{{ local_log_dir }}/"
+            flat: true
+          loop: "{{ file_log_stats.results }}"
+          when: item.stat.exists
+
+        - name: Report missing file-backed logs
+          ansible.builtin.debug:
+            msg: "Skipping missing log file: {{ item.item }}"
+          loop: "{{ file_log_stats.results }}"
+          when: not item.stat.exists
+
+        - name: Report local download path
+          ansible.builtin.debug:
+            msg: "Downloaded logs to {{ local_log_dir }}"
+
+      always:
+        - name: Remove remote temporary export directory
+          ansible.builtin.file:
+            path: "{{ remote_log_export_dir }}"
+            state: absent

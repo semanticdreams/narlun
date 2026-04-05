@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'dialog_service.dart';
 import 'http.dart';
+import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'passphrase_generator.dart';
+import 'session_actions.dart';
 
 const maxStatusLength = 80;
 
@@ -179,15 +182,34 @@ class ProfileFormState extends State<ProfileForm> {
                     data['password'] = password;
                   }
 
-                  final me = await httpService.update_profile(data);
-                  if (!mounted) {
-                    return;
-                  }
-                  meModel.setData(me);
+                  try {
+                    final me = await httpService.update_profile(data);
+                    if (!mounted) {
+                      return;
+                    }
+                    meModel.setData(me);
 
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('Profile saved')),
-                  );
+                    messenger.showSnackBar(
+                      const SnackBar(content: Text('Profile saved')),
+                    );
+                  } on UnauthorizedResponse {
+                    if (!mounted) {
+                      return;
+                    }
+                    await expireSession(
+                      context,
+                      httpService: httpService,
+                      description: 'Your session has ended. Please sign in again.',
+                    );
+                  } catch (error) {
+                    await showActionErrorDialog(
+                      locator<DialogService>(),
+                      title: 'Could not save profile',
+                      error: error,
+                      fallbackDescription:
+                          'Your profile could not be saved right now. Try again.',
+                    );
+                  }
                 }
               },
             ),

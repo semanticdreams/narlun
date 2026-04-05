@@ -72,7 +72,7 @@ void main() {
     final httpService = FakeBootstrapHttpService()
       ..enqueueFetchMe((silentErrors) async {
         expect(silentErrors, isTrue);
-        throw ServerError();
+        throw ServerError(500);
       })
       ..enqueueFetchMe((silentErrors) async {
         expect(silentErrors, isTrue);

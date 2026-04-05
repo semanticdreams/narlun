@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import aiohttp_cors
@@ -12,7 +13,7 @@ from app.push import PushService
 from app.redis_store import RedisStore
 from app.social import create_app as create_social_app
 from app.users import create_app as create_users_app
-from app.util import InvalidUsage, load_user_from_token
+from app.util import InvalidJsonBody, InvalidUsage, load_user_from_token
 from app.websocket import websocket_handler
 
 
@@ -24,16 +25,18 @@ async def request_context(req, handler):
     req.redis_bytes = req.config_dict['redis_bytes']
     req.user = await load_user_from_token(req)
 
-    if req.can_read_body:
-        content_type = req.headers.get('Content-Type', '').split(';')[0]
-        if content_type in {'text/plain', 'application/json'}:
-            req.data = await req.json()
+    try:
+        if req.can_read_body:
+            content_type = req.headers.get('Content-Type', '').split(';')[0]
+            if content_type in {'text/plain', 'application/json'}:
+                try:
+                    req.data = await req.json()
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise InvalidJsonBody() from exc
+            else:
+                req.data = {}
         else:
             req.data = {}
-    else:
-        req.data = {}
-
-    try:
         return await handler(req)
     except InvalidUsage as exc:
         return web.json_response(
@@ -100,6 +103,8 @@ def _configure_web_routes(app):
         relative_path = Path(req.match_info.get('path_info', '')).as_posix().lstrip('/')
         if relative_path == 'api' or relative_path.startswith('api/'):
             raise web.HTTPNotFound()
+        if any(part.startswith('.') for part in Path(relative_path).parts):
+            raise web.HTTPNotFound()
         candidate = (web_dir / relative_path).resolve()
         if candidate.is_file() and candidate.is_relative_to(web_dir):
             return web.FileResponse(candidate)
@@ -114,4 +119,10 @@ def _configure_web_routes(app):
 if __name__ == '__main__':
     uvloop.install()
     loop = asyncio.get_event_loop()
-    web.run_app(loop.run_until_complete(create_app()), port=config.PORT, handle_signals=False, loop=loop)
+    web.run_app(
+        loop.run_until_complete(create_app()),
+        host=config.BIND_HOST,
+        port=config.PORT,
+        handle_signals=False,
+        loop=loop,
+    )

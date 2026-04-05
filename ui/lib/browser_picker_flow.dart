@@ -22,12 +22,21 @@ Future<T?> awaitBrowserPickerResult<T>({
     }
   }
 
+  Future<void> completeError(Object error, StackTrace stackTrace) async {
+    cancelTimer?.cancel();
+    await changeSubscription.cancel();
+    await focusSubscription.cancel();
+    if (!completer.isCompleted) {
+      completer.completeError(error, stackTrace);
+    }
+  }
+
   changeSubscription = changeEvents.listen((_) async {
     changeSeen = true;
     try {
       await complete(await readSelection());
-    } catch (_) {
-      await complete(null);
+    } catch (error, stackTrace) {
+      await completeError(error, stackTrace);
     }
   });
 

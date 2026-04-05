@@ -34,6 +34,8 @@ nginx_ssl_certificate: "{{ letsencrypt_fullchain_path if nginx_use_letsencrypt e
 nginx_ssl_certificate_key: "{{ letsencrypt_privkey_path if nginx_use_letsencrypt else nginx_fallback_certificate_key }}"
 nginx_selfsigned_subject: "/CN={{ nginx_server_name }}"
 nginx_log_dir: /var/log/nginx
+nginx_access_log_path: "{{ nginx_log_dir }}/{{ app_name }}.access.log"
+nginx_error_log_path: "{{ nginx_log_dir }}/{{ app_name }}.error.log"
 public_scheme: "{{ 'https' if nginx_enable_https else 'http' }}"
 public_host: "{{ ansible_host | default(inventory_hostname) }}"
 domain: "{{ public_scheme }}://{{ nginx_server_name if nginx_server_name not in ['_', '', 'localhost'] else public_host }}"
@@ -43,6 +45,7 @@ redis_url: redis://localhost:6379
 
 backend_env:
   SECRET_KEY: "{{ secret_key }}"
+  BIND_HOST: "{{ backend_bind_host }}"
   PORT: "{{ backend_bind_port }}"
   REDIS_URL: "{{ redis_url }}"
   DOMAIN: "{{ domain }}"

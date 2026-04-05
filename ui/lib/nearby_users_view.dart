@@ -98,7 +98,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     if (!widget.autoCheckin || !mounted) {
       return;
     }
-    unawaited(checkin());
+    unawaited(checkin(showErrorFeedback: false));
   }
 
   void _setStatus(String status, {required bool loading}) {
@@ -119,7 +119,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     );
   }
 
-  Future<void> checkin() async {
+  Future<void> checkin({bool showErrorFeedback = true}) async {
     final me = Provider.of<MeModel>(context, listen: false);
     if (me.data == null || !me.data!.authenticated) {
       return;
@@ -173,24 +173,62 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         httpService: httpService,
         description: 'Your session has ended. Please sign in again.',
       );
-    } catch (_) {
+    } catch (error) {
       nearbyItems.clear();
       _setStatus(
         'Could not refresh nearby activity. Pull to try again.',
         loading: false,
       );
+      if (!showErrorFeedback) {
+        return;
+      }
       if (!mounted) {
         return;
       }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not refresh nearby activity.')),
+        SnackBar(
+          content: Text(
+            describeActionError(
+              error,
+              fallbackDescription: 'Could not refresh nearby activity.',
+            ),
+          ),
+        ),
       );
     }
   }
 
   Future<void> joinUser(NearbyUser user) async {
-    final roomId = await httpService.join_user(user.id);
-    await Future.sync(() => widget.onUserJoined(user, roomId));
+    try {
+      final roomId = await httpService.join_user(user.id);
+      await Future.sync(() => widget.onUserJoined(user, roomId));
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return;
+      }
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
+      final message = describeActionError(
+        error,
+        fallbackDescription: 'Could not open a room with ${user.username}.',
+      );
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   Future<void> requestRoomJoin(NearbyRoom room) async {
@@ -226,12 +264,22 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         httpService: httpService,
         description: 'Your session has ended. Please sign in again.',
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) {
         return;
       }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not send the join request.')),
+        SnackBar(
+          content: Text(
+            describeActionError(
+              error,
+              fallbackDescription: 'Could not send the join request.',
+            ),
+          ),
+        ),
       );
     }
   }

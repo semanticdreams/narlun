@@ -60,13 +60,16 @@ class _InviteAcceptViewState extends State<InviteAcceptView> {
         _accepting = false;
         _error = error.message as String?;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) {
         return;
       }
       setState(() {
         _accepting = false;
-        _error = 'Could not open this invite right now.';
+        _error = describeActionError(
+          error,
+          fallbackDescription: 'Could not open this invite right now.',
+        );
       });
     }
   }

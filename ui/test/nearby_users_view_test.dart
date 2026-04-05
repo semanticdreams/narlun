@@ -541,4 +541,47 @@ void main() {
     expect(find.text('3 people'), findsOneWidget);
     expect(find.text('Old message'), findsNothing);
   });
+
+  testWidgets(
+    'background nearby refresh failures update inline status without snackbar noise',
+    (tester) async {
+      final httpService = FakeNearbyHttpService()
+        ..nearbyItems = [
+          NearbyItem(
+            type: 'user',
+            distance: 120,
+            user: NearbyUser(
+              id: 2,
+              username: 'bob',
+              distance: 120,
+              lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              status: 'Nearby',
+            ),
+          ),
+        ];
+      final locationService = FakeLocationService();
+      final websocketService = _FakeWebsocketService();
+
+      await tester.pumpWidget(
+        _buildNearbyApp(
+          httpService: httpService,
+          locationService: locationService,
+          websocketService: websocketService,
+          onUserJoined: (_, __) async {},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      httpService.checkinError = StateError('offline');
+      websocketService.emitNearbyChanged();
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not refresh nearby activity. Pull to try again.'),
+        findsOneWidget,
+      );
+      expect(find.byType(SnackBar), findsNothing);
+    },
+  );
 }

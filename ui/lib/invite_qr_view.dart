@@ -58,7 +58,10 @@ class _InviteQrViewState extends State<InviteQrView> {
         return;
       }
       setState(() {
-        _error = error;
+        _error = describeActionError(
+          error,
+          fallbackDescription: 'Could not create an invite right now.',
+        );
       });
     }
   }
@@ -96,8 +99,8 @@ class _InviteQrViewState extends State<InviteQrView> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Could not create an invite right now.',
+          Text(
+            _error as String,
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),

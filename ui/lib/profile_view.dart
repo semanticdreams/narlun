@@ -1,21 +1,34 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'avatar_image.dart';
+import 'dialog_service.dart';
 import 'http.dart';
 import 'image_picker.dart';
 import 'install_prompt_actions.dart';
 import 'install_prompt_service.dart';
+import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'profile_form.dart';
 import 'push_notifications_service.dart';
+import 'session_actions.dart';
 
 class ProfileView extends StatelessWidget {
-  const ProfileView({super.key});
+  final Future<Uint8List?> Function()? imagePicker;
+  final DialogService? dialogService;
+
+  const ProfileView({
+    super.key,
+    this.imagePicker,
+    this.dialogService,
+  });
 
   Future<void> _deleteAccount(BuildContext context) async {
     final httpService = Provider.of<HttpService>(context, listen: false);
+    final resolvedDialogService = dialogService ?? locator<DialogService>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -37,12 +50,31 @@ class ProfileView extends StatelessWidget {
     );
 
     if (confirmed == true) {
-      await httpService.delete_account();
-      if (!context.mounted) {
-        return;
+      try {
+        await httpService.delete_account();
+        if (!context.mounted) {
+          return;
+        }
+        Provider.of<MeModel>(context, listen: false).reset();
+        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      } on UnauthorizedResponse {
+        if (!context.mounted) {
+          return;
+        }
+        await expireSession(
+          context,
+          httpService: httpService,
+          description: 'Your session has ended. Please sign in again.',
+        );
+      } catch (error) {
+        await showActionErrorDialog(
+          resolvedDialogService,
+          title: 'Could not delete account',
+          error: error,
+          fallbackDescription:
+              'Your account could not be deleted right now. Try again.',
+        );
       }
-      Provider.of<MeModel>(context, listen: false).reset();
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
     }
   }
 
@@ -83,8 +115,13 @@ class ProfileView extends StatelessWidget {
                             context,
                             listen: false,
                           );
-                          final file = await pickImageBytes();
-                          if (file != null) {
+                          final resolvedDialogService =
+                              dialogService ?? locator<DialogService>();
+                          try {
+                            final file = await (imagePicker ?? pickImageBytes)();
+                            if (file == null) {
+                              return;
+                            }
                             final picture = await httpService
                                 .upload_profile_picture(file);
                             if (!context.mounted) {
@@ -99,6 +136,24 @@ class ProfileView extends StatelessWidget {
                               const SnackBar(
                                 content: Text('Profile picture saved'),
                               ),
+                            );
+                          } on UnauthorizedResponse {
+                            if (!context.mounted) {
+                              return;
+                            }
+                            await expireSession(
+                              context,
+                              httpService: httpService,
+                              description:
+                                  'Your session has ended. Please sign in again.',
+                            );
+                          } catch (error) {
+                            await showActionErrorDialog(
+                              resolvedDialogService,
+                              title: 'Could not upload picture',
+                              error: error,
+                              fallbackDescription:
+                                  'The picture could not be uploaded right now. Try again.',
                             );
                           }
                         },
@@ -129,12 +184,26 @@ class ProfileView extends StatelessWidget {
                                 onPressed: pushService.isBusy
                                     ? null
                                     : () async {
-                                        if (pushService.isSubscribed) {
-                                          await pushService
-                                              .disableNotifications();
-                                        } else {
-                                          await pushService
-                                              .enableNotifications();
+                                        final resolvedDialogService =
+                                            dialogService ??
+                                            locator<DialogService>();
+                                        try {
+                                          if (pushService.isSubscribed) {
+                                            await pushService
+                                                .disableNotifications();
+                                          } else {
+                                            await pushService
+                                                .enableNotifications();
+                                          }
+                                        } catch (error) {
+                                          await showActionErrorDialog(
+                                            resolvedDialogService,
+                                            title:
+                                                'Could not update notifications',
+                                            error: error,
+                                            fallbackDescription:
+                                                'Notification settings could not be updated right now.',
+                                          );
                                         }
                                       },
                                 icon: Icon(

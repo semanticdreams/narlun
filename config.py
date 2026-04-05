@@ -16,6 +16,7 @@ PORT = 3000
 REDIS_URL = 'redis://localhost:6379'
 
 DOMAIN = 'https://narlun.com'
+BIND_HOST = '127.0.0.1'
 WEB_ROOT = ''
 FRONTEND_ERROR_LOG_PATH = os.path.join(basedir, 'frontend-errors.jsonl')
 PUSH_VAPID_PUBLIC_KEY = ''

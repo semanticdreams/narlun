@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'avatar_image.dart';
+import 'dialog_service.dart';
 import 'http.dart';
 import 'install_prompt_actions.dart';
 import 'install_prompt_service.dart';
+import 'locator.dart';
 import 'me_model.dart';
+import 'session_actions.dart';
 
 enum _AccountMenuAction { profile, install, signOut }
 
@@ -31,15 +34,34 @@ class AppBarAvatar extends StatelessWidget {
                   context,
                   listen: false,
                 );
-                await httpService.signout();
-                if (!context.mounted) {
-                  return;
+                try {
+                  await httpService.signout();
+                  if (!context.mounted) {
+                    return;
+                  }
+                  Provider.of<MeModel>(context, listen: false).reset();
+                  Navigator.of(context).pushNamedAndRemoveUntil(
+                    '/',
+                    (route) => false,
+                  );
+                } on UnauthorizedResponse {
+                  if (!context.mounted) {
+                    return;
+                  }
+                  await expireSession(
+                    context,
+                    httpService: httpService,
+                    description: 'Your session has ended. Please sign in again.',
+                  );
+                } catch (error) {
+                  await showActionErrorDialog(
+                    locator<DialogService>(),
+                    title: 'Could not sign out',
+                    error: error,
+                    fallbackDescription:
+                        'Sign out could not be completed right now. Try again.',
+                  );
                 }
-                Provider.of<MeModel>(context, listen: false).reset();
-                Navigator.of(context).pushNamedAndRemoveUntil(
-                  '/',
-                  (route) => false,
-                );
                 break;
             }
           },

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:username_gen/username_gen.dart';
 
+import 'dialog_service.dart';
 import 'http.dart';
+import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'route_utils.dart';
@@ -37,6 +39,14 @@ class SignupViewState extends State<SignupView> {
       usernameController.selection = TextSelection(
         baseOffset: 0,
         extentOffset: usernameController.value.text.length,
+      );
+    } catch (error) {
+      await showActionErrorDialog(
+        locator<DialogService>(),
+        title: 'Could not sign up',
+        error: error,
+        fallbackDescription:
+            'Your account could not be created right now. Try again.',
       );
     }
   }

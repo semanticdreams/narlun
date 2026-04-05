@@ -116,6 +116,11 @@ class Unauthorized(InvalidUsage):
     code = 1
 
 
+class InvalidJsonBody(InvalidUsage):
+    message = 'Request body must be valid JSON'
+    code = 11
+
+
 def authenticated(func):
     @wraps(func)
     async def wrapped(req):

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'dialog_service.dart';
 import 'http.dart';
+import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'route_utils.dart';
@@ -38,6 +40,14 @@ class SigninState extends State<SigninView> {
       usernameController.selection = TextSelection(
         baseOffset: 0,
         extentOffset: usernameController.value.text.length,
+      );
+    } catch (error) {
+      await showActionErrorDialog(
+        locator<DialogService>(),
+        title: 'Could not sign in',
+        error: error,
+        fallbackDescription:
+            'Sign in failed right now. Check your connection and try again.',
       );
     }
   }

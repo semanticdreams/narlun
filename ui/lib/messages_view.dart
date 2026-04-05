@@ -250,6 +250,26 @@ class MessagesState extends State<MessagesView> {
       } else {
         rethrow;
       }
+    } catch (error) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription:
+                    'Could not update notification settings right now.',
+              ),
+            ),
+          ),
+        );
     }
   }
 
@@ -299,6 +319,26 @@ class MessagesState extends State<MessagesView> {
       } else {
         await _refreshJoinRequests(silentErrors: true);
       }
+    } catch (error) {
+      if (_roomClosed || !mounted) {
+        return;
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription:
+                    'Could not update that join request right now.',
+              ),
+            ),
+          ),
+        );
     } finally {
       if (mounted) {
         setState(() {
@@ -378,8 +418,17 @@ class MessagesState extends State<MessagesView> {
       await update_messages(silentErrors: true);
     } on RoomUnavailable {
       await _handleRoomDeleted();
-    } catch (_) {
-      // The websocket service keeps retrying in the background.
+    } catch (error) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _showRefreshFailure(
+        describeActionError(
+          error,
+          fallbackDescription:
+              'Could not connect to this room right now. Trying again soon.',
+        ),
+      );
     }
   }
 
@@ -441,6 +490,25 @@ class MessagesState extends State<MessagesView> {
         } else {
           rethrow;
         }
+      } catch (error) {
+        if (!mounted || _roomClosed) {
+          return;
+        }
+        if (isAlreadyPresentedActionError(error)) {
+          return;
+        }
+        ScaffoldMessenger.maybeOf(context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                describeActionError(
+                  error,
+                  fallbackDescription: 'Could not send that message.',
+                ),
+              ),
+            ),
+          );
       }
     }
   }

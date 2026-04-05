@@ -1,4 +1,4 @@
-.PHONY: test run lint cov secret-key provision deploy
+.PHONY: test run lint cov secret-key provision deploy logs
 
 run:
 	uv run python -m app.app
@@ -20,3 +20,6 @@ provision:
 
 deploy:
 	NARLUN_REPO_ROOT=$(CURDIR) $(MAKE) -C ansible deploy
+
+logs:
+	$(MAKE) -C ansible logs SINCE="$(SINCE)"

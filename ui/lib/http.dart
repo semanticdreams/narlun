@@ -42,14 +42,23 @@ Future check_response(
     throw ForbiddenResponse();
   } else if (data.statusCode == 404) {
     throw NotFoundResponse();
-  } else if (data.statusCode == 500) {
+  } else if (data.statusCode == 413) {
+    if (showDialogs) {
+      await dialogService.showDialog(
+        title: 'Picture too large',
+        description:
+            'That picture is too large to upload. Choose a smaller image and try again.',
+      );
+    }
+    throw PayloadTooLargeResponse();
+  } else if (data.statusCode >= 500 && data.statusCode <= 599) {
     if (showDialogs) {
       await dialogService.showDialog(
         title: 'Server error',
-        description: 'Contact support.',
+        description: 'The server could not complete that request. Try again.',
       );
     }
-    throw ServerError();
+    throw ServerError(data.statusCode);
   } else if (data.statusCode == 200 || data.statusCode == 204) {
     return data;
   } else {
@@ -101,7 +110,11 @@ class InvalidUsage {
   });
 }
 
-class ServerError {}
+class ServerError {
+  final int status;
+
+  ServerError(this.status);
+}
 
 class UnexpectedResponse {
   final status;
@@ -118,6 +131,59 @@ class ForbiddenResponse extends UnexpectedResponse {
 
 class NotFoundResponse extends UnexpectedResponse {
   NotFoundResponse() : super(404);
+}
+
+class PayloadTooLargeResponse extends UnexpectedResponse {
+  PayloadTooLargeResponse() : super(413);
+}
+
+bool isAlreadyPresentedActionError(Object error) {
+  return error is InvalidUsage ||
+      error is ServerError ||
+      error is PayloadTooLargeResponse;
+}
+
+String describeActionError(
+  Object error, {
+  required String fallbackDescription,
+}) {
+  if (error is InvalidUsage) {
+    return '${error.message}';
+  }
+  if (error is PayloadTooLargeResponse) {
+    return 'That picture is too large to upload. Choose a smaller image and try again.';
+  }
+  if (error is UnauthorizedResponse) {
+    return 'Your session has ended. Please sign in again.';
+  }
+  if (error is ServerError) {
+    return 'The server could not complete that request. Try again.';
+  }
+  if (error is UnexpectedResponse) {
+    return 'The request failed with status ${error.status}. Please try again.';
+  }
+  if (error is http.ClientException) {
+    return 'The app could not reach the server. Check your connection and try again.';
+  }
+  return fallbackDescription;
+}
+
+Future<void> showActionErrorDialog(
+  DialogService dialogService, {
+  required String title,
+  required Object error,
+  required String fallbackDescription,
+}) async {
+  if (isAlreadyPresentedActionError(error)) {
+    return;
+  }
+  await dialogService.showDialog(
+    title: title,
+    description: describeActionError(
+      error,
+      fallbackDescription: fallbackDescription,
+    ),
+  );
 }
 
 class HttpService {
@@ -162,8 +228,10 @@ class HttpService {
             ? null
             : jsonEncode({'push_endpoint': pushEndpoint}),
       );
-    } finally {
       await clearLocalSession();
+    } on UnauthorizedResponse {
+      await clearLocalSession();
+      rethrow;
     }
   }
 
@@ -243,8 +311,10 @@ class HttpService {
   Future delete_account() async {
     try {
       await client.delete(Uri.parse(baseurl + '/users/me'));
-    } finally {
       await clearLocalSession();
+    } on UnauthorizedResponse {
+      await clearLocalSession();
+      rethrow;
     }
   }
 

@@ -113,6 +113,28 @@ async def test_invalid_avatar_upload_returns_usage_error(cli):
     assert body['code'] == 8
 
 
+async def test_invalid_json_request_returns_usage_error(cli):
+    response = await cli.post(
+        '/api/users/signup',
+        data='{not valid json',
+        headers={'Content-Type': 'application/json'},
+    )
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 11
+
+
+async def test_invalid_json_encoding_returns_usage_error(cli):
+    response = await cli.post(
+        '/api/users/signup',
+        data=b'\xff',
+        headers={'Content-Type': 'application/json; charset=utf-8'},
+    )
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 11
+
+
 async def test_delete_account_removes_permanent_user(cli):
     username = random_username()
     created = await signup(cli, username=username)

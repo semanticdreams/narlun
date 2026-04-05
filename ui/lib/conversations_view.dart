@@ -215,10 +215,24 @@ class _ConversationsState extends State<ConversationsView> {
                             FilledButton(
                               onPressed: pushService.isBusy
                                   ? null
-                                  : () {
-                                      unawaited(
-                                        pushService.enableNotifications(),
-                                      );
+                                  : () async {
+                                      try {
+                                        await pushService.enableNotifications();
+                                      } catch (error) {
+                                        if (!mounted) {
+                                          return;
+                                        }
+                                        if (isAlreadyPresentedActionError(error)) {
+                                          return;
+                                        }
+                                        _showRefreshFailure(
+                                          describeActionError(
+                                            error,
+                                            fallbackDescription:
+                                                'Could not enable notifications right now.',
+                                          ),
+                                        );
+                                      }
                                     },
                               child: const Text('Turn on'),
                             ),

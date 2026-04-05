@@ -78,15 +78,8 @@
       width: 76px;
       height: 76px;
       margin: 0 auto 18px;
-      border-radius: 22px;
-      background:
-        linear-gradient(145deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.06)),
-        linear-gradient(145deg, #7c5ab2, #4b3569);
-      display: grid;
-      place-items: center;
-      font-size: 34px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
+      display: block;
+      object-fit: contain;
     }
 
     .shell-title {
@@ -123,13 +116,12 @@
   </style>
 </head>
 <body>
-  <div id="app-shell" aria-hidden="true">
+  <div id="app-shell" role="status" aria-live="polite" aria-label="Narlun is opening">
     <div class="shell-card">
-      <div class="shell-mark">N</div>
+      <img class="shell-mark" src="icons/Icon-192.png" alt="">
       <h1 class="shell-title">Narlun</h1>
       <p class="shell-copy">
-        Live nearby chat with installable app behavior, instant room updates,
-        and a web-first experience.
+        Nearby chat is opening. This should only take a moment.
       </p>
       <div class="shell-loader"></div>
     </div>
@@ -154,88 +146,11 @@
       document.body.append(scriptTag);
     }
 
-    function activeWorkerMatchesVersion(registration) {
-      return !!registration.active &&
-        registration.active.scriptURL.indexOf('v=' + serviceWorkerVersion) !== -1;
-    }
-
-    function waitForWorkerState(serviceWorker, targetState) {
-      return new Promise((resolve) => {
-        if (!serviceWorker) {
-          resolve();
-          return;
-        }
-        if (serviceWorker.state === targetState) {
-          resolve();
-          return;
-        }
-        serviceWorker.addEventListener('statechange', function onStateChange() {
-          if (serviceWorker.state === targetState) {
-            resolve();
-          }
-        });
-      });
-    }
-
-    function waitForControllerChange() {
-      return new Promise((resolve) => {
-        navigator.serviceWorker.addEventListener(
-          'controllerchange',
-          function onControllerChange() {
-            resolve();
-          },
-          { once: true },
-        );
-      });
-    }
-
-    function activateWaitingWorker(registration) {
-      if (!registration.waiting || !navigator.serviceWorker.controller) {
-        return Promise.resolve(false);
-      }
-      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-      return waitForControllerChange().then(() => true);
-    }
-
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
+        loadMainDartJs();
         var serviceWorkerUrl = 'flutter_service_worker.js?v=' + serviceWorkerVersion;
-        navigator.serviceWorker.register(serviceWorkerUrl).then(async (reg) => {
-          try {
-            if (await activateWaitingWorker(reg)) {
-              loadMainDartJs();
-              return;
-            }
-
-            if (!reg.active && (reg.installing || reg.waiting)) {
-              await waitForWorkerState(reg.installing || reg.waiting, 'activated');
-              loadMainDartJs();
-              return;
-            }
-
-            if (!activeWorkerMatchesVersion(reg)) {
-              await reg.update();
-              if (await activateWaitingWorker(reg)) {
-                loadMainDartJs();
-                return;
-              }
-              if (reg.installing) {
-                await waitForWorkerState(reg.installing, 'activated');
-              }
-            }
-          } catch (_) {
-            // Fall back to loading the app even if the update handshake fails.
-          }
-          loadMainDartJs();
-        }).catch(() => {
-          loadMainDartJs();
-        });
-
-        setTimeout(() => {
-          if (!scriptLoaded) {
-            loadMainDartJs();
-          }
-        }, 4000);
+        navigator.serviceWorker.register(serviceWorkerUrl).catch(() => {});
       });
     } else {
       loadMainDartJs();

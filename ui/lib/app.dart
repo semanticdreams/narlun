@@ -10,6 +10,7 @@ import 'invite_accept_view.dart';
 import 'profile_view.dart';
 import 'frontend_error_reporter.dart';
 import 'me_model.dart';
+import 'route_utils.dart';
 import 'set_page_title.dart';
 
 import 'locator.dart';
@@ -42,64 +43,32 @@ class MyApp extends StatelessWidget {
       theme: theme,
       onGenerateRoute: (RouteSettings settings) {
         Widget? pageView;
-
+        var resolvedSettings = settings;
         final me = Provider.of<MeModel>(context, listen: false).data;
-        final uriData = settings.name != null
+        var resolvedUri = settings.name != null
             ? Uri.parse(settings.name!)
             : null;
 
-        if (uriData != null) {
-          setPageTitle(uriData.path, context);
-        }
-        errorReporter.updateRoute(settings.name ?? uriData?.toString());
-
-        const unauthPaths = ['/', '/signin', '/signup'];
-        final requestedLocation = uriData?.toString();
-
-        if (me == null && uriData!.path != '/') {
-          final newUri = Uri(
-            path: '/',
-            queryParameters: requestedLocation == null
-                ? null
-                : {'next': requestedLocation},
-          );
-          return MaterialPageRoute(
-            settings: RouteSettings(
-              name: newUri.toString(),
+        if (resolvedUri != null) {
+          final resolvedLocation = resolveStartupLocation(resolvedUri, me);
+          if (resolvedLocation != settings.name) {
+            resolvedSettings = RouteSettings(
+              name: resolvedLocation,
               arguments: settings.arguments,
-            ),
-            builder: (BuildContext context) => const WelcomeView(),
-          );
-        } else if (me != null &&
-            me.authenticated == false &&
-            !unauthPaths.contains(uriData!.path)) {
-          final newUri = Uri(
-            path: '/signup',
-            queryParameters: requestedLocation == null
-                ? null
-                : {'next': requestedLocation},
-          );
-          return MaterialPageRoute(
-            settings: RouteSettings(
-              name: newUri.toString(),
-              arguments: settings.arguments,
-            ),
-            builder: (BuildContext context) => const SignupView(),
-          );
-        } else if (me != null &&
-            me.authenticated == true &&
-            unauthPaths.contains(uriData!.path)) {
-          return MaterialPageRoute(
-            settings: RouteSettings(
-              name: '/home',
-              arguments: settings.arguments,
-            ),
-            builder: (BuildContext context) => const HomeView(),
-          );
+            );
+            resolvedUri = Uri.parse(resolvedLocation);
+          }
         }
 
-        if (uriData != null) {
-          switch (uriData.path) {
+        if (resolvedUri != null) {
+          setPageTitle(resolvedUri.path, context);
+        }
+        errorReporter.updateRoute(
+          resolvedSettings.name ?? resolvedUri?.toString(),
+        );
+
+        if (resolvedUri != null) {
+          switch (resolvedUri.path) {
             case '/':
               pageView = const WelcomeView();
               break;
@@ -113,7 +82,7 @@ class MyApp extends StatelessWidget {
               pageView = HomeView(
                 initialTabIndex: 1,
                 initialRoomIdToOpen: int.tryParse(
-                  uriData.queryParameters['open_room'] ?? '',
+                  resolvedUri.queryParameters['open_room'] ?? '',
                 ),
               );
               break;
@@ -128,15 +97,15 @@ class MyApp extends StatelessWidget {
               break;
           }
           if (pageView == null &&
-              uriData.pathSegments.length == 2 &&
-              uriData.pathSegments.first == 'invite') {
-            pageView = InviteAcceptView(token: uriData.pathSegments[1]);
+              resolvedUri.pathSegments.length == 2 &&
+              resolvedUri.pathSegments.first == 'invite') {
+            pageView = InviteAcceptView(token: resolvedUri.pathSegments[1]);
           }
         }
 
         if (pageView != null) {
           return MaterialPageRoute(
-            settings: settings,
+            settings: resolvedSettings,
             builder: (BuildContext context) => pageView!,
           );
         }

@@ -5,6 +5,8 @@ import 'models.dart';
 class MeModel extends ChangeNotifier {
   SessionUser? data;
 
+  MeModel({this.data});
+
   void setData(SessionUser d) {
     data = d;
     notifyListeners();

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'models.dart';
+
 Uri? currentRouteUri(BuildContext context) {
   final routeName = ModalRoute.of(context)?.settings.name;
   if (routeName == null) {
@@ -43,6 +45,60 @@ String invitePathForToken(String token) {
 
 String inviteUrlForToken(String token) {
   return Uri.base.resolve(invitePathForToken(token)).toString();
+}
+
+String? _resolveStartupRedirectOnce(Uri uri, SessionUser? me) {
+  final requestedLocation = uri.toString();
+  final next = uri.queryParameters['next'];
+  const unauthPaths = {'/', '/signin', '/signup'};
+
+  if (me == null) {
+    if (uri.path == '/') {
+      return null;
+    }
+    return Uri(
+      path: '/',
+      queryParameters: {'next': requestedLocation},
+    ).toString();
+  }
+
+  if (me.authenticated) {
+    if (uri.path == '/') {
+      return next ?? '/home';
+    }
+    if (unauthPaths.contains(uri.path)) {
+      return '/home';
+    }
+    return null;
+  }
+
+  if (uri.path == '/') {
+    return Uri(
+      path: '/signup',
+      queryParameters: next == null ? null : {'next': next},
+    ).toString();
+  }
+
+  if (!unauthPaths.contains(uri.path)) {
+    return Uri(
+      path: '/signup',
+      queryParameters: {'next': requestedLocation},
+    ).toString();
+  }
+
+  return null;
+}
+
+String resolveStartupLocation(Uri uri, SessionUser? me) {
+  var resolved = uri;
+  for (var i = 0; i < 5; i += 1) {
+    final redirect = _resolveStartupRedirectOnce(resolved, me);
+    if (redirect == null || redirect == resolved.toString()) {
+      return resolved.toString();
+    }
+    resolved = Uri.parse(redirect);
+  }
+  return resolved.toString();
 }
 
 String authRouteWithNext(BuildContext context, String path) {

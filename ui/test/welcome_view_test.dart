@@ -36,15 +36,18 @@ class FakeBootstrapHttpService extends HttpService {
         client: _DummyHttpClient(),
       );
 
-  final Queue<Future<SessionUser> Function(bool silentErrors)> _fetchMeHandlers =
-      Queue<Future<SessionUser> Function(bool silentErrors)>();
+  final Queue<Future<SessionUser> Function(bool silentErrors)>
+  _fetchMeHandlers = Queue<Future<SessionUser> Function(bool silentErrors)>();
 
   void enqueueFetchMe(Future<SessionUser> Function(bool silentErrors) handler) {
     _fetchMeHandlers.add(handler);
   }
 
   @override
-  Future<SessionUser> fetch_me({bool silentErrors = false}) async {
+  Future<SessionUser> fetch_me({
+    bool silentErrors = false,
+    bool reconnectWebsocket = true,
+  }) async {
     return _fetchMeHandlers.removeFirst()(silentErrors);
   }
 }
@@ -82,10 +85,15 @@ void main() {
     await tester.pumpWidget(_buildWelcomeApp(httpService));
     await tester.pump();
 
-    expect(find.text('Connection issue. Retrying in 1s...'), findsOneWidget);
-    expect(find.text('Retry now'), findsOneWidget);
     expect(
-      find.text('The server responded with an error. Retrying automatically.'),
+      find.text('Still trying to connect. Trying again in 1s...'),
+      findsOneWidget,
+    );
+    expect(find.text('Try again'), findsOneWidget);
+    expect(
+      find.text(
+        'Narlun is having trouble starting right now. We will keep trying.',
+      ),
       findsOneWidget,
     );
 
@@ -104,9 +112,9 @@ void main() {
     await tester.pumpWidget(_buildWelcomeApp(httpService));
     await tester.pump();
 
-    expect(find.text('Retry now'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
 
-    await tester.tap(find.text('Retry now'));
+    await tester.tap(find.text('Try again'));
     await tester.pump();
 
     completer.complete(SessionUser.unauthenticated());

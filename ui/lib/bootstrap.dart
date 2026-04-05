@@ -10,11 +10,13 @@ import 'http.dart';
 import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
+import 'models.dart';
 import 'push_notifications_service.dart';
 import 'push_notifications_session_bridge.dart';
 
 Object? _e2eSemanticsHandle;
 FrontendErrorReporter? _frontendErrorReporter;
+const _initialSessionTimeout = Duration(seconds: 3);
 
 Future<void> initializeApp({
   String? environment,
@@ -46,15 +48,15 @@ Future<void> initializeApp({
   )..install();
 }
 
-Widget buildNarlunApp() {
+Widget buildNarlunApp({SessionUser? initialSessionUser}) {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: const Color(0xFF5F4484),
     brightness: Brightness.light,
   );
-  final errorReporter = _frontendErrorReporter ??=
-      (FrontendErrorReporter(apiBaseUrl: Environment().config.apiUrl)
-        ..install());
-  final meModel = MeModel();
+  final errorReporter = _frontendErrorReporter ??= (FrontendErrorReporter(
+    apiBaseUrl: Environment().config.apiUrl,
+  )..install());
+  final meModel = MeModel(data: initialSessionUser);
   errorReporter.attachMeModel(meModel);
   return MultiProvider(
     providers: [
@@ -87,7 +89,21 @@ Widget buildNarlunApp() {
   );
 }
 
+Future<SessionUser?> _loadInitialSessionUser() async {
+  final httpService = HttpService();
+  try {
+    return await httpService
+        .fetch_me(silentErrors: true, reconnectWebsocket: false)
+        .timeout(_initialSessionTimeout);
+  } catch (_) {
+    return null;
+  } finally {
+    httpService.close();
+  }
+}
+
 Future<void> bootstrapApp({String? environment, String? apiUrlOverride}) async {
   await initializeApp(environment: environment, apiUrlOverride: apiUrlOverride);
-  runApp(buildNarlunApp());
+  final initialSessionUser = await _loadInitialSessionUser();
+  runApp(buildNarlunApp(initialSessionUser: initialSessionUser));
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'http.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'route_utils.dart';
 
 class WelcomeView extends StatefulWidget {
   const WelcomeView({super.key});
@@ -19,24 +21,22 @@ class _WelcomeState extends State<WelcomeView> {
   Timer? _retryTimer;
   bool _loading = true;
   int _attempt = 0;
-  String _statusMessage = 'Checking your session...';
+  String _statusMessage = 'Getting Narlun ready...';
   String? _detailMessage;
 
   Duration _retryDelayForAttempt(int attempt) {
-    final cappedSeconds = attempt <= 0
-        ? 1
-        : (1 << (attempt - 1)).clamp(1, 16);
+    final cappedSeconds = attempt <= 0 ? 1 : (1 << (attempt - 1)).clamp(1, 16);
     return Duration(seconds: cappedSeconds);
   }
 
   String _describeBootstrapFailure(Object error) {
     if (error is ServerError) {
-      return 'The server responded with an error. Retrying automatically.';
+      return 'Narlun is having trouble starting right now. We will keep trying.';
     }
     if (error is UnexpectedResponse) {
-      return 'Startup failed with status ${error.status}. Retrying automatically.';
+      return 'Narlun hit a snag while opening. We will keep trying.';
     }
-    return 'The app cannot reach the server right now. Retrying automatically.';
+    return 'Narlun cannot connect right now. We will keep trying.';
   }
 
   Future<void> _navigateAfterBootstrap(SessionUser me) async {
@@ -47,20 +47,11 @@ class _WelcomeState extends State<WelcomeView> {
 
     final routeName = ModalRoute.of(context)!.settings.name;
     final routeUri = Uri.parse(routeName!);
-    final next = routeUri.queryParameters['next'];
-
     Navigator.of(context).popUntil((route) => route.isFirst);
-
-    if (next != null) {
-      Navigator.pushReplacementNamed(context, next);
-      return;
-    }
-
-    if (me.authenticated) {
-      Navigator.pushReplacementNamed(context, '/home');
-    } else {
-      Navigator.pushReplacementNamed(context, '/signup');
-    }
+    Navigator.pushReplacementNamed(
+      context,
+      resolveStartupLocation(routeUri, me),
+    );
   }
 
   void _scheduleRetry() {
@@ -68,7 +59,8 @@ class _WelcomeState extends State<WelcomeView> {
     final delay = _retryDelayForAttempt(_attempt);
     setState(() {
       _loading = false;
-      _statusMessage = 'Connection issue. Retrying in ${delay.inSeconds}s...';
+      _statusMessage =
+          'Still trying to connect. Trying again in ${delay.inSeconds}s...';
     });
     _retryTimer = Timer(delay, () {
       unawaited(_bootstrapMe(resetBackoff: false));
@@ -88,13 +80,16 @@ class _WelcomeState extends State<WelcomeView> {
     setState(() {
       _loading = true;
       _statusMessage = _attempt == 0
-          ? 'Checking your session...'
-          : 'Retrying connection...';
+          ? 'Getting Narlun ready...'
+          : 'Trying again...';
       _detailMessage = null;
     });
 
     try {
-      final me = await httpService.fetch_me(silentErrors: true);
+      final me = await httpService.fetch_me(
+        silentErrors: true,
+        reconnectWebsocket: false,
+      );
       if (!mounted) {
         return;
       }
@@ -127,65 +122,139 @@ class _WelcomeState extends State<WelcomeView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF4E2D72),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF291B3D), Color(0xFF1B1328)],
+          ),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            const Image(
-              image: AssetImage('assets/icon.png'),
-              width: 96,
-              height: 96,
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Narlun',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 50,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 18),
-            const Text(
-              'Live nearby chat',
-              style: TextStyle(color: Color(0xFFEADDF8)),
-            ),
-            const SizedBox(height: 30),
-            const CircularProgressIndicator(color: Colors.white),
-            const SizedBox(height: 20),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                _statusMessage,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-            if (_detailMessage != null) ...[
-              const SizedBox(height: 12),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Text(
-                  _detailMessage!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFEADDF8)),
+            Align(
+              alignment: const Alignment(0, -1.15),
+              child: Container(
+                width: 520,
+                height: 320,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [Color(0x619870C9), Color(0x009870C9)],
+                  ),
                 ),
               ),
-            ],
-            if (!_loading) ...[
-              const SizedBox(height: 20),
-              OutlinedButton(
-                onPressed: () {
-                  unawaited(_bootstrapMe(resetBackoff: true));
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white70),
+            ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: Color(0x14FFFFFF),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Color(0x40000000),
+                              blurRadius: 60,
+                              offset: Offset(0, 20),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 28,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Image(
+                                image: AssetImage('assets/icon.png'),
+                                width: 76,
+                                height: 76,
+                              ),
+                              const SizedBox(height: 18),
+                              const Text(
+                                'Narlun',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 32,
+                                  color: Color(0xFFF7EFFF),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Nearby chat is opening. This should only take a moment.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Color(0xFFD6C6EB),
+                                  height: 1.5,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              const SizedBox(
+                                width: 56,
+                                height: 56,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 4,
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              Text(
+                                _statusMessage,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFF7EFFF),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              if (_detailMessage != null) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  _detailMessage!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFFD6C6EB),
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ],
+                              if (!_loading) ...[
+                                const SizedBox(height: 20),
+                                OutlinedButton(
+                                  onPressed: () {
+                                    unawaited(_bootstrapMe(resetBackoff: true));
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    side: const BorderSide(
+                                      color: Color(0xB3FFFFFF),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 18,
+                                      vertical: 14,
+                                    ),
+                                  ),
+                                  child: const Text('Try again'),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-                child: const Text('Retry now'),
               ),
-            ],
+            ),
           ],
         ),
       ),

@@ -90,9 +90,14 @@ class ErrorInterceptor implements InterceptorContract {
   }) async {
     final showDialogs = response.request?.headers[silentErrorHeader] != '1';
     if (response is http.Response) {
-      return await check_response(response, (x) {
-        return jsonDecode((x as http.Response).body);
-      }, dialogService, showDialogs: showDialogs);
+      return await check_response(
+        response,
+        (x) {
+          return jsonDecode((x as http.Response).body);
+        },
+        dialogService,
+        showDialogs: showDialogs,
+      );
     }
     return response;
   }
@@ -219,8 +224,8 @@ class HttpService {
   }
 
   Future signout() async {
-    final pushEndpoint =
-        await push_subscription.readCurrentPushSubscriptionEndpoint();
+    final pushEndpoint = await push_subscription
+        .readCurrentPushSubscriptionEndpoint();
     try {
       await client.post(
         Uri.parse(baseurl + '/users/signout'),
@@ -235,7 +240,10 @@ class HttpService {
     }
   }
 
-  Future<SessionUser> fetch_me({bool silentErrors = false}) async {
+  Future<SessionUser> fetch_me({
+    bool silentErrors = false,
+    bool reconnectWebsocket = true,
+  }) async {
     try {
       final resp = await client.get(
         Uri.parse(baseurl + '/users/me'),
@@ -244,10 +252,12 @@ class HttpService {
       final body = SessionUser.fromJson(
         jsonDecode(resp.body) as Map<String, dynamic>,
       );
-      if (body.authenticated) {
+      if (body.authenticated && reconnectWebsocket) {
         await websocketService.reconnect();
       } else {
-        await clearLocalSession();
+        if (!body.authenticated) {
+          await clearLocalSession();
+        }
       }
       return body;
     } on UnauthorizedResponse {

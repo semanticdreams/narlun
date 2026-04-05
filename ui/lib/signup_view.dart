@@ -76,7 +76,7 @@ class SignupViewState extends State<SignupView> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Narlun',
+                  'narlun',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 50,

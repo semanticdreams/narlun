@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class NarlunAppBarTitle extends StatelessWidget {
   final String title;
 
-  const NarlunAppBarTitle({super.key, this.title = 'Narlun'});
+  const NarlunAppBarTitle({super.key, this.title = 'narlun'});
 
   @override
   Widget build(BuildContext context) {

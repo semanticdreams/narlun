@@ -39,7 +39,7 @@ class MyApp extends StatelessWidget {
       ),
       debugShowCheckedModeBanner: false,
       navigatorObservers: [errorReporter.createNavigatorObserver()],
-      title: 'Narlun',
+      title: 'narlun',
       theme: theme,
       onGenerateRoute: (RouteSettings settings) {
         Widget? pageView;

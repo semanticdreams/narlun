@@ -1,6 +1,6 @@
 
 const NARLUN_DEFAULT_NOTIFICATION = {
-  title: 'Narlun',
+  title: 'narlun',
   body: '',
   tag: 'narlun',
   icon: '/icons/Icon-192.png',

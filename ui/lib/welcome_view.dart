@@ -181,7 +181,7 @@ class _WelcomeState extends State<WelcomeView> {
                               ),
                               const SizedBox(height: 18),
                               const Text(
-                                'Narlun',
+                                'narlun',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w700,

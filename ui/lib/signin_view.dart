@@ -78,7 +78,7 @@ class SigninState extends State<SigninView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Narlun',
+                'narlun',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontWeight: FontWeight.bold,

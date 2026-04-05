@@ -37,4 +37,12 @@ void main() {
     );
     expect(resolveStartupLocation(Uri.parse('/signup'), me), '/signup');
   });
+
+  test('builds stable web routes for tabs, rooms, and invites', () {
+    expect(nearbyRoute(), '/nearby');
+    expect(roomsRoute(), '/rooms');
+    expect(roomsRouteWithOpenRoom(42), '/rooms?open_room=42');
+    expect(inviteQrRoute(), '/invite');
+    expect(inviteQrRoute(roomId: 7), '/invite?room_id=7');
+  });
 }

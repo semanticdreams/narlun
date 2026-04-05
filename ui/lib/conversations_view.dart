@@ -15,6 +15,7 @@ import 'me_model.dart';
 import 'messages_view.dart';
 import 'models.dart';
 import 'push_notifications_service.dart';
+import 'route_utils.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
 
@@ -114,7 +115,9 @@ class _ConversationsState extends State<ConversationsView> {
       if (!_loadingInitialRooms && !_reportedMissingInitialRoom) {
         _reportedMissingInitialRoom = true;
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(content: Text('That invite room is no longer available.')),
+          const SnackBar(
+            content: Text('That invite room is no longer available.'),
+          ),
         );
       }
       return;
@@ -141,8 +144,7 @@ class _ConversationsState extends State<ConversationsView> {
     super.initState();
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     httpService =
-        widget.httpService ??
-        Provider.of<HttpService>(context, listen: false);
+        widget.httpService ?? Provider.of<HttpService>(context, listen: false);
     installSuggestionTimer = Timer(_installSuggestionDelay, () {
       if (!mounted) {
         return;
@@ -176,11 +178,7 @@ class _ConversationsState extends State<ConversationsView> {
 
   @override
   Widget build(BuildContext context) {
-    final content = Consumer3<
-      MeModel,
-      InstallPromptService,
-      PushNotificationsService
-    >(
+    final content = Consumer3<MeModel, InstallPromptService, PushNotificationsService>(
       builder: (context, meModel, installPromptService, pushService, child) {
         final currentUser = meModel.data;
         return ListView(
@@ -222,7 +220,9 @@ class _ConversationsState extends State<ConversationsView> {
                                         if (!mounted) {
                                           return;
                                         }
-                                        if (isAlreadyPresentedActionError(error)) {
+                                        if (isAlreadyPresentedActionError(
+                                          error,
+                                        )) {
                                           return;
                                         }
                                         _showRefreshFailure(
@@ -286,8 +286,7 @@ class _ConversationsState extends State<ConversationsView> {
                               child: const Text('Install app'),
                             ),
                             TextButton(
-                              onPressed:
-                                  installPromptService.dismissSuggestion,
+                              onPressed: installPromptService.dismissSuggestion,
                               child: const Text('Not now'),
                             ),
                           ],
@@ -363,9 +362,9 @@ class _ConversationsState extends State<ConversationsView> {
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
@@ -396,13 +395,15 @@ class _ConversationsState extends State<ConversationsView> {
                           final roomDeleted = await Navigator.push<bool>(
                             context,
                             MaterialPageRoute(
-                              builder: (context) =>
-                                  MessagesView(
-                                    room: room,
-                                    me: currentUser,
-                                    httpService: httpService,
-                                    websocketService: websocketService,
-                                  ),
+                              settings: RouteSettings(
+                                name: roomsRouteWithOpenRoom(room.id),
+                              ),
+                              builder: (context) => MessagesView(
+                                room: room,
+                                me: currentUser,
+                                httpService: httpService,
+                                websocketService: websocketService,
+                              ),
                             ),
                           );
                           if (roomDeleted == true) {

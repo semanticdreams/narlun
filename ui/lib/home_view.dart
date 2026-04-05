@@ -11,6 +11,7 @@ import 'me_model.dart';
 import 'models.dart';
 import 'narlun_app_bar_title.dart';
 import 'nearby_users_view.dart';
+import 'route_utils.dart';
 
 class HomeView extends StatelessWidget {
   final int? initialTabIndex;
@@ -93,6 +94,22 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
       _activeTabIndex = controller.index;
     });
     writeStoredHomeTabIndex(controller.index);
+
+    final currentUri = currentRouteUri(context);
+    if (currentUri == null) {
+      return;
+    }
+    if (!const {'/home', '/nearby', '/rooms'}.contains(currentUri.path)) {
+      return;
+    }
+    final targetRoute = controller.index == 0 ? nearbyRoute() : roomsRoute();
+    final alreadyShowingTarget =
+        currentUri != null &&
+        currentUri.path == Uri.parse(targetRoute).path &&
+        (currentUri.path != '/rooms' || roomToOpenFromContext(context) == null);
+    if (!alreadyShowingTarget) {
+      Navigator.of(context).pushNamed(targetRoute);
+    }
   }
 
   Future<void> _openNearbyRoom(NearbyUser user, int roomId) async {
@@ -101,7 +118,6 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
       return;
     }
 
-    _tabController?.animateTo(1);
     final room = RoomSummary(
       id: roomId,
       isGroup: false,
@@ -119,6 +135,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     await Navigator.push(
       context,
       MaterialPageRoute(
+        settings: RouteSettings(name: roomsRouteWithOpenRoom(roomId)),
         builder: (context) => MessagesView(room: room, me: me),
       ),
     );

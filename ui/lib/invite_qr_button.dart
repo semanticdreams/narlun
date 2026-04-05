@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'invite_qr_view.dart';
 import 'models.dart';
+import 'route_utils.dart';
 
 class InviteQrButton extends StatelessWidget {
   final RoomSummary? room;
@@ -17,6 +18,7 @@ class InviteQrButton extends StatelessWidget {
       onPressed: () {
         Navigator.of(context).push(
           MaterialPageRoute(
+            settings: RouteSettings(name: inviteQrRoute(roomId: room?.id)),
             builder: (context) => InviteQrView(room: room),
           ),
         );

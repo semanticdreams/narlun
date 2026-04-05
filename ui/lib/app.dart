@@ -7,6 +7,7 @@ import 'signup_view.dart';
 import 'welcome_view.dart';
 import 'home_view.dart';
 import 'invite_accept_view.dart';
+import 'invite_qr_view.dart';
 import 'profile_view.dart';
 import 'frontend_error_reporter.dart';
 import 'me_model.dart';
@@ -94,6 +95,13 @@ class MyApp extends StatelessWidget {
               break;
             case '/signin':
               pageView = const SigninView();
+              break;
+            case '/invite':
+              pageView = InviteQrView(
+                roomId: int.tryParse(
+                  resolvedUri.queryParameters['room_id'] ?? '',
+                ),
+              );
               break;
           }
           if (pageView == null &&

@@ -78,7 +78,9 @@ void main() {
     expect(httpService.createdInviteRoomId, isNull);
   });
 
-  testWidgets('room invite QR view requests a room-scoped invite', (tester) async {
+  testWidgets('room invite QR view requests a room-scoped invite', (
+    tester,
+  ) async {
     final httpService = _FakeInviteHttpService()
       ..inviteToCreate = InviteLink(
         token: 'room-token',
@@ -113,6 +115,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Invite to alice, bob'), findsWidgets);
+    expect(httpService.createdInviteRoomId, 7);
+  });
+
+  testWidgets('room invite QR view can be restored from a room id route', (
+    tester,
+  ) async {
+    final httpService = _FakeInviteHttpService()
+      ..inviteToCreate = InviteLink(
+        token: 'room-token',
+        expiresAt: DateTime.parse('2026-04-05T10:00:00.000Z'),
+        roomId: 7,
+      );
+
+    await tester.pumpWidget(
+      Provider<HttpService>.value(
+        value: httpService,
+        child: const MaterialApp(home: InviteQrView(roomId: 7)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invite to this conversation'), findsWidgets);
     expect(httpService.createdInviteRoomId, 7);
   });
 

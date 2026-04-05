@@ -12,8 +12,9 @@ import 'route_utils.dart';
 
 class InviteQrView extends StatefulWidget {
   final RoomSummary? room;
+  final int? roomId;
 
-  const InviteQrView({super.key, this.room});
+  const InviteQrView({super.key, this.room, this.roomId});
 
   @override
   State<InviteQrView> createState() => _InviteQrViewState();
@@ -45,7 +46,9 @@ class _InviteQrViewState extends State<InviteQrView> {
       _invite = null;
     });
     try {
-      final invite = await _httpService.create_invite(roomId: widget.room?.id);
+      final invite = await _httpService.create_invite(
+        roomId: widget.room?.id ?? widget.roomId,
+      );
       if (!mounted) {
         return;
       }
@@ -73,9 +76,7 @@ class _InviteQrViewState extends State<InviteQrView> {
     }
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(content: Text('Invite link copied.')),
-      );
+      ..showSnackBar(const SnackBar(content: Text('Invite link copied.')));
   }
 
   @override
@@ -83,13 +84,16 @@ class _InviteQrViewState extends State<InviteQrView> {
     final me = Provider.of<MeModel?>(context)?.data;
     final roomLabel = widget.room == null
         ? null
-        : (me == null ? (widget.room!.name ?? '') : widget.room!.displayTitleFor(me)).trim();
-    final title = widget.room == null
+        : (me == null
+                  ? (widget.room!.name ?? '')
+                  : widget.room!.displayTitleFor(me))
+              .trim();
+    final title = widget.room == null && widget.roomId == null
         ? 'Invite someone'
         : (roomLabel?.isNotEmpty ?? false)
-            ? 'Invite to $roomLabel'
-            : 'Invite to this conversation';
-    final description = widget.room == null
+        ? 'Invite to $roomLabel'
+        : 'Invite to this conversation';
+    final description = widget.room == null && widget.roomId == null
         ? 'Scan this code to open Narlun. New people can choose a username and land straight in a room with you.'
         : 'Scan this code to open Narlun. New people can choose a username and land straight in this conversation.';
 
@@ -106,10 +110,7 @@ class _InviteQrViewState extends State<InviteQrView> {
           const SizedBox(height: 8),
           const Text('Try again in a moment.'),
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _loadInvite,
-            child: const Text('Try again'),
-          ),
+          FilledButton(onPressed: _loadInvite, child: const Text('Try again')),
         ],
       );
     } else if (_invite == null) {

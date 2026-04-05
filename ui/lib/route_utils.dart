@@ -32,10 +32,25 @@ int? roomToOpenFromContext(BuildContext context) {
   return int.tryParse(openRoom);
 }
 
-String roomsRouteWithOpenRoom(int roomId) {
+String nearbyRoute() {
+  return '/nearby';
+}
+
+String roomsRoute({int? openRoom}) {
   return Uri(
     path: '/rooms',
-    queryParameters: {'open_room': '$roomId'},
+    queryParameters: openRoom == null ? null : {'open_room': '$openRoom'},
+  ).toString();
+}
+
+String roomsRouteWithOpenRoom(int roomId) {
+  return roomsRoute(openRoom: roomId);
+}
+
+String inviteQrRoute({int? roomId}) {
+  return Uri(
+    path: '/invite',
+    queryParameters: roomId == null ? null : {'room_id': '$roomId'},
   ).toString();
 }
 

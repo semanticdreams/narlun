@@ -2,18 +2,14 @@
 
 import 'dart:async';
 import 'dart:html' as html;
-import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'avatar_upload_plan.dart';
 import 'browser_picker_flow.dart';
 
-const _maxUploadBytes = 2 * 1024 * 1024;
-const _maxUploadPixels = 20 * 1000 * 1000;
 const _initialJpegQuality = 0.85;
-const _minimumJpegQuality = 0.55;
+const _minimumJpegQuality = 0.35;
 const _jpegQualityStep = 0.1;
-const _resizeStep = 0.85;
-const _minimumUploadDimension = 256;
 
 Future<Uint8List?> pickImageBytes() async {
   final input = html.FileUploadInputElement()
@@ -94,62 +90,46 @@ Future<Uint8List> _prepareImageForUpload(
     await loadCompleter.future;
     final sourceWidth = image.naturalWidth;
     final sourceHeight = image.naturalHeight;
-    final sourcePixels = sourceWidth * sourceHeight;
     if (sourceWidth <= 0 || sourceHeight <= 0) {
       throw StateError('Could not read the selected image.');
     }
 
-    if (rawBytes.length <= _maxUploadBytes && sourcePixels <= _maxUploadPixels) {
+    final plan = createAvatarUploadPlan(
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      rawBytes: rawBytes.length,
+    );
+    if (plan == null) {
       return rawBytes;
     }
 
     final preserveAlpha = _mimeTypeMayContainAlpha(mimeType);
-    final pixelScale = sourcePixels > _maxUploadPixels
-        ? math.sqrt(_maxUploadPixels / sourcePixels)
-        : 1.0;
-    var targetWidth = math.max(1, (sourceWidth * pixelScale).round());
-    var targetHeight = math.max(1, (sourceHeight * pixelScale).round());
     Uint8List? bestBytes;
+    AvatarUploadPlan? currentPlan = plan;
 
-    while (true) {
+    while (currentPlan != null) {
       final candidate = await _encodePreparedImage(
         image,
-        width: targetWidth,
-        height: targetHeight,
+        cropLeft: currentPlan.cropLeft,
+        cropTop: currentPlan.cropTop,
+        cropSize: currentPlan.cropSize,
+        targetSize: currentPlan.targetSize,
         preserveAlpha: preserveAlpha,
       );
       if (candidate != null &&
           (bestBytes == null || candidate.length < bestBytes.length)) {
         bestBytes = candidate;
       }
-      if (candidate != null && candidate.length <= _maxUploadBytes) {
+      if (candidate != null && candidate.length <= avatarUploadTargetBytes) {
         return candidate;
       }
-
-      if (targetWidth <= _minimumUploadDimension ||
-          targetHeight <= _minimumUploadDimension) {
-        break;
-      }
-
-      final nextWidth = math.max(
-        _minimumUploadDimension,
-        (targetWidth * _resizeStep).round(),
-      );
-      final nextHeight = math.max(
-        _minimumUploadDimension,
-        (targetHeight * _resizeStep).round(),
-      );
-      if (nextWidth == targetWidth && nextHeight == targetHeight) {
-        break;
-      }
-      targetWidth = nextWidth;
-      targetHeight = nextHeight;
+      currentPlan = nextAvatarUploadPlan(currentPlan);
     }
 
-    if (bestBytes != null && bestBytes.length < rawBytes.length) {
+    if (bestBytes != null && bestBytes.length <= avatarUploadTargetBytes) {
       return bestBytes;
     }
-    return rawBytes;
+    throw StateError('Could not prepare the selected picture for upload.');
   } finally {
     html.Url.revokeObjectUrl(objectUrl);
   }
@@ -163,16 +143,28 @@ bool _mimeTypeMayContainAlpha(String mimeType) {
 
 Future<Uint8List?> _encodePreparedImage(
   html.ImageElement image, {
-  required int width,
-  required int height,
+  required int cropLeft,
+  required int cropTop,
+  required int cropSize,
+  required int targetSize,
   required bool preserveAlpha,
 }) async {
-  final canvas = html.CanvasElement(width: width, height: height);
+  final canvas = html.CanvasElement(width: targetSize, height: targetSize);
   final context = canvas.context2D;
   context
     ..imageSmoothingEnabled = true
-    ..clearRect(0, 0, width.toDouble(), height.toDouble())
-    ..drawImageScaled(image, 0, 0, width.toDouble(), height.toDouble());
+    ..clearRect(0, 0, targetSize.toDouble(), targetSize.toDouble())
+    ..drawImageScaledFromSource(
+      image,
+      cropLeft,
+      cropTop,
+      cropSize,
+      cropSize,
+      0,
+      0,
+      targetSize,
+      targetSize,
+    );
 
   if (preserveAlpha) {
     final blob = await canvas.toBlob('image/png');
@@ -191,7 +183,7 @@ Future<Uint8List?> _encodePreparedImage(
     if (bestBytes == null || encoded.length < bestBytes.length) {
       bestBytes = encoded;
     }
-    if (encoded.length <= _maxUploadBytes) {
+    if (encoded.length <= avatarUploadTargetBytes) {
       return encoded;
     }
   }

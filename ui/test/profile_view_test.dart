@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
+import 'package:narlun/alert_response.dart';
 import 'package:narlun/dialog_service.dart';
 import 'package:narlun/http.dart';
 import 'package:narlun/install_prompt_service.dart';
@@ -154,6 +155,24 @@ class FakePushNotificationsService extends PushNotificationsService {
   Future<void> syncSession(SessionUser? user) async {}
 }
 
+class RecordingDialogService extends DialogService {
+  String? lastTitle;
+  String? lastDescription;
+  int callCount = 0;
+
+  @override
+  Future<AlertResponse> showDialog({
+    required String title,
+    required String description,
+    String buttonTitle = 'OK',
+  }) async {
+    lastTitle = title;
+    lastDescription = description;
+    callCount += 1;
+    return AlertResponse(confirmed: true);
+  }
+}
+
 class _ProfileRouteHost extends StatefulWidget {
   const _ProfileRouteHost();
 
@@ -254,6 +273,55 @@ void main() {
 
     expect(installPromptService.requestInstallCalls, 1);
     expect(find.text('Narlun is installing.'), findsOneWidget);
+  });
+
+  testWidgets('shows a generic upload error when picture preparation fails', (
+    tester,
+  ) async {
+    final installPromptService = FakeInstallPromptService(available: false);
+    final pushNotificationsService = FakePushNotificationsService();
+    final httpService = FakeProfileHttpService();
+    final dialogService = RecordingDialogService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(
+                  authenticated: true,
+                  id: 1,
+                  username: 'alice',
+                  status: 'busy',
+                  hasPassword: true,
+                ),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ProfileView(
+            dialogService: dialogService,
+            imagePicker: () async =>
+                throw StateError('Could not prepare the selected picture.'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Upload picture'));
+    await tester.pumpAndSettle();
+
+    expect(dialogService.callCount, 1);
+    expect(dialogService.lastTitle, 'Upload failed');
+    expect(dialogService.lastDescription, 'Upload failed. Try again later.');
   });
 
   testWidgets('shows notification controls in profile when supported', (

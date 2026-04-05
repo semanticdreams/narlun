@@ -283,10 +283,10 @@ class _ProfileViewState extends State<ProfileView> {
                             } catch (error) {
                               await showActionErrorDialog(
                                 resolvedDialogService,
-                                title: 'Could not upload picture',
+                                title: 'Upload failed',
                                 error: error,
                                 fallbackDescription:
-                                    'The picture could not be uploaded right now. Try again.',
+                                    'Upload failed. Try again later.',
                               );
                             }
                           },

@@ -19,6 +19,8 @@ import 'session_actions.dart';
 import 'websocket.dart';
 
 class NearbyUsersView extends StatefulWidget {
+  static const defaultBackgroundRefreshInterval = Duration(seconds: 45);
+
   final FutureOr<void> Function(NearbyUser user, int roomId) onUserJoined;
   final HttpService? httpService;
   final DialogService? dialogService;
@@ -26,6 +28,7 @@ class NearbyUsersView extends StatefulWidget {
   final WebsocketService? websocketService;
   final NearbyFeedModel? nearbyFeedModel;
   final bool autoCheckin;
+  final Duration backgroundRefreshInterval;
 
   const NearbyUsersView({
     super.key,
@@ -36,6 +39,7 @@ class NearbyUsersView extends StatefulWidget {
     this.websocketService,
     this.nearbyFeedModel,
     this.autoCheckin = true,
+    this.backgroundRefreshInterval = defaultBackgroundRefreshInterval,
   });
 
   @override
@@ -50,8 +54,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   late final NearbyFeedModel nearbyFeedModel;
   bool _ownsNearbyFeedModel = false;
   StreamSubscription? _nearbyChangedSubscription;
-  StreamSubscription? _roomsChangedSubscription;
   StreamSubscription? _connectionEventsSubscription;
+  Timer? _backgroundRefreshTimer;
 
   @override
   void initState() {
@@ -78,13 +82,9 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     _meModel?.addListener(_handleSessionChanged);
     _syncFeedSession();
     _maybeStartInitialCheckin();
+    _syncBackgroundRefreshTimer();
     unawaited(websocketService.ensureConnected());
     _nearbyChangedSubscription = websocketService.nearbyChangedStream().listen((
-      _,
-    ) {
-      _refreshIfActive();
-    });
-    _roomsChangedSubscription = websocketService.roomsChangedStream().listen((
       _,
     ) {
       _refreshIfActive();
@@ -101,7 +101,11 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   @override
   void didUpdateWidget(covariant NearbyUsersView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _maybeStartInitialCheckin();
+    if (oldWidget.autoCheckin != widget.autoCheckin ||
+        oldWidget.backgroundRefreshInterval !=
+            widget.backgroundRefreshInterval) {
+      _syncBackgroundRefreshTimer();
+    }
     if (!oldWidget.autoCheckin && widget.autoCheckin) {
       unawaited(_ensureWarmNearby());
     }
@@ -135,6 +139,17 @@ class _NearbyUsersState extends State<NearbyUsersView> {
 
   void _handleSessionChanged() {
     _syncFeedSession();
+  }
+
+  void _syncBackgroundRefreshTimer() {
+    _backgroundRefreshTimer?.cancel();
+    if (!widget.autoCheckin) {
+      return;
+    }
+    _backgroundRefreshTimer = Timer.periodic(
+      widget.backgroundRefreshInterval,
+      (_) => _refreshIfActive(),
+    );
   }
 
   void _syncFeedSession() {
@@ -312,8 +327,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
 
   @override
   void dispose() {
+    _backgroundRefreshTimer?.cancel();
     _nearbyChangedSubscription?.cancel();
-    _roomsChangedSubscription?.cancel();
     _connectionEventsSubscription?.cancel();
     _meModel?.removeListener(_handleSessionChanged);
     if (_ownsNearbyFeedModel) {

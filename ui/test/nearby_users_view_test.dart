@@ -173,6 +173,8 @@ Widget _buildNearbyApp({
   required _FakeWebsocketService websocketService,
   required Future<void> Function(NearbyUser user, int roomId) onUserJoined,
   bool autoCheckin = true,
+  Duration backgroundRefreshInterval =
+      NearbyUsersView.defaultBackgroundRefreshInterval,
   String initialRoute = '/nearby',
 }) {
   return Provider<HttpService>.value(
@@ -192,6 +194,7 @@ Widget _buildNearbyApp({
             locationService: locationService,
             websocketService: websocketService,
             autoCheckin: autoCheckin,
+            backgroundRefreshInterval: backgroundRefreshInterval,
             onUserJoined: onUserJoined,
           ),
         },
@@ -546,6 +549,60 @@ void main() {
     expect(find.text('Old message'), findsNothing);
   });
 
+  testWidgets('does not refresh nearby activity on room list changes', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'user',
+          distance: 120,
+          user: NearbyUser(
+            id: 2,
+            username: 'bob',
+            distance: 120,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Nearby',
+          ),
+        ),
+      ];
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        onUserJoined: (_, __) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 1);
+
+    httpService.nearbyItems = [
+      NearbyItem(
+        type: 'user',
+        distance: 120,
+        user: NearbyUser(
+          id: 2,
+          username: 'should not appear yet',
+          distance: 120,
+          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          status: 'Changed elsewhere',
+        ),
+      ),
+    ];
+
+    websocketService.emitRoomsChanged();
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 1);
+    expect(find.text('bob'), findsOneWidget);
+    expect(find.text('should not appear yet'), findsNothing);
+  });
+
   testWidgets(
     'background nearby refresh failures update inline status without snackbar noise',
     (tester) async {
@@ -691,6 +748,61 @@ void main() {
       expect(find.text('bob'), findsNothing);
     },
   );
+
+  testWidgets('nearby refreshes periodically in the background', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..nearbyItems = [
+        NearbyItem(
+          type: 'user',
+          distance: 120,
+          user: NearbyUser(
+            id: 2,
+            username: 'bob',
+            distance: 120,
+            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            status: 'Nearby',
+          ),
+        ),
+      ];
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        backgroundRefreshInterval: const Duration(seconds: 30),
+        onUserJoined: (_, __) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 1);
+
+    httpService.nearbyItems = [
+      NearbyItem(
+        type: 'user',
+        distance: 120,
+        user: NearbyUser(
+          id: 2,
+          username: 'robert',
+          distance: 120,
+          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          status: 'Updated nearby',
+        ),
+      ),
+    ];
+
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 2);
+    expect(find.text('robert'), findsOneWidget);
+    expect(find.text('bob'), findsNothing);
+  });
 
   testWidgets('standalone nearby view clears cached data when session resets', (
     tester,

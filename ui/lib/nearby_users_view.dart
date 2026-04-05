@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
@@ -15,6 +14,7 @@ import 'location_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'nearby_feed_model.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
 
@@ -24,6 +24,7 @@ class NearbyUsersView extends StatefulWidget {
   final DialogService? dialogService;
   final LocationService? locationService;
   final WebsocketService? websocketService;
+  final NearbyFeedModel? nearbyFeedModel;
   final bool autoCheckin;
 
   const NearbyUsersView({
@@ -33,6 +34,7 @@ class NearbyUsersView extends StatefulWidget {
     this.dialogService,
     this.locationService,
     this.websocketService,
+    this.nearbyFeedModel,
     this.autoCheckin = true,
   });
 
@@ -41,15 +43,12 @@ class NearbyUsersView extends StatefulWidget {
 }
 
 class _NearbyUsersState extends State<NearbyUsersView> {
+  MeModel? _meModel;
   late final HttpService httpService;
   late final DialogService dialogService;
-  late final LocationService locationService;
   late final WebsocketService websocketService;
-
-  final List<NearbyItem> nearbyItems = [];
-  bool _loading = false;
-  String _statusMessage = 'Checking your location...';
-  bool _didInitialCheckin = false;
+  late final NearbyFeedModel nearbyFeedModel;
+  bool _ownsNearbyFeedModel = false;
   StreamSubscription? _nearbyChangedSubscription;
   StreamSubscription? _roomsChangedSubscription;
   StreamSubscription? _connectionEventsSubscription;
@@ -60,8 +59,24 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     httpService =
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
     dialogService = widget.dialogService ?? locator<DialogService>();
-    locationService = widget.locationService ?? createLocationService();
     websocketService = widget.websocketService ?? locator<WebsocketService>();
+    final providedNearbyFeedModel = Provider.of<NearbyFeedModel?>(
+      context,
+      listen: false,
+    );
+    nearbyFeedModel =
+        widget.nearbyFeedModel ??
+        providedNearbyFeedModel ??
+        NearbyFeedModel(
+          httpService: httpService,
+          locationService: widget.locationService ?? createLocationService(),
+        );
+    _ownsNearbyFeedModel =
+        widget.nearbyFeedModel == null && providedNearbyFeedModel == null;
+    final meModel = Provider.of<MeModel>(context, listen: false);
+    _meModel = meModel;
+    _meModel?.addListener(_handleSessionChanged);
+    _syncFeedSession();
     _maybeStartInitialCheckin();
     unawaited(websocketService.ensureConnected());
     _nearbyChangedSubscription = websocketService.nearbyChangedStream().listen((
@@ -86,19 +101,29 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   @override
   void didUpdateWidget(covariant NearbyUsersView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final hadInitialCheckin = _didInitialCheckin;
     _maybeStartInitialCheckin();
-    if (!oldWidget.autoCheckin && widget.autoCheckin && hadInitialCheckin) {
-      unawaited(checkin());
+    if (!oldWidget.autoCheckin && widget.autoCheckin) {
+      unawaited(_ensureWarmNearby());
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final meModel = Provider.of<MeModel>(context);
+    if (!identical(_meModel, meModel)) {
+      _meModel?.removeListener(_handleSessionChanged);
+      _meModel = meModel;
+      _meModel?.addListener(_handleSessionChanged);
+      _syncFeedSession();
     }
   }
 
   void _maybeStartInitialCheckin() {
-    if (!widget.autoCheckin || _didInitialCheckin) {
+    if (!widget.autoCheckin) {
       return;
     }
-    _didInitialCheckin = true;
-    unawaited(checkin());
+    unawaited(_ensureWarmNearby());
   }
 
   void _refreshIfActive() {
@@ -108,14 +133,12 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     unawaited(checkin(showErrorFeedback: false));
   }
 
-  void _setStatus(String status, {required bool loading}) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _loading = loading;
-      _statusMessage = status;
-    });
+  void _handleSessionChanged() {
+    _syncFeedSession();
+  }
+
+  void _syncFeedSession() {
+    nearbyFeedModel.syncSession(_meModel?.data);
   }
 
   Future<void> _showLocationProblem(String description) async {
@@ -124,11 +147,29 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       'Nearby check-in could not continue because location is unavailable.',
       details: {'description': description},
     );
-    _setStatus(description, loading: false);
     await dialogService.showDialog(
       title: 'Location needed',
       description: description,
     );
+  }
+
+  Future<void> _ensureWarmNearby() async {
+    try {
+      await nearbyFeedModel.ensureWarm();
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return;
+      }
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } on NearbyLocationProblem {
+      return;
+    } catch (_) {
+      return;
+    }
   }
 
   Future<void> checkin({bool showErrorFeedback = true}) async {
@@ -136,7 +177,6 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     if (me.data == null || !me.data!.authenticated) {
       return;
     }
-    _setStatus('Checking your location...', loading: true);
     logFrontendDiagnostic(
       'nearby_checkin_started',
       'Started nearby check-in.',
@@ -146,53 +186,12 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       },
     );
 
-    if (!(await locationService.isLocationServiceEnabled())) {
-      nearbyItems.clear();
-      await _showLocationProblem('Location services are not enabled.');
-      return;
-    }
-
-    var permission = await locationService.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await locationService.requestPermission();
-      if (permission == LocationPermission.denied) {
-        nearbyItems.clear();
-        await _showLocationProblem('Location access was denied.');
-        return;
-      }
-    }
-    if (permission == LocationPermission.deniedForever) {
-      nearbyItems.clear();
-      await _showLocationProblem(
-        'Location access is permanently denied in this browser.',
-      );
-      return;
-    }
-
     try {
-      final loc = await locationService.getCurrentPosition();
-      logFrontendDiagnostic(
-        'nearby_location_acquired',
-        'Acquired browser location for nearby check-in.',
-        details: {'latitude': loc.latitude, 'longitude': loc.longitude},
-      );
-      final resp = await httpService.checkin(loc.latitude, loc.longitude);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        nearbyItems
-          ..clear()
-          ..addAll(resp);
-        _loading = false;
-        _statusMessage = nearbyItems.isEmpty
-            ? 'Nobody nearby right now. Pull to refresh again soon.'
-            : 'Tap people to open a room, or rooms to request access.';
-      });
+      await nearbyFeedModel.refresh();
       logFrontendDiagnostic(
         'nearby_checkin_completed',
         'Completed nearby check-in.',
-        details: {'result_count': nearbyItems.length},
+        details: {'result_count': nearbyFeedModel.nearbyItems.length},
       );
     } on UnauthorizedResponse {
       if (!mounted) {
@@ -203,8 +202,12 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         httpService: httpService,
         description: 'Your session has ended. Please sign in again.',
       );
+    } on NearbyLocationProblem catch (problem) {
+      if (!showErrorFeedback) {
+        return;
+      }
+      await _showLocationProblem(problem.description);
     } catch (error) {
-      nearbyItems.clear();
       logFrontendDiagnostic(
         'nearby_checkin_failed',
         'Nearby check-in failed.',
@@ -212,10 +215,6 @@ class _NearbyUsersState extends State<NearbyUsersView> {
           'error': error.toString(),
           'show_error_feedback': showErrorFeedback,
         },
-      );
-      _setStatus(
-        'Could not refresh nearby activity. Pull to try again.',
-        loading: false,
       );
       if (!showErrorFeedback) {
         return;
@@ -278,19 +277,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        for (var i = 0; i < nearbyItems.length; i++) {
-          final candidate = nearbyItems[i];
-          if (candidate.type == 'room' &&
-              candidate.room?.room.id == room.room.id) {
-            nearbyItems[i] = NearbyItem(
-              type: 'room',
-              distance: candidate.distance,
-              room: candidate.room?.copyWith(joinRequested: true),
-            );
-          }
-        }
-      });
+      nearbyFeedModel.markRoomJoinRequested(room.room.id);
       ScaffoldMessenger.maybeOf(
         context,
       )?.showSnackBar(const SnackBar(content: Text('Join request sent.')));
@@ -328,6 +315,10 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     _nearbyChangedSubscription?.cancel();
     _roomsChangedSubscription?.cancel();
     _connectionEventsSubscription?.cancel();
+    _meModel?.removeListener(_handleSessionChanged);
+    if (_ownsNearbyFeedModel) {
+      nearbyFeedModel.dispose();
+    }
     super.dispose();
   }
 
@@ -435,41 +426,49 @@ class _NearbyUsersState extends State<NearbyUsersView> {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: RefreshIndicator(
-        onRefresh: checkin,
-        child: ScrollConfiguration(
-          behavior: ScrollConfiguration.of(context).copyWith(
-            dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
-          ),
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Row(
-                  children: [
-                    if (_loading)
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    if (_loading) const SizedBox(width: 12),
-                    Expanded(child: Text(_statusMessage)),
-                  ],
-                ),
+    return ListenableBuilder(
+      listenable: nearbyFeedModel,
+      builder: (context, child) {
+        final nearbyItems = nearbyFeedModel.nearbyItems;
+        final loading = nearbyFeedModel.loading;
+        final statusMessage = nearbyFeedModel.statusMessage;
+        return Material(
+          color: Colors.transparent,
+          child: RefreshIndicator(
+            onRefresh: checkin,
+            child: ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(
+                dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse},
               ),
-              for (final item in nearbyItems)
-                if (item.type == 'user' && item.user != null)
-                  _buildUserTile(item.user!)
-                else if (item.type == 'room' && item.room != null)
-                  _buildRoomTile(item.room!),
-            ],
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: [
+                        if (loading)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        if (loading) const SizedBox(width: 12),
+                        Expanded(child: Text(statusMessage)),
+                      ],
+                    ),
+                  ),
+                  for (final item in nearbyItems)
+                    if (item.type == 'user' && item.user != null)
+                      _buildUserTile(item.user!)
+                    else if (item.type == 'room' && item.room != null)
+                      _buildRoomTile(item.room!),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

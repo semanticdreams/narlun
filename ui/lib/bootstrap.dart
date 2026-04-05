@@ -10,11 +10,15 @@ import 'config.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'install_prompt_service.dart';
+import 'location_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'nearby_feed_model.dart';
 import 'push_notifications_service.dart';
 import 'push_notifications_session_bridge.dart';
+import 'rooms_feed_model.dart';
+import 'feed_session_bridge.dart';
 
 Object? _e2eSemanticsHandle;
 FrontendErrorReporter? _frontendErrorReporter;
@@ -90,12 +94,24 @@ Widget buildNarlunApp({SessionUser? initialSessionUser}) {
           apiBaseUrl: Environment().config.apiUrl,
         ),
       ),
+      ChangeNotifierProvider<NearbyFeedModel>(
+        create: (context) => NearbyFeedModel(
+          httpService: context.read<HttpService>(),
+          locationService: createLocationService(),
+        ),
+      ),
+      ChangeNotifierProvider<RoomsFeedModel>(
+        create: (context) =>
+            RoomsFeedModel(httpService: context.read<HttpService>()),
+      ),
       ChangeNotifierProvider<MeModel>.value(value: meModel),
     ],
-    child: PushNotificationsSessionBridge(
-      child: MyApp(
-        errorReporter: errorReporter,
-        theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+    child: FeedSessionBridge(
+      child: PushNotificationsSessionBridge(
+        child: MyApp(
+          errorReporter: errorReporter,
+          theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+        ),
       ),
     ),
   );

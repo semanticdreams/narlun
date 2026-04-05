@@ -16,6 +16,7 @@ import 'package:narlun/me_model.dart';
 import 'package:narlun/messages_view.dart';
 import 'package:narlun/models.dart';
 import 'package:narlun/push_notifications_service.dart';
+import 'package:narlun/rooms_feed_model.dart';
 import 'package:narlun/websocket.dart';
 
 class _DummyHttpClient extends http.BaseClient {
@@ -656,4 +657,197 @@ void main() {
       expect(find.text('bob'), findsNothing);
     },
   );
+
+  testWidgets(
+    'revisiting rooms keeps cached data visible and refreshes stale summaries in the background',
+    (tester) async {
+      final websocketService = FakeRoomsWebsocketService();
+      final httpService = FakeRoomsHttpService(
+        websocketService: websocketService,
+        initialResponses: [
+          [
+            RoomSummary(
+              id: 5,
+              isGroup: false,
+              updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              participants: const [
+                RoomParticipant(id: 1, username: 'me'),
+                RoomParticipant(id: 2, username: 'bob'),
+              ],
+            ),
+          ],
+          [
+            RoomSummary(
+              id: 5,
+              isGroup: false,
+              updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
+              participants: const [
+                RoomParticipant(id: 1, username: 'me'),
+                RoomParticipant(id: 2, username: 'robert'),
+              ],
+            ),
+          ],
+        ],
+      );
+      final installPromptService = FakeInstallPromptService();
+      final pushNotificationsService = FakePushNotificationsService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final roomsFeedModel =
+          RoomsFeedModel(httpService: httpService, now: () => now)..syncSession(
+            const SessionUser(authenticated: true, id: 1, username: 'me'),
+          );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider<InstallPromptService>.value(
+              value: installPromptService,
+            ),
+            ChangeNotifierProvider<PushNotificationsService>.value(
+              value: pushNotificationsService,
+            ),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            home: _RoomsRemountHarness(
+              child: ConversationsView(
+                httpService: httpService,
+                websocketService: websocketService,
+                showChrome: false,
+                roomsFeedModel: roomsFeedModel,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('bob'), findsOneWidget);
+      expect(httpService.getRoomsCalls, 1);
+
+      await tester.tap(find.text('Hide screen'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Show screen'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('bob'), findsOneWidget);
+      expect(find.text('robert'), findsNothing);
+      expect(httpService.getRoomsCalls, 1);
+
+      await tester.tap(find.text('Hide screen'));
+      await tester.pumpAndSettle();
+      now = now.add(
+        RoomsFeedModel.refreshStaleAfter + const Duration(seconds: 1),
+      );
+
+      await tester.tap(find.text('Show screen'));
+      await tester.pump();
+
+      expect(find.text('bob'), findsOneWidget);
+      expect(find.text('robert'), findsNothing);
+
+      await tester.pumpAndSettle();
+
+      expect(httpService.getRoomsCalls, 2);
+      expect(find.text('robert'), findsOneWidget);
+      expect(find.text('bob'), findsNothing);
+    },
+  );
+
+  testWidgets('standalone rooms view clears cached data when session resets', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+      initialResponses: [
+        [
+          RoomSummary(
+            id: 5,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'bob'),
+            ],
+          ),
+        ],
+      ],
+    );
+    final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
+    final meModel = MeModel()
+      ..setData(const SessionUser(authenticated: true, id: 1, username: 'me'));
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider<MeModel>.value(value: meModel),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('bob'), findsOneWidget);
+
+    meModel.reset();
+    await tester.pumpAndSettle();
+
+    expect(find.text('bob'), findsNothing);
+    expect(find.text('No rooms yet'), findsOneWidget);
+  });
+}
+
+class _RoomsRemountHarness extends StatefulWidget {
+  const _RoomsRemountHarness({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_RoomsRemountHarness> createState() => _RoomsRemountHarnessState();
+}
+
+class _RoomsRemountHarnessState extends State<_RoomsRemountHarness> {
+  var _showScreen = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        children: [
+          FilledButton(
+            onPressed: () {
+              setState(() {
+                _showScreen = !_showScreen;
+              });
+            },
+            child: Text(_showScreen ? 'Hide screen' : 'Show screen'),
+          ),
+          Expanded(
+            child: _showScreen ? widget.child : const Text('Rooms hidden'),
+          ),
+        ],
+      ),
+    );
+  }
 }

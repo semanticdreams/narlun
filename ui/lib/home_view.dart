@@ -4,13 +4,16 @@ import 'package:provider/provider.dart';
 import 'appbar_avatar.dart';
 import 'conversations_view.dart';
 import 'home_tab_storage.dart';
+import 'http.dart';
 import 'invite_qr_button.dart';
 import 'location_service.dart';
 import 'messages_view.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'nearby_feed_model.dart';
 import 'narlun_app_bar_title.dart';
 import 'nearby_users_view.dart';
+import 'rooms_feed_model.dart';
 import 'route_utils.dart';
 
 class HomeView extends StatelessWidget {
@@ -61,10 +64,51 @@ class _HomeScaffold extends StatefulWidget {
 class _HomeScaffoldState extends State<_HomeScaffold> {
   TabController? _tabController;
   int _activeTabIndex = 0;
+  MeModel? _meModel;
+  late final NearbyFeedModel _nearbyFeedModel;
+  late final RoomsFeedModel _roomsFeedModel;
+  bool _ownsNearbyFeedModel = false;
+  bool _ownsRoomsFeedModel = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final httpService = Provider.of<HttpService>(context, listen: false);
+    final providedNearbyFeedModel = Provider.of<NearbyFeedModel?>(
+      context,
+      listen: false,
+    );
+    final providedRoomsFeedModel = Provider.of<RoomsFeedModel?>(
+      context,
+      listen: false,
+    );
+    _nearbyFeedModel =
+        providedNearbyFeedModel ??
+        NearbyFeedModel(
+          httpService: httpService,
+          locationService:
+              widget.nearbyLocationService ?? createLocationService(),
+        );
+    _roomsFeedModel =
+        providedRoomsFeedModel ?? RoomsFeedModel(httpService: httpService);
+    _ownsNearbyFeedModel = providedNearbyFeedModel == null;
+    _ownsRoomsFeedModel = providedRoomsFeedModel == null;
+    final meModel = Provider.of<MeModel>(context, listen: false);
+    _meModel = meModel;
+    _meModel?.addListener(_handleSessionChanged);
+    _syncFeedSessions();
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final meModel = Provider.of<MeModel>(context);
+    if (!identical(_meModel, meModel)) {
+      _meModel?.removeListener(_handleSessionChanged);
+      _meModel = meModel;
+      _meModel?.addListener(_handleSessionChanged);
+      _syncFeedSessions();
+    }
     final controller = DefaultTabController.of(context);
     if (_tabController == controller) {
       return;
@@ -79,7 +123,24 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
   @override
   void dispose() {
     _tabController?.removeListener(_handleTabChanged);
+    _meModel?.removeListener(_handleSessionChanged);
+    if (_ownsNearbyFeedModel) {
+      _nearbyFeedModel.dispose();
+    }
+    if (_ownsRoomsFeedModel) {
+      _roomsFeedModel.dispose();
+    }
     super.dispose();
+  }
+
+  void _handleSessionChanged() {
+    _syncFeedSessions();
+  }
+
+  void _syncFeedSessions() {
+    final session = _meModel?.data;
+    _nearbyFeedModel.syncSession(session);
+    _roomsFeedModel.syncSession(session);
   }
 
   void _handleTabChanged() {
@@ -160,11 +221,13 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
           NearbyUsersView(
             autoCheckin: _activeTabIndex == 0,
             locationService: widget.nearbyLocationService,
+            nearbyFeedModel: _nearbyFeedModel,
             onUserJoined: _openNearbyRoom,
           ),
           widget.roomsView ??
               ConversationsView(
                 initialRoomIdToOpen: widget.initialRoomIdToOpen,
+                roomsFeedModel: _roomsFeedModel,
                 showChrome: false,
                 onOpenNearby: () {
                   tabController.animateTo(0);

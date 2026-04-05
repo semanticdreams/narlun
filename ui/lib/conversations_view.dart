@@ -16,6 +16,7 @@ import 'me_model.dart';
 import 'messages_view.dart';
 import 'models.dart';
 import 'push_notifications_service.dart';
+import 'rooms_feed_model.dart';
 import 'route_utils.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
@@ -26,6 +27,7 @@ class ConversationsView extends StatefulWidget {
   final bool showChrome;
   final VoidCallback? onOpenNearby;
   final int? initialRoomIdToOpen;
+  final RoomsFeedModel? roomsFeedModel;
 
   const ConversationsView({
     super.key,
@@ -34,6 +36,7 @@ class ConversationsView extends StatefulWidget {
     this.showChrome = true,
     this.onOpenNearby,
     this.initialRoomIdToOpen,
+    this.roomsFeedModel,
   });
 
   @override
@@ -43,16 +46,16 @@ class ConversationsView extends StatefulWidget {
 class _ConversationsState extends State<ConversationsView> {
   static const _installSuggestionDelay = Duration(seconds: 8);
 
+  MeModel? _meModel;
   late final WebsocketService websocketService;
   late final HttpService httpService;
-
-  final List<RoomSummary> rooms = [];
+  late final RoomsFeedModel roomsFeedModel;
+  bool _ownsRoomsFeedModel = false;
   StreamSubscription? roomsChangedSubscription;
   StreamSubscription? connectionEventsSubscription;
   Timer? installSuggestionTimer;
   bool _installSuggestionEligible = false;
   bool _pushPromptEligible = false;
-  bool _loadingInitialRooms = true;
   bool _openedInitialRoom = false;
   bool _reportedMissingInitialRoom = false;
   bool _reportedPromptEligibility = false;
@@ -66,6 +69,27 @@ class _ConversationsState extends State<ConversationsView> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _ensureWarmRooms() async {
+    try {
+      await roomsFeedModel.ensureWarm(silentErrors: true);
+      await _openInitialRoomIfNeeded();
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return;
+      }
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session is no longer valid. Please sign in again.',
+      );
+    } catch (_) {
+      if (!mounted || roomsFeedModel.hasCachedData) {
+        return;
+      }
+      _showRefreshFailure('Could not refresh rooms. Trying again soon.');
+    }
+  }
+
   Future<void> updateRooms({bool silentErrors = false}) async {
     logFrontendDiagnostic(
       'rooms_refresh_started',
@@ -76,23 +100,17 @@ class _ConversationsState extends State<ConversationsView> {
       },
     );
     try {
-      final resp = await httpService.get_rooms(silentErrors: silentErrors);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        rooms
-          ..clear()
-          ..addAll(resp);
-        _loadingInitialRooms = false;
-      });
+      await roomsFeedModel.refresh(silentErrors: silentErrors);
       logFrontendDiagnostic(
         'rooms_refresh_completed',
         'Finished refreshing room summaries.',
         details: {
           'silent_errors': silentErrors,
-          'room_count': rooms.length,
-          'room_ids': rooms.take(10).map((room) => room.id).toList(),
+          'room_count': roomsFeedModel.rooms.length,
+          'room_ids': roomsFeedModel.rooms
+              .take(10)
+              .map((room) => room.id)
+              .toList(),
         },
       );
       unawaited(_openInitialRoomIfNeeded());
@@ -114,10 +132,9 @@ class _ConversationsState extends State<ConversationsView> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _loadingInitialRooms = false;
-      });
-      _showRefreshFailure('Could not refresh rooms. Trying again soon.');
+      if (!roomsFeedModel.hasCachedData) {
+        _showRefreshFailure('Could not refresh rooms. Trying again soon.');
+      }
     }
   }
 
@@ -131,14 +148,14 @@ class _ConversationsState extends State<ConversationsView> {
       return;
     }
     RoomSummary? room;
-    for (final candidate in rooms) {
+    for (final candidate in roomsFeedModel.rooms) {
       if (candidate.id == roomId) {
         room = candidate;
         break;
       }
     }
     if (room == null) {
-      if (!_loadingInitialRooms && !_reportedMissingInitialRoom) {
+      if (!roomsFeedModel.isLoadingInitial && !_reportedMissingInitialRoom) {
         _reportedMissingInitialRoom = true;
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
           const SnackBar(
@@ -172,6 +189,20 @@ class _ConversationsState extends State<ConversationsView> {
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     httpService =
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
+    final providedRoomsFeedModel = Provider.of<RoomsFeedModel?>(
+      context,
+      listen: false,
+    );
+    roomsFeedModel =
+        widget.roomsFeedModel ??
+        providedRoomsFeedModel ??
+        RoomsFeedModel(httpService: httpService);
+    _ownsRoomsFeedModel =
+        widget.roomsFeedModel == null && providedRoomsFeedModel == null;
+    final meModel = Provider.of<MeModel>(context, listen: false);
+    _meModel = meModel;
+    _meModel?.addListener(_handleSessionChanged);
+    _syncFeedSession();
     installSuggestionTimer = Timer(_installSuggestionDelay, () {
       if (!mounted) {
         return;
@@ -182,7 +213,12 @@ class _ConversationsState extends State<ConversationsView> {
       });
       _reportPromptEligibility();
     });
-    unawaited(updateRooms(silentErrors: true));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_ensureWarmRooms());
+    });
     unawaited(websocketService.ensureConnected());
     roomsChangedSubscription = websocketService.roomsChangedStream().listen(
       (_) => unawaited(updateRooms(silentErrors: true)),
@@ -197,11 +233,35 @@ class _ConversationsState extends State<ConversationsView> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final meModel = Provider.of<MeModel>(context);
+    if (!identical(_meModel, meModel)) {
+      _meModel?.removeListener(_handleSessionChanged);
+      _meModel = meModel;
+      _meModel?.addListener(_handleSessionChanged);
+      _syncFeedSession();
+    }
+  }
+
+  @override
   void dispose() {
     installSuggestionTimer?.cancel();
     roomsChangedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
+    _meModel?.removeListener(_handleSessionChanged);
+    if (_ownsRoomsFeedModel) {
+      roomsFeedModel.dispose();
+    }
     super.dispose();
+  }
+
+  void _handleSessionChanged() {
+    _syncFeedSession();
+  }
+
+  void _syncFeedSession() {
+    roomsFeedModel.syncSession(_meModel?.data);
   }
 
   void _reportPromptEligibility() {
@@ -241,249 +301,293 @@ class _ConversationsState extends State<ConversationsView> {
 
   @override
   Widget build(BuildContext context) {
-    final content = Consumer3<MeModel, InstallPromptService, PushNotificationsService>(
-      builder: (context, meModel, installPromptService, pushService, child) {
-        final currentUser = meModel.data;
-        final pushPromptVisible =
-            currentUser?.authenticated == true &&
-            _pushPromptEligible &&
-            pushService.shouldShowPrompt;
-        final installPromptVisible =
-            currentUser?.authenticated == true &&
-            _installSuggestionEligible &&
-            installPromptService.shouldShowSuggestion;
-        _reportPromptVisibility(
-          pushVisible: pushPromptVisible,
-          installVisible: installPromptVisible,
-        );
-        return ListView(
-          children: [
-            if (pushPromptVisible)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Turn On Notifications',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Get notified about new messages even when Narlun is not open.',
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
+    final content = ListenableBuilder(
+      listenable: roomsFeedModel,
+      builder: (context, child) {
+        final rooms = roomsFeedModel.rooms;
+        final loadingInitialRooms = roomsFeedModel.isLoadingInitial;
+        final roomsErrorMessage = roomsFeedModel.errorMessage;
+        return Consumer3<
+          MeModel,
+          InstallPromptService,
+          PushNotificationsService
+        >(
+          builder: (context, meModel, installPromptService, pushService, child) {
+            final currentUser = meModel.data;
+            final pushPromptVisible =
+                currentUser?.authenticated == true &&
+                _pushPromptEligible &&
+                pushService.shouldShowPrompt;
+            final installPromptVisible =
+                currentUser?.authenticated == true &&
+                _installSuggestionEligible &&
+                installPromptService.shouldShowSuggestion;
+            _reportPromptVisibility(
+              pushVisible: pushPromptVisible,
+              installVisible: installPromptVisible,
+            );
+            return ListView(
+              children: [
+                if (pushPromptVisible)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            FilledButton(
-                              onPressed: pushService.isBusy
-                                  ? null
-                                  : () async {
-                                      try {
-                                        await pushService.enableNotifications();
-                                      } catch (error) {
-                                        if (!mounted) {
-                                          return;
-                                        }
-                                        if (isAlreadyPresentedActionError(
-                                          error,
-                                        )) {
-                                          return;
-                                        }
-                                        _showRefreshFailure(
-                                          describeActionError(
-                                            error,
-                                            fallbackDescription:
-                                                'Could not enable notifications right now.',
-                                          ),
-                                        );
-                                      }
-                                    },
-                              child: const Text('Turn on'),
+                            const Text(
+                              'Turn On Notifications',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                            TextButton(
-                              onPressed: pushService.dismissPrompt,
-                              child: const Text('Not now'),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Get notified about new messages even when Narlun is not open.',
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton(
+                                  onPressed: pushService.isBusy
+                                      ? null
+                                      : () async {
+                                          try {
+                                            await pushService
+                                                .enableNotifications();
+                                          } catch (error) {
+                                            if (!mounted) {
+                                              return;
+                                            }
+                                            if (isAlreadyPresentedActionError(
+                                              error,
+                                            )) {
+                                              return;
+                                            }
+                                            _showRefreshFailure(
+                                              describeActionError(
+                                                error,
+                                                fallbackDescription:
+                                                    'Could not enable notifications right now.',
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  child: const Text('Turn on'),
+                                ),
+                                TextButton(
+                                  onPressed: pushService.dismissPrompt,
+                                  child: const Text('Not now'),
+                                ),
+                              ],
                             ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-            if (installPromptVisible)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Install Narlun',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Add Narlun to your home screen for faster launch and a more app-like chat experience.',
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
+                if (installPromptVisible)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            const Text(
+                              'Install Narlun',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Add Narlun to your home screen for faster launch and a more app-like chat experience.',
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton(
+                                  onPressed: () {
+                                    unawaited(
+                                      handleInstallRequest(
+                                        context,
+                                        installPromptService,
+                                      ),
+                                    );
+                                  },
+                                  child: const Text('Install app'),
+                                ),
+                                TextButton(
+                                  onPressed:
+                                      installPromptService.dismissSuggestion,
+                                  child: const Text('Not now'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                if (loadingInitialRooms)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 24, 16, 16),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (roomsErrorMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Could not load rooms',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(roomsErrorMessage),
+                            const SizedBox(height: 16),
                             FilledButton(
                               onPressed: () {
-                                unawaited(
-                                  handleInstallRequest(
-                                    context,
-                                    installPromptService,
-                                  ),
-                                );
+                                unawaited(updateRooms());
                               },
-                              child: const Text('Install app'),
-                            ),
-                            TextButton(
-                              onPressed: installPromptService.dismissSuggestion,
-                              child: const Text('Not now'),
+                              child: const Text('Try again'),
                             ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-              ),
-            if (_loadingInitialRooms)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 24, 16, 16),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (rooms.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'No rooms yet',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Start from Nearby to discover people around you and open your first conversation.',
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton(
-                          onPressed:
-                              widget.onOpenNearby ??
-                              () {
-                                Navigator.pushReplacementNamed(
-                                  context,
-                                  '/nearby',
-                                );
-                              },
-                          child: const Text('Find people nearby'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            for (final room in rooms)
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 4.0),
-                child: ListTile(
-                  key: ValueKey('room-${room.id}'),
-                  leading: AvatarImage(
-                    picture: currentUser == null
-                        ? room.picture
-                        : room.displayPictureFor(currentUser),
-                  ),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(timeago.format(room.updatedAt)),
-                      if (room.pendingJoinRequestCount > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
+                  )
+                else if (rooms.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'No rooms yet',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                            decoration: BoxDecoration(
-                              color: Theme.of(
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Start from Nearby to discover people around you and open your first conversation.',
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton(
+                              onPressed:
+                                  widget.onOpenNearby ??
+                                  () {
+                                    Navigator.pushReplacementNamed(
+                                      context,
+                                      '/nearby',
+                                    );
+                                  },
+                              child: const Text('Find people nearby'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                for (final room in rooms)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4.0),
+                    child: ListTile(
+                      key: ValueKey('room-${room.id}'),
+                      leading: AvatarImage(
+                        picture: currentUser == null
+                            ? room.picture
+                            : room.displayPictureFor(currentUser),
+                      ),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(timeago.format(room.updatedAt)),
+                          if (room.pendingJoinRequestCount > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  '${room.pendingJoinRequestCount} request${room.pendingJoinRequestCount == 1 ? '' : 's'}',
+                                  style: Theme.of(context).textTheme.labelSmall,
+                                ),
+                              ),
+                            ),
+                          if (room.pushMuted)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 4),
+                              child: Icon(
+                                Icons.notifications_off_outlined,
+                                size: 18,
+                              ),
+                            ),
+                        ],
+                      ),
+                      title: Text(
+                        currentUser == null
+                            ? (room.name ?? '')
+                            : room.displayTitleFor(currentUser),
+                      ),
+                      subtitle: Text(room.lastMessage?.body ?? ''),
+                      onTap: currentUser == null
+                          ? null
+                          : () async {
+                              final roomDeleted = await Navigator.push<bool>(
                                 context,
-                              ).colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              '${room.pendingJoinRequestCount} request${room.pendingJoinRequestCount == 1 ? '' : 's'}',
-                              style: Theme.of(context).textTheme.labelSmall,
-                            ),
-                          ),
-                        ),
-                      if (room.pushMuted)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 4),
-                          child: Icon(
-                            Icons.notifications_off_outlined,
-                            size: 18,
-                          ),
-                        ),
-                    ],
+                                MaterialPageRoute(
+                                  settings: RouteSettings(
+                                    name: roomsRouteWithOpenRoom(room.id),
+                                  ),
+                                  builder: (context) => MessagesView(
+                                    room: room,
+                                    me: currentUser,
+                                    httpService: httpService,
+                                    websocketService: websocketService,
+                                  ),
+                                ),
+                              );
+                              if (roomDeleted == true) {
+                                await updateRooms();
+                              }
+                            },
+                    ),
                   ),
-                  title: Text(
-                    currentUser == null
-                        ? (room.name ?? '')
-                        : room.displayTitleFor(currentUser),
-                  ),
-                  subtitle: Text(room.lastMessage?.body ?? ''),
-                  onTap: currentUser == null
-                      ? null
-                      : () async {
-                          final roomDeleted = await Navigator.push<bool>(
-                            context,
-                            MaterialPageRoute(
-                              settings: RouteSettings(
-                                name: roomsRouteWithOpenRoom(room.id),
-                              ),
-                              builder: (context) => MessagesView(
-                                room: room,
-                                me: currentUser,
-                                httpService: httpService,
-                                websocketService: websocketService,
-                              ),
-                            ),
-                          );
-                          if (roomDeleted == true) {
-                            await updateRooms();
-                          }
-                        },
-                ),
-              ),
-          ],
+              ],
+            );
+          },
         );
       },
     );

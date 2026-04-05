@@ -1,4 +1,4 @@
-import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,5 +47,39 @@ void main() {
 
     firstReporter.dispose();
     secondReporter.dispose();
+  });
+
+  testWidgets('diagnostic logs are posted with structured details', (
+    tester,
+  ) async {
+    Map<String, dynamic>? payload;
+
+    final reporter = FrontendErrorReporter(
+      client: MockClient((request) async {
+        payload = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response('', 204);
+      }),
+      apiBaseUrl: '/api',
+    )..install();
+
+    await reporter.logDiagnostic(
+      'install_service_initialized',
+      'Initialized browser install prompt service.',
+      details: {
+        'is_installed': false,
+        'nested': {'source': 'test'},
+      },
+    );
+    await tester.pump();
+
+    expect(payload?['kind'], 'install_service_initialized');
+    expect(payload?['level'], 'debug');
+    expect(payload?['details'], {
+      'is_installed': false,
+      'nested': {'source': 'test'},
+    });
+    expect(payload?['fingerprint'], isA<String>());
+
+    reporter.dispose();
   });
 }

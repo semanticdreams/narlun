@@ -1,5 +1,8 @@
 import asyncio
 import json
+import logging
+import secrets
+import time
 from pathlib import Path
 
 import aiohttp_cors
@@ -7,8 +10,10 @@ import uvloop
 from aiohttp import web
 from aiohttp.web import middleware
 
+import app.log  # noqa: F401
 import config
 from app.frontend_errors import create_frontend_error_tools, frontend_error_handler
+from app.observability import request_log_context
 from app.push import PushService
 from app.redis_store import RedisStore
 from app.social import create_app as create_social_app
@@ -17,12 +22,23 @@ from app.util import InvalidJsonBody, InvalidUsage, load_user_from_token
 from app.websocket import websocket_handler
 
 
+logger = logging.getLogger(__name__)
+
+
+def _request_success_logger(req):
+    if req.path == '/api/client-errors':
+        return logger.debug
+    return logger.info
+
+
 @middleware
 async def request_context(req, handler):
     req.store = req.config_dict['store']
     req.push = req.config_dict['push']
     req.redis = req.config_dict['redis']
     req.redis_bytes = req.config_dict['redis_bytes']
+    req.request_id = req.headers.get('X-Request-ID') or secrets.token_hex(8)
+    started_at = time.perf_counter()
     req.user = await load_user_from_token(req)
 
     try:
@@ -34,15 +50,61 @@ async def request_context(req, handler):
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     raise InvalidJsonBody() from exc
             else:
-                req.data = {}
+                    req.data = {}
         else:
             req.data = {}
-        return await handler(req)
+        response = await handler(req)
     except InvalidUsage as exc:
-        return web.json_response(
+        response = web.json_response(
             {'message': exc.message, 'code': exc.code, 'payload': exc.payload},
             status=exc.status,
         )
+        response.headers['X-Request-ID'] = req.request_id
+        logger.info(
+            'Request completed with usage error',
+            extra=request_log_context(
+                req,
+                status=exc.status,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 1),
+                error_code=exc.code,
+                error_message=exc.message,
+            ),
+        )
+        return response
+    except web.HTTPException as exc:
+        if exc.headers is None:
+            exc.headers = {}
+        exc.headers['X-Request-ID'] = req.request_id
+        log_method = logger.warning if exc.status >= 500 else logger.info
+        log_method(
+            'Request raised HTTP exception',
+            extra=request_log_context(
+                req,
+                status=exc.status,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 1),
+                reason=exc.reason,
+            ),
+        )
+        raise
+    except Exception:
+        logger.exception(
+            'Request failed unexpectedly',
+            extra=request_log_context(
+                req,
+                duration_ms=round((time.perf_counter() - started_at) * 1000, 1),
+            ),
+        )
+        raise
+    response.headers['X-Request-ID'] = req.request_id
+    _request_success_logger(req)(
+        'Request completed',
+        extra=request_log_context(
+            req,
+            status=response.status,
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 1),
+        ),
+    )
+    return response
 
 
 async def create_app(*, redis_url=None, enable_cors=True, push_service=None):

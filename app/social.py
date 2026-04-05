@@ -1,5 +1,8 @@
+import logging
+
 from aiohttp import web
 
+from app.observability import request_log_context, sample_values
 from app.redis_store import (
     InviteNotFound,
     JoinRequestNotFound,
@@ -11,6 +14,7 @@ from app.util import InvalidUsage, authenticated, jsonify
 
 
 routes = web.RouteTableDef()
+logger = logging.getLogger(__name__)
 
 
 class NoSuchRoomError(InvalidUsage):
@@ -68,6 +72,20 @@ async def checkin(req):
         lat=float(req.data['lat']),
         lon=float(req.data['lon']),
     )
+    logger.info(
+        'Nearby checkin completed',
+        extra=request_log_context(
+            req,
+            nearby_item_count=len(result['nearby']),
+            nearby_user_count=len(result['nearby_users']),
+            nearby_user_ids=sample_values(
+                [item['user']['id'] for item in result['nearby'] if item['type'] == 'user'],
+            ),
+            nearby_room_ids=sample_values(
+                [item['room']['id'] for item in result['nearby'] if item['type'] == 'room'],
+            ),
+        ),
+    )
     return jsonify(result)
 
 
@@ -88,6 +106,15 @@ async def join_user(req):
             room['id'],
             [req.data['user_id']],
         )
+    logger.info(
+        'Joined user room',
+        extra=request_log_context(
+            req,
+            room_id=room['id'],
+            room_created=room.get('created') is True,
+            other_user_id=req.data['user_id'],
+        ),
+    )
     return jsonify(room)
 
 
@@ -110,6 +137,15 @@ async def create_room(req):
         req.user['id'],
         room['id'],
         req.data.get('user_ids', []),
+    )
+    logger.info(
+        'Created group room',
+        extra=request_log_context(
+            req,
+            room_id=room['id'],
+            member_count=len({int(req.user['id']), *[int(user_id) for user_id in req.data.get('user_ids', [])]}),
+            invited_user_ids=sample_values(req.data.get('user_ids', [])),
+        ),
     )
     return jsonify(room)
 
@@ -135,6 +171,14 @@ async def request_room_join(req):
         await req.store.publish_rooms_changed(room_members)
         await req.store.publish_nearby_changed([req.user['id']])
         req.push.enqueue_room_join_request(req.user['id'], room_id, room_members)
+    logger.info(
+        'Requested room join',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            join_request_created=request_result.get('created') is True,
+        ),
+    )
     return jsonify(request_result)
 
 
@@ -150,6 +194,15 @@ async def get_room_requests(req):
         requests = await req.store.get_room_join_requests(req.user['id'], room_id)
     except PermissionDenied:
         raise NoSuchRoomError()
+    logger.info(
+        'Fetched room join requests',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            request_count=len(requests),
+            requester_user_ids=sample_values([item['user']['id'] for item in requests]),
+        ),
+    )
     return jsonify(requests)
 
 
@@ -196,6 +249,15 @@ async def approve_room_request(req):
             [member_id for member_id in room_members if member_id != user_id],
         )
         req.push.enqueue_room_request_approved(user_id, room_id)
+    logger.info(
+        'Approved room join request',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            requester_user_id=user_id,
+            membership_changed=result.get('membership_changed') is True,
+        ),
+    )
     return jsonify(result['room'])
 
 
@@ -216,6 +278,14 @@ async def reject_room_request(req):
     await req.store.publish_rooms_changed(room_members)
     await req.store.publish_nearby_changed([user_id])
     req.push.enqueue_room_request_rejected(user_id, room_id)
+    logger.info(
+        'Rejected room join request',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            requester_user_id=user_id,
+        ),
+    )
     return web.Response(status=204)
 
 
@@ -239,6 +309,15 @@ async def send_message(req):
     )
     await _publish_room_nearby_changes(req, req.data['room_id'])
     req.push.enqueue_new_message(req.user['id'], req.data['room_id'], message)
+    logger.info(
+        'Sent room message',
+        extra=request_log_context(
+            req,
+            room_id=req.data['room_id'],
+            message_id=message['id'],
+            message_body_length=len(body.strip()),
+        ),
+    )
     return jsonify(message)
 
 
@@ -252,6 +331,14 @@ async def create_invite(req):
         raise NoSuchRoomError()
     except PermissionDenied:
         raise NoSuchRoomError()
+    logger.info(
+        'Created invite',
+        extra=request_log_context(
+            req,
+            room_id=invite.get('room_id'),
+            invite_target='room' if invite.get('room_id') is not None else 'user',
+        ),
+    )
     return jsonify(invite)
 
 
@@ -287,13 +374,30 @@ async def accept_invite(req):
             room['id'],
             [member_id for member_id in room_members if member_id != req.user['id']],
         )
+    logger.info(
+        'Accepted invite',
+        extra=request_log_context(
+            req,
+            room_id=room['id'],
+            membership_changed=invite_result.get('membership_changed') is True,
+        ),
+    )
     return jsonify(room)
 
 
 @routes.get('/get-rooms')
 @authenticated
 async def get_rooms(req):
-    return jsonify(await req.store.get_rooms(req.user['id']))
+    rooms = await req.store.get_rooms(req.user['id'])
+    logger.info(
+        'Fetched room summaries',
+        extra=request_log_context(
+            req,
+            room_count=len(rooms),
+            room_ids=sample_values([room['id'] for room in rooms]),
+        ),
+    )
+    return jsonify(rooms)
 
 
 @routes.post('/update-room-settings')
@@ -319,6 +423,14 @@ async def update_room_settings(req):
         raise NoSuchRoomError()
 
     await req.store.publish_rooms_changed([req.user['id']])
+    logger.info(
+        'Updated room settings',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            push_muted=push_muted,
+        ),
+    )
     return jsonify(room)
 
 
@@ -329,6 +441,15 @@ async def get_messages(req):
         messages = await req.store.get_messages(req.user['id'], req.data['room_id'])
     except PermissionDenied:
         raise NoSuchRoomError()
+    logger.info(
+        'Fetched room messages',
+        extra=request_log_context(
+            req,
+            room_id=req.data['room_id'],
+            message_count=len(messages),
+            message_ids=sample_values([message['id'] for message in messages]),
+        ),
+    )
     return jsonify(messages)
 
 

@@ -1,5 +1,9 @@
 import 'package:geolocator/geolocator.dart';
 
+import 'location_service_default.dart'
+    if (dart.library.html) 'location_service_browser.dart'
+    as impl;
+
 abstract class LocationService {
   Future<bool> isLocationServiceEnabled();
   Future<LocationPermission> checkPermission();
@@ -7,24 +11,6 @@ abstract class LocationService {
   Future<Position> getCurrentPosition();
 }
 
-class GeolocatorLocationService implements LocationService {
-  @override
-  Future<LocationPermission> checkPermission() {
-    return Geolocator.checkPermission();
-  }
-
-  @override
-  Future<Position> getCurrentPosition() {
-    return Geolocator.getCurrentPosition();
-  }
-
-  @override
-  Future<bool> isLocationServiceEnabled() {
-    return Geolocator.isLocationServiceEnabled();
-  }
-
-  @override
-  Future<LocationPermission> requestPermission() {
-    return Geolocator.requestPermission();
-  }
+LocationService createLocationService() {
+  return impl.createLocationService();
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_strategy/url_strategy.dart';
@@ -46,6 +48,16 @@ Future<void> initializeApp({
     environment: selectedEnvironment,
     apiBaseUrl: Environment().config.apiUrl,
   )..install();
+  unawaited(
+    _frontendErrorReporter!.logDiagnostic(
+      'bootstrap_initialized',
+      'Initialized frontend diagnostics reporting.',
+      details: {
+        'environment': selectedEnvironment,
+        'api_base_url': Environment().config.apiUrl,
+      },
+    ),
+  );
 }
 
 Widget buildNarlunApp({SessionUser? initialSessionUser}) {

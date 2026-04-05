@@ -1,8 +1,9 @@
-// ignore_for_file: avoid_web_libraries_in_flutter
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
 
+import 'frontend_error_reporter.dart';
 import 'install_prompt_service.dart';
 
 const _installPromptDismissedUntilKey =
@@ -26,6 +27,11 @@ class BrowserInstallPromptService extends InstallPromptService {
 
   BrowserInstallPromptService() {
     _isInstalled = _detectInstalled();
+    _log(
+      'service_initialized',
+      'Initialized browser install prompt service.',
+      details: {'is_installed': _isInstalled},
+    );
     _beforeInstallPromptListener = (html.Event event) {
       if (_isInstalled) {
         return;
@@ -36,6 +42,7 @@ class BrowserInstallPromptService extends InstallPromptService {
       _isInstalled = true;
       _deferredPrompt = null;
       _clearDismissedUntil();
+      _log('app_installed', 'Browser reported the app was installed.');
       notifyListeners();
     };
     html.window.addEventListener(
@@ -79,6 +86,7 @@ class BrowserInstallPromptService extends InstallPromptService {
         .add(const Duration(days: 7))
         .toIso8601String();
     html.window.localStorage[_installPromptDismissedUntilKey] = dismissedUntil;
+    _log('prompt_dismissed', 'Dismissed the install prompt suggestion.');
     notifyListeners();
   }
 
@@ -86,6 +94,14 @@ class BrowserInstallPromptService extends InstallPromptService {
   Future<InstallPromptOutcome> requestInstall() async {
     final deferredPrompt = _deferredPrompt;
     if (deferredPrompt == null || _isInstalled) {
+      _log(
+        'prompt_unavailable',
+        'Install prompt request was unavailable.',
+        details: {
+          'is_installed': _isInstalled,
+          'has_deferred_prompt': deferredPrompt != null,
+        },
+      );
       return InstallPromptOutcome.unavailable;
     }
     _deferredPrompt = null;
@@ -94,10 +110,12 @@ class BrowserInstallPromptService extends InstallPromptService {
     if (outcome == InstallPromptOutcome.accepted) {
       _isInstalled = true;
       _clearDismissedUntil();
+      _log('prompt_accepted', 'Accepted the browser install prompt.');
       notifyListeners();
       return InstallPromptOutcome.accepted;
     }
 
+    _log('prompt_rejected', 'Dismissed the browser install prompt.');
     dismissSuggestion();
     return InstallPromptOutcome.dismissed;
   }
@@ -107,8 +125,7 @@ class BrowserInstallPromptService extends InstallPromptService {
       '(display-mode: standalone)',
     );
     final navigatorStandalone =
-        js_util.getProperty<bool?>(html.window.navigator, 'standalone') ==
-        true;
+        js_util.getProperty<bool?>(html.window.navigator, 'standalone') == true;
     return standaloneMediaQuery.matches || navigatorStandalone;
   }
 
@@ -118,6 +135,10 @@ class BrowserInstallPromptService extends InstallPromptService {
 
   void _captureBrowserPrompt(html.Event event) {
     js_util.callMethod<Object>(event, 'preventDefault', const []);
+    _log(
+      'beforeinstallprompt_captured',
+      'Captured the browser beforeinstallprompt event.',
+    );
     final Object promptEvent = event;
     _deferredPrompt = _DeferredInstallPrompt(() async {
       await js_util.promiseToFuture<Object>(
@@ -135,6 +156,19 @@ class BrowserInstallPromptService extends InstallPromptService {
     notifyListeners();
   }
 
+  void _log(String kind, String message, {Map<String, Object?>? details}) {
+    logFrontendDiagnostic(
+      'install_$kind',
+      message,
+      details: {
+        'is_installed': _isInstalled,
+        'is_install_available': isInstallAvailable,
+        'should_show_suggestion': shouldShowSuggestion,
+        ...?details,
+      },
+    );
+  }
+
   void _installE2eHook() {
     if (!_enableE2eSemantics) {
       return;
@@ -146,7 +180,10 @@ class BrowserInstallPromptService extends InstallPromptService {
       js_util.allowInterop((String outcome) {
         _deferredPrompt = _DeferredInstallPrompt(() async {
           final currentCalls =
-              js_util.getProperty<num?>(html.window, '__narlunInstallPromptCalls') ??
+              js_util.getProperty<num?>(
+                html.window,
+                '__narlunInstallPromptCalls',
+              ) ??
               0;
           js_util.setProperty(
             html.window,

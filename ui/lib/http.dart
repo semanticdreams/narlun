@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http_interceptor/http_interceptor.dart';
 
+import 'client_observability.dart';
 import 'config.dart';
 import 'locator.dart';
 import 'dialog_service.dart';
+import 'frontend_runtime_info.dart';
 import 'models.dart';
 import 'push_subscription_endpoint_default.dart'
     if (dart.library.html) 'push_subscription_endpoint_browser.dart'
@@ -16,7 +18,6 @@ import 'http_client_default.dart'
     as session_http;
 
 const silentErrorHeader = 'x-narlun-silent-errors';
-
 Future check_response(
   data,
   bodyfunc,
@@ -81,6 +82,10 @@ class ErrorInterceptor implements InterceptorContract {
   Future<http.BaseRequest> interceptRequest({
     required http.BaseRequest request,
   }) async {
+    request.headers.putIfAbsent(
+      clientSessionHeader,
+      getOrCreateClientSessionId,
+    );
     return request;
   }
 
@@ -211,7 +216,11 @@ class HttpService {
   }
 
   Map<String, String> _requestHeaders({bool silentErrors = false}) {
-    return silentErrors ? {silentErrorHeader: '1'} : const {};
+    final headers = <String, String>{};
+    if (silentErrors) {
+      headers[silentErrorHeader] = '1';
+    }
+    return headers;
   }
 
   Future<void> clearLocalSession() async {

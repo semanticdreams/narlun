@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -7,10 +8,14 @@ from pathlib import Path
 
 from aiohttp import web
 
+from app.observability import client_ip, request_log_context
+
+
+logger = logging.getLogger(__name__)
 
 MAX_CLIENT_ERROR_BYTES = 16 * 1024
-MAX_EVENTS_PER_CLIENT_PER_MINUTE = 20
-MAX_EVENTS_PER_FINGERPRINT_PER_MINUTE = 5
+MAX_EVENTS_PER_CLIENT_PER_MINUTE = 120
+MAX_EVENTS_PER_FINGERPRINT_PER_MINUTE = 20
 
 
 class FrontendErrorLogWriter:
@@ -77,16 +82,34 @@ def create_frontend_error_tools(path):
     }
 
 
+def _frontend_event_logger(event):
+    if event.get('level') == 'debug':
+        return logger.debug
+    return logger.info
+
+
 async def frontend_error_handler(req):
     if req.content_length and req.content_length > MAX_CLIENT_ERROR_BYTES:
+        logger.warning(
+            'Ignored oversized frontend event payload',
+            extra=request_log_context(req, content_length=req.content_length),
+        )
         return web.Response(status=204)
 
     payload = req.data if isinstance(req.data, dict) else None
     if payload is None:
+        logger.warning(
+            'Ignored malformed frontend event payload',
+            extra=request_log_context(req),
+        )
         return web.Response(status=204)
 
     event = _build_event(req, payload)
     if event is None:
+        logger.warning(
+            'Ignored incomplete frontend event payload',
+            extra=request_log_context(req),
+        )
         return web.Response(status=204)
 
     client_key = f'{event["remote_ip"]}:{event.get("client_session_id", "-")}'
@@ -95,9 +118,28 @@ async def frontend_error_handler(req):
         client_key=client_key,
         fingerprint=event['fingerprint'],
     ):
+        _frontend_event_logger(event)(
+            'Rate limited frontend event',
+            extra={
+                'fingerprint': event['fingerprint'],
+                'kind': event['kind'],
+                'level': event.get('level'),
+                **request_log_context(req),
+            },
+        )
         return web.Response(status=204)
 
     await req.app['frontend_error_log_writer'].write(event)
+    _frontend_event_logger(event)(
+        'Logged frontend event',
+        extra={
+            'kind': event['kind'],
+            'level': event.get('level'),
+            'fingerprint': event['fingerprint'],
+            'user_id': event.get('user_id'),
+            **request_log_context(req),
+        },
+    )
     return web.Response(status=204)
 
 
@@ -106,6 +148,7 @@ def _build_event(req, payload):
     stack = _string_field(payload, 'stack', limit=8000)
     fingerprint = _string_field(payload, 'fingerprint', limit=128)
     kind = _string_field(payload, 'kind', limit=64)
+    level = _string_field(payload, 'level', limit=16) or 'error'
 
     if not message or not stack or not fingerprint or not kind:
         return None
@@ -122,23 +165,16 @@ def _build_event(req, payload):
         'client_session_id': _string_field(payload, 'client_session_id', limit=128),
         'fingerprint': fingerprint,
         'kind': kind,
+        'level': level,
         'message': message,
         'stack': stack,
+        'details': _details_field(payload.get('details')),
         'user_agent': _string_field(payload, 'user_agent', limit=512)
         or _string_value(req.headers.get('User-Agent'), limit=512),
         'screen': _screen_field(payload.get('screen')),
-        'remote_ip': _client_ip(req),
+        'remote_ip': client_ip(req),
     }
     return {key: value for key, value in event.items() if value is not None}
-
-
-def _client_ip(req):
-    forwarded = req.headers.get('X-Forwarded-For', '')
-    if forwarded:
-        first = forwarded.split(',', 1)[0].strip()
-        if first:
-            return first
-    return req.remote or '-'
 
 
 def _string_field(payload, key, *, limit):
@@ -174,3 +210,12 @@ def _screen_field(value):
     if width is None and height is None:
         return None
     return {'w': width, 'h': height}
+
+
+def _details_field(value):
+    if not isinstance(value, dict):
+        return None
+    serialized = json.dumps(value, separators=(',', ':'), ensure_ascii=True)
+    if len(serialized) > 4096:
+        return {'truncated': True, 'preview': serialized[:4096]}
+    return value

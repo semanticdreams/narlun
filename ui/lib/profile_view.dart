@@ -9,6 +9,7 @@ import 'http.dart';
 import 'image_picker.dart';
 import 'install_prompt_actions.dart';
 import 'install_prompt_service.dart';
+import 'frontend_error_reporter.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
@@ -33,6 +34,8 @@ class _ProfileViewState extends State<ProfileView> {
   bool _hasUnsavedChanges = false;
   bool _allowImmediatePop = false;
   bool _isResolvingPop = false;
+  bool _reportedProfileNotificationControls = false;
+  bool _reportedProfileInstallAction = false;
 
   Future<bool> _resolveUnsavedChanges() async {
     if (!_hasUnsavedChanges) {
@@ -283,6 +286,20 @@ class _ProfileViewState extends State<ProfileView> {
                       final statusMessage = pushService.statusMessage;
                       final canShowAction =
                           pushService.isConfigured || pushService.isSubscribed;
+                      if (canShowAction &&
+                          !_reportedProfileNotificationControls) {
+                        _reportedProfileNotificationControls = true;
+                        logFrontendDiagnostic(
+                          'profile_notification_controls_visible',
+                          'Profile screen displayed notification controls.',
+                          details: {
+                            'is_subscribed': pushService.isSubscribed,
+                            'is_configured': pushService.isConfigured,
+                            'permission_state':
+                                pushService.permissionState.name,
+                          },
+                        );
+                      }
                       return Padding(
                         padding: const EdgeInsets.only(top: 12),
                         child: Align(
@@ -343,6 +360,13 @@ class _ProfileViewState extends State<ProfileView> {
                     builder: (context, installPromptService, child) {
                       if (!installPromptService.isInstallAvailable) {
                         return const SizedBox.shrink();
+                      }
+                      if (!_reportedProfileInstallAction) {
+                        _reportedProfileInstallAction = true;
+                        logFrontendDiagnostic(
+                          'profile_install_action_visible',
+                          'Profile screen displayed the install action.',
+                        );
                       }
                       return Padding(
                         padding: const EdgeInsets.only(top: 12),

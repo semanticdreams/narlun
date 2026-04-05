@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
@@ -6,11 +8,13 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'frontend_error_reporter.dart';
 import 'http_client_browser.dart' as session_http;
 import 'models.dart';
 import 'push_notifications_service.dart';
 import 'client_identity_default.dart'
-    if (dart.library.html) 'client_identity_browser.dart' as client_identity;
+    if (dart.library.html) 'client_identity_browser.dart'
+    as client_identity;
 
 const _pushPromptDismissedUntilKey =
     'narlun.pushPromptSuggestionDismissedUntil';
@@ -19,6 +23,15 @@ class BrowserPushNotificationsService extends PushNotificationsService {
   BrowserPushNotificationsService({required this.apiBaseUrl})
     : _client = session_http.createHttpClient() {
     _permissionState = _readPermissionState();
+    _log(
+      'service_initialized',
+      'Initialized browser push notifications service.',
+      details: {
+        'is_supported': isSupported,
+        'notification_permission': html.Notification.permission,
+        'service_worker_supported': html.window.navigator.serviceWorker != null,
+      },
+    );
   }
 
   final String apiBaseUrl;
@@ -90,8 +103,9 @@ class BrowserPushNotificationsService extends PushNotificationsService {
   @override
   Future<void> syncSession(SessionUser? user) async {
     _permissionState = _readPermissionState();
-    final nextUserId =
-        user?.authenticated == true && user?.id != null ? user!.id : null;
+    final nextUserId = user?.authenticated == true && user?.id != null
+        ? user!.id
+        : null;
     if (_currentUserId == nextUserId && _hasSyncedSession) {
       notifyListeners();
       return;
@@ -104,6 +118,7 @@ class BrowserPushNotificationsService extends PushNotificationsService {
       _isSubscribed = false;
       _vapidPublicKey = null;
       notifyListeners();
+      _log('session_cleared', 'Cleared push session state.');
       return;
     }
 
@@ -114,6 +129,16 @@ class BrowserPushNotificationsService extends PushNotificationsService {
       _isSubscribed = false;
       notifyListeners();
     }
+    _log(
+      'session_synced',
+      'Synchronized push session state.',
+      details: {
+        'user_id': _currentUserId,
+        'is_configured': _isConfigured,
+        'is_subscribed': _isSubscribed,
+        'permission_state': _permissionState.name,
+      },
+    );
   }
 
   @override
@@ -125,24 +150,46 @@ class BrowserPushNotificationsService extends PushNotificationsService {
     await _runBusy(() async {
       await _refreshServerConfig();
       if (!_isConfigured || _vapidPublicKey == null) {
+        _log(
+          'enable_unavailable',
+          'Push notifications are unavailable because the server is not configured.',
+          details: {'user_id': _currentUserId},
+        );
         return;
       }
 
       if (html.Notification.permission != 'granted') {
+        _log(
+          'request_permission_started',
+          'Requesting browser notification permission.',
+          details: {'current_permission': html.Notification.permission},
+        );
         await html.Notification.requestPermission();
       }
       _permissionState = _readPermissionState();
       if (_permissionState != PushPermissionState.granted) {
         _isSubscribed = false;
+        _log(
+          'request_permission_rejected',
+          'Browser notification permission was not granted.',
+          details: {'permission_state': _permissionState.name},
+        );
         return;
       }
 
       final registration = await _getServiceWorkerRegistration();
       if (registration == null) {
+        _log(
+          'registration_missing',
+          'Browser service worker registration was unavailable for push subscription.',
+        );
         return;
       }
 
-      final pushManager = js_util.getProperty<Object>(registration, 'pushManager');
+      final pushManager = js_util.getProperty<Object>(
+        registration,
+        'pushManager',
+      );
       final options = js_util.newObject();
       js_util.setProperty(options, 'userVisibleOnly', true);
       js_util.setProperty(
@@ -155,11 +202,20 @@ class BrowserPushNotificationsService extends PushNotificationsService {
         js_util.callMethod(pushManager, 'subscribe', [options]),
       );
       if (subscription == null) {
+        _log(
+          'subscription_missing',
+          'Browser push subscription was not created.',
+        );
         return;
       }
       await _saveSubscription(subscription);
       _clearDismissedPrompt();
       _isSubscribed = true;
+      _log(
+        'enable_completed',
+        'Push notifications were enabled.',
+        details: {'user_id': _currentUserId, 'is_subscribed': _isSubscribed},
+      );
     });
   }
 
@@ -173,13 +229,24 @@ class BrowserPushNotificationsService extends PushNotificationsService {
       final registration = await _getServiceWorkerRegistration();
       if (registration == null) {
         _isSubscribed = false;
+        _log(
+          'disable_registration_missing',
+          'No service worker registration was available while disabling push notifications.',
+        );
         return;
       }
 
-      final pushManager = js_util.getProperty<Object>(registration, 'pushManager');
+      final pushManager = js_util.getProperty<Object>(
+        registration,
+        'pushManager',
+      );
       final subscription = await _getCurrentSubscription(pushManager);
       if (subscription == null) {
         _isSubscribed = false;
+        _log(
+          'disable_subscription_missing',
+          'No browser push subscription was present while disabling push notifications.',
+        );
         return;
       }
 
@@ -191,6 +258,11 @@ class BrowserPushNotificationsService extends PushNotificationsService {
         js_util.callMethod(subscription, 'unsubscribe', const []),
       );
       _isSubscribed = false;
+      _log(
+        'disable_completed',
+        'Push notifications were disabled.',
+        details: {'user_id': _currentUserId},
+      );
     });
   }
 
@@ -205,32 +277,57 @@ class BrowserPushNotificationsService extends PushNotificationsService {
   }
 
   Future<void> _refreshServerConfig() async {
-    final response = await _client.get(Uri.parse('$apiBaseUrl/users/push-config'));
+    final response = await _client.get(
+      Uri.parse('$apiBaseUrl/users/push-config'),
+    );
     if (response.statusCode != 200) {
       _isConfigured = false;
       _vapidPublicKey = null;
       notifyListeners();
+      _log(
+        'config_request_failed',
+        'Push configuration request failed.',
+        details: {'status_code': response.statusCode},
+      );
       return;
     }
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     _isConfigured = body['enabled'] == true;
     _vapidPublicKey = body['vapid_public_key'] as String?;
     notifyListeners();
+    _log(
+      'config_loaded',
+      'Loaded push configuration from the server.',
+      details: {'enabled': _isConfigured},
+    );
   }
 
-  Future<void> _syncCurrentSubscription({required bool registerWithServer}) async {
+  Future<void> _syncCurrentSubscription({
+    required bool registerWithServer,
+  }) async {
     final registration = await _getServiceWorkerRegistration();
     if (registration == null) {
       _isSubscribed = false;
       notifyListeners();
+      _log(
+        'sync_registration_missing',
+        'No browser service worker registration was available while syncing push subscription.',
+      );
       return;
     }
 
-    final pushManager = js_util.getProperty<Object>(registration, 'pushManager');
+    final pushManager = js_util.getProperty<Object>(
+      registration,
+      'pushManager',
+    );
     final subscription = await _getCurrentSubscription(pushManager);
     if (subscription == null) {
       _isSubscribed = false;
       notifyListeners();
+      _log(
+        'sync_subscription_missing',
+        'No browser push subscription exists for the current session.',
+      );
       return;
     }
 
@@ -239,6 +336,11 @@ class BrowserPushNotificationsService extends PushNotificationsService {
     }
     _isSubscribed = true;
     notifyListeners();
+    _log(
+      'sync_subscription_found',
+      'Found an existing browser push subscription.',
+      details: {'register_with_server': registerWithServer},
+    );
   }
 
   Future<void> _saveSubscription(Object subscription) async {
@@ -253,13 +355,29 @@ class BrowserPushNotificationsService extends PushNotificationsService {
     if (response.statusCode == 200 || response.statusCode == 204) {
       _isSubscribed = true;
       notifyListeners();
+      _log(
+        'subscription_saved',
+        'Saved the browser push subscription on the server.',
+        details: {'status_code': response.statusCode},
+      );
+      return;
     }
+    _log(
+      'subscription_save_failed',
+      'Server did not accept the browser push subscription.',
+      details: {'status_code': response.statusCode},
+    );
   }
 
   Future<void> _deleteSubscriptionFromServer(String endpoint) async {
-    await _client.delete(
+    final response = await _client.delete(
       Uri.parse('$apiBaseUrl/users/push-subscriptions'),
       body: jsonEncode({'endpoint': endpoint}),
+    );
+    _log(
+      'subscription_deleted',
+      'Asked the server to delete a browser push subscription.',
+      details: {'status_code': response.statusCode},
     );
   }
 
@@ -269,7 +387,8 @@ class BrowserPushNotificationsService extends PushNotificationsService {
     );
   }
 
-  Future<html.ServiceWorkerRegistration?> _getServiceWorkerRegistration() async {
+  Future<html.ServiceWorkerRegistration?>
+  _getServiceWorkerRegistration() async {
     final container = html.window.navigator.serviceWorker;
     if (container == null) {
       return null;
@@ -329,11 +448,26 @@ class BrowserPushNotificationsService extends PushNotificationsService {
     _client.close();
     super.dispose();
   }
+
+  void _log(String kind, String message, {Map<String, Object?>? details}) {
+    logFrontendDiagnostic(
+      'push_$kind',
+      message,
+      details: {
+        'user_id': _currentUserId,
+        'permission_state': _permissionState.name,
+        'is_configured': _isConfigured,
+        'is_subscribed': _isSubscribed,
+        ...?details,
+      },
+    );
+  }
 }
 
 Map<String, dynamic> _subscriptionJson(Object subscription) {
   final jsValue = js_util.callMethod<Object?>(subscription, 'toJSON', const []);
-  return jsonDecode(jsonEncode(js_util.dartify(jsValue))) as Map<String, dynamic>;
+  return jsonDecode(jsonEncode(js_util.dartify(jsValue)))
+      as Map<String, dynamic>;
 }
 
 Uint8List _decodeVapidPublicKey(String value) {

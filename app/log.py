@@ -2,11 +2,14 @@ import sys
 import logging
 import structlog
 
+import config
+
 timestamper = structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S")
 
 shared_processors = [
     structlog.stdlib.add_log_level,
     structlog.stdlib.add_logger_name,
+    structlog.stdlib.ExtraAdder(),
     timestamper,
 ]
 
@@ -33,6 +36,8 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(formatter)
 root_logger = logging.getLogger()
 root_logger.addHandler(handler)
-root_logger.setLevel(logging.DEBUG)
+root_logger.setLevel(
+    getattr(logging, str(getattr(config, 'LOG_LEVEL', 'INFO')).upper(), logging.INFO)
+)
 
 get_logger = structlog.get_logger

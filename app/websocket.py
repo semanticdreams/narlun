@@ -9,6 +9,7 @@ import async_timeout
 from aiohttp import web
 from aiohttp.http_websocket import WSCloseCode
 
+from app.observability import request_log_context
 from app.push import normalized_client_id
 from app.util import authenticated
 
@@ -76,8 +77,18 @@ async def websocket_handler(req):
     active_sockets.setdefault(user_id, set()).add(ws)
     connection_id = secrets.token_hex(16)
     client_id = normalized_client_id(req.query.get('client_id'))
+    client_session_id = req.query.get('client_session_id')
     await req.store.mark_active_websocket(user_id, connection_id, client_id=client_id)
     subscribed_rooms = set()
+    logger.info(
+        'Websocket connected',
+        extra=request_log_context(
+            req,
+            connection_id=connection_id,
+            client_id=client_id,
+            client_session_id=client_session_id,
+        ),
+    )
 
     async def refresh_presence():
         while True:
@@ -87,7 +98,14 @@ async def websocket_handler(req):
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception('Failed to refresh websocket presence', extra={'user_id': user_id})
+                logger.exception(
+                    'Failed to refresh websocket presence',
+                    extra=request_log_context(
+                        req,
+                        connection_id=connection_id,
+                        client_id=client_id,
+                    ),
+                )
 
     async def reader():
         while True:
@@ -100,11 +118,26 @@ async def websocket_handler(req):
                     try:
                         data = json.loads(message['data'])
                     except (TypeError, json.JSONDecodeError):
-                        logger.warning('Ignoring invalid pubsub payload', extra={
-                            'user_id': user_id,
-                            'payload': message.get('data'),
-                        })
+                        logger.warning(
+                            'Ignoring invalid pubsub payload',
+                            extra=request_log_context(
+                                req,
+                                connection_id=connection_id,
+                                client_id=client_id,
+                                payload=message.get('data'),
+                            ),
+                        )
                         continue
+                    logger.debug(
+                        'Forwarding websocket event',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                            event_type=data.get('type'),
+                            room_id=data.get('room_id'),
+                        ),
+                    )
                     if data['type'] == 'signout':
                         await _send_event(ws, 'signout', data)
                         asyncio.create_task(_close_socket_after_grace_period(ws))
@@ -119,7 +152,14 @@ async def websocket_handler(req):
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception('Websocket pubsub reader failed', extra={'user_id': user_id})
+                logger.exception(
+                    'Websocket pubsub reader failed',
+                    extra=request_log_context(
+                        req,
+                        connection_id=connection_id,
+                        client_id=client_id,
+                    ),
+                )
                 if not ws.closed:
                     await ws.close(
                         code=WSCloseCode.INTERNAL_ERROR,
@@ -136,6 +176,14 @@ async def websocket_handler(req):
                 try:
                     payload = json.loads(msg.data)
                 except json.JSONDecodeError:
+                    logger.warning(
+                        'Rejected invalid websocket JSON payload',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                        ),
+                    )
                     await _send_error(
                         ws,
                         code='invalid-json',
@@ -144,6 +192,14 @@ async def websocket_handler(req):
                     continue
 
                 if not isinstance(payload, dict):
+                    logger.warning(
+                        'Rejected non-object websocket payload',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                        ),
+                    )
                     await _send_error(
                         ws,
                         code='invalid-payload',
@@ -154,6 +210,15 @@ async def websocket_handler(req):
                 message_type = payload.get('type')
                 data = payload.get('data', {})
                 if not isinstance(data, dict):
+                    logger.warning(
+                        'Rejected websocket payload with invalid data field',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                            message_type=message_type,
+                        ),
+                    )
                     await _send_error(
                         ws,
                         code='invalid-data',
@@ -166,6 +231,16 @@ async def websocket_handler(req):
                     try:
                         room_id = int(room_id)
                     except (TypeError, ValueError):
+                        logger.warning(
+                            'Rejected websocket payload with invalid room id',
+                            extra=request_log_context(
+                                req,
+                                connection_id=connection_id,
+                                client_id=client_id,
+                                message_type=message_type,
+                                room_id=room_id,
+                            ),
+                        )
                         await _send_error(
                             ws,
                             code='invalid-room-id',
@@ -175,8 +250,26 @@ async def websocket_handler(req):
 
                 if message_type == 'subscribe-room':
                     if await _subscribe_room(req, channel, room_id, subscribed_rooms):
+                        logger.info(
+                            'Subscribed websocket to room',
+                            extra=request_log_context(
+                                req,
+                                connection_id=connection_id,
+                                client_id=client_id,
+                                room_id=room_id,
+                            ),
+                        )
                         await _send_event(ws, 'subscribed-room', {'room_id': room_id})
                     else:
+                        logger.warning(
+                            'Denied websocket room subscription',
+                            extra=request_log_context(
+                                req,
+                                connection_id=connection_id,
+                                client_id=client_id,
+                                room_id=room_id,
+                            ),
+                        )
                         await _send_error(
                             ws,
                             code='room-access-denied',
@@ -185,8 +278,26 @@ async def websocket_handler(req):
                         )
                 elif message_type == 'unsubscribe-room':
                     if await _unsubscribe_room(channel, room_id, subscribed_rooms):
+                        logger.info(
+                            'Unsubscribed websocket from room',
+                            extra=request_log_context(
+                                req,
+                                connection_id=connection_id,
+                                client_id=client_id,
+                                room_id=room_id,
+                            ),
+                        )
                         await _send_event(ws, 'unsubscribed-room', {'room_id': room_id})
                 else:
+                    logger.warning(
+                        'Rejected websocket payload with unknown message type',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                            message_type=message_type,
+                        ),
+                    )
                     await _send_error(
                         ws,
                         code='unknown-message-type',
@@ -211,4 +322,14 @@ async def websocket_handler(req):
         with contextlib.suppress(Exception):
             await req.store.clear_active_websocket(user_id, connection_id, client_id=client_id)
         await channel.aclose()
+        logger.info(
+            'Websocket disconnected',
+            extra=request_log_context(
+                req,
+                connection_id=connection_id,
+                client_id=client_id,
+                subscribed_room_count=len(subscribed_rooms),
+                subscribed_room_ids=sorted(subscribed_rooms),
+            ),
+        )
     return ws

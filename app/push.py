@@ -70,6 +70,10 @@ class PushService:
 
     async def save_subscription(self, user_id, subscription, *, user_agent=''):
         if not self.enabled:
+            logger.warning(
+                'Skipped saving push subscription because push is disabled',
+                extra={'user_id': int(user_id)},
+            )
             return False
         normalized = normalize_subscription(subscription)
         await self.store.upsert_push_subscription(
@@ -78,12 +82,33 @@ class PushService:
             user_agent=user_agent,
             client_id=normalized_client_id(subscription.get('client_id')),
         )
+        logger.info(
+            'Stored push subscription',
+            extra={
+                'user_id': int(user_id),
+                'endpoint': normalized['endpoint'],
+                'client_id': normalized_client_id(subscription.get('client_id')),
+            },
+        )
         return True
 
     async def delete_subscription(self, user_id, endpoint):
         if not endpoint:
+            logger.warning(
+                'Skipped deleting push subscription because endpoint was empty',
+                extra={'user_id': int(user_id)},
+            )
             return False
-        return await self.store.remove_push_subscription(int(user_id), endpoint)
+        removed = await self.store.remove_push_subscription(int(user_id), endpoint)
+        logger.info(
+            'Deleted push subscription from store',
+            extra={
+                'user_id': int(user_id),
+                'endpoint': endpoint,
+                'removed': removed,
+            },
+        )
+        return removed
 
     async def notify_room_created(self, actor_id, room_id, recipient_ids):
         if not self.enabled:
@@ -293,16 +318,32 @@ class PushService:
     async def _notify_users(self, user_ids, notification):
         subscriptions = await self.store.get_push_subscriptions_for_users(user_ids)
         if not subscriptions:
+            logger.info(
+                'Skipped push delivery because no subscriptions were found',
+                extra={'recipient_count': len(user_ids)},
+            )
             return
 
         tasks = []
+        skipped_active_websocket = 0
         for subscription in subscriptions:
             if await self.store.has_active_websocket(
                 subscription['user_id'],
                 client_id=subscription.get('client_id'),
             ):
+                skipped_active_websocket += 1
                 continue
             tasks.append(self._send_notification(subscription, notification))
+        logger.info(
+            'Prepared push delivery batch',
+            extra={
+                'recipient_count': len(user_ids),
+                'subscription_count': len(subscriptions),
+                'delivery_count': len(tasks),
+                'skipped_active_websocket_count': skipped_active_websocket,
+                'notification_tag': notification.get('tag'),
+            },
+        )
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -373,6 +414,15 @@ class PushService:
                 _send_web_push,
                 subscription,
                 {'notification': _notification_payload(notification)},
+            )
+            logger.info(
+                'Delivered web push notification',
+                extra={
+                    'subscription_id': subscription['id'],
+                    'user_id': subscription['user_id'],
+                    'endpoint': subscription['endpoint'],
+                    'notification_tag': notification.get('tag'),
+                },
             )
         except Exception as exc:
             response = getattr(exc, 'response', None)

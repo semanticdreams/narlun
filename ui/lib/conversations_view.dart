@@ -6,6 +6,7 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import 'appbar_avatar.dart';
 import 'avatar_image.dart';
+import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'invite_qr_button.dart';
 import 'install_prompt_actions.dart';
@@ -54,6 +55,9 @@ class _ConversationsState extends State<ConversationsView> {
   bool _loadingInitialRooms = true;
   bool _openedInitialRoom = false;
   bool _reportedMissingInitialRoom = false;
+  bool _reportedPromptEligibility = false;
+  bool _reportedPushPromptVisible = false;
+  bool _reportedInstallPromptVisible = false;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -63,6 +67,14 @@ class _ConversationsState extends State<ConversationsView> {
   }
 
   Future<void> updateRooms({bool silentErrors = false}) async {
+    logFrontendDiagnostic(
+      'rooms_refresh_started',
+      'Started refreshing room summaries.',
+      details: {
+        'silent_errors': silentErrors,
+        'initial_room_id_to_open': widget.initialRoomIdToOpen,
+      },
+    );
     try {
       final resp = await httpService.get_rooms(silentErrors: silentErrors);
       if (!mounted) {
@@ -74,6 +86,15 @@ class _ConversationsState extends State<ConversationsView> {
           ..addAll(resp);
         _loadingInitialRooms = false;
       });
+      logFrontendDiagnostic(
+        'rooms_refresh_completed',
+        'Finished refreshing room summaries.',
+        details: {
+          'silent_errors': silentErrors,
+          'room_count': rooms.length,
+          'room_ids': rooms.take(10).map((room) => room.id).toList(),
+        },
+      );
       unawaited(_openInitialRoomIfNeeded());
     } on UnauthorizedResponse {
       if (!mounted) {
@@ -85,6 +106,11 @@ class _ConversationsState extends State<ConversationsView> {
         description: 'Your session is no longer valid. Please sign in again.',
       );
     } catch (_) {
+      logFrontendDiagnostic(
+        'rooms_refresh_failed',
+        'Refreshing room summaries failed.',
+        details: {'silent_errors': silentErrors},
+      );
       if (!mounted) {
         return;
       }
@@ -153,6 +179,7 @@ class _ConversationsState extends State<ConversationsView> {
         _installSuggestionEligible = true;
         _pushPromptEligible = true;
       });
+      _reportPromptEligibility();
     });
     unawaited(updateRooms(silentErrors: true));
     unawaited(websocketService.ensureConnected());
@@ -176,16 +203,61 @@ class _ConversationsState extends State<ConversationsView> {
     super.dispose();
   }
 
+  void _reportPromptEligibility() {
+    if (_reportedPromptEligibility) {
+      return;
+    }
+    _reportedPromptEligibility = true;
+    logFrontendDiagnostic(
+      'conversation_prompts_eligible',
+      'Conversation prompt suggestions became eligible.',
+      details: {
+        'install_eligible': _installSuggestionEligible,
+        'push_eligible': _pushPromptEligible,
+      },
+    );
+  }
+
+  void _reportPromptVisibility({
+    required bool pushVisible,
+    required bool installVisible,
+  }) {
+    if (pushVisible && !_reportedPushPromptVisible) {
+      _reportedPushPromptVisible = true;
+      logFrontendDiagnostic(
+        'conversation_push_prompt_visible',
+        'Conversation screen displayed the push notification prompt.',
+      );
+    }
+    if (installVisible && !_reportedInstallPromptVisible) {
+      _reportedInstallPromptVisible = true;
+      logFrontendDiagnostic(
+        'conversation_install_prompt_visible',
+        'Conversation screen displayed the install prompt.',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final content = Consumer3<MeModel, InstallPromptService, PushNotificationsService>(
       builder: (context, meModel, installPromptService, pushService, child) {
         final currentUser = meModel.data;
+        final pushPromptVisible =
+            currentUser?.authenticated == true &&
+            _pushPromptEligible &&
+            pushService.shouldShowPrompt;
+        final installPromptVisible =
+            currentUser?.authenticated == true &&
+            _installSuggestionEligible &&
+            installPromptService.shouldShowSuggestion;
+        _reportPromptVisibility(
+          pushVisible: pushPromptVisible,
+          installVisible: installPromptVisible,
+        );
         return ListView(
           children: [
-            if (currentUser?.authenticated == true &&
-                _pushPromptEligible &&
-                pushService.shouldShowPrompt)
+            if (pushPromptVisible)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Card(
@@ -247,9 +319,7 @@ class _ConversationsState extends State<ConversationsView> {
                   ),
                 ),
               ),
-            if (currentUser?.authenticated == true &&
-                _installSuggestionEligible &&
-                installPromptService.shouldShowSuggestion)
+            if (installPromptVisible)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Card(

@@ -9,6 +9,7 @@ import 'package:timeago/timeago.dart' as timeago;
 import 'avatar_stack.dart';
 import 'avatar_image.dart';
 import 'dialog_service.dart';
+import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'location_service.dart';
 import 'locator.dart';
@@ -59,17 +60,23 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     httpService =
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
     dialogService = widget.dialogService ?? locator<DialogService>();
-    locationService = widget.locationService ?? GeolocatorLocationService();
+    locationService = widget.locationService ?? createLocationService();
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     _maybeStartInitialCheckin();
     unawaited(websocketService.ensureConnected());
-    _nearbyChangedSubscription = websocketService.nearbyChangedStream().listen((_) {
+    _nearbyChangedSubscription = websocketService.nearbyChangedStream().listen((
+      _,
+    ) {
       _refreshIfActive();
     });
-    _roomsChangedSubscription = websocketService.roomsChangedStream().listen((_) {
+    _roomsChangedSubscription = websocketService.roomsChangedStream().listen((
+      _,
+    ) {
       _refreshIfActive();
     });
-    _connectionEventsSubscription = websocketService.connectionEvents.listen((event) {
+    _connectionEventsSubscription = websocketService.connectionEvents.listen((
+      event,
+    ) {
       if (event == 'reconnected') {
         _refreshIfActive();
       }
@@ -112,6 +119,11 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   }
 
   Future<void> _showLocationProblem(String description) async {
+    logFrontendDiagnostic(
+      'nearby_location_problem',
+      'Nearby check-in could not continue because location is unavailable.',
+      details: {'description': description},
+    );
     _setStatus(description, loading: false);
     await dialogService.showDialog(
       title: 'Location needed',
@@ -125,6 +137,14 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       return;
     }
     _setStatus('Checking your location...', loading: true);
+    logFrontendDiagnostic(
+      'nearby_checkin_started',
+      'Started nearby check-in.',
+      details: {
+        'show_error_feedback': showErrorFeedback,
+        'user_id': me.data?.id,
+      },
+    );
 
     if (!(await locationService.isLocationServiceEnabled())) {
       nearbyItems.clear();
@@ -151,6 +171,11 @@ class _NearbyUsersState extends State<NearbyUsersView> {
 
     try {
       final loc = await locationService.getCurrentPosition();
+      logFrontendDiagnostic(
+        'nearby_location_acquired',
+        'Acquired browser location for nearby check-in.',
+        details: {'latitude': loc.latitude, 'longitude': loc.longitude},
+      );
       final resp = await httpService.checkin(loc.latitude, loc.longitude);
       if (!mounted) {
         return;
@@ -164,6 +189,11 @@ class _NearbyUsersState extends State<NearbyUsersView> {
             ? 'Nobody nearby right now. Pull to refresh again soon.'
             : 'Tap people to open a room, or rooms to request access.';
       });
+      logFrontendDiagnostic(
+        'nearby_checkin_completed',
+        'Completed nearby check-in.',
+        details: {'result_count': nearbyItems.length},
+      );
     } on UnauthorizedResponse {
       if (!mounted) {
         return;
@@ -175,6 +205,14 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       );
     } catch (error) {
       nearbyItems.clear();
+      logFrontendDiagnostic(
+        'nearby_checkin_failed',
+        'Nearby check-in failed.',
+        details: {
+          'error': error.toString(),
+          'show_error_feedback': showErrorFeedback,
+        },
+      );
       _setStatus(
         'Could not refresh nearby activity. Pull to try again.',
         loading: false,
@@ -243,7 +281,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       setState(() {
         for (var i = 0; i < nearbyItems.length; i++) {
           final candidate = nearbyItems[i];
-          if (candidate.type == 'room' && candidate.room?.room.id == room.room.id) {
+          if (candidate.type == 'room' &&
+              candidate.room?.room.id == room.room.id) {
             nearbyItems[i] = NearbyItem(
               type: 'room',
               distance: candidate.distance,
@@ -252,9 +291,9 @@ class _NearbyUsersState extends State<NearbyUsersView> {
           }
         }
       });
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Join request sent.')),
-      );
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(const SnackBar(content: Text('Join request sent.')));
     } on UnauthorizedResponse {
       if (!mounted) {
         return;
@@ -300,20 +339,13 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         leading: AvatarImage(picture: user.picture),
         title: Text(user.username),
         subtitle: (user.status?.isNotEmpty ?? false)
-            ? Text(
-                user.status!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              )
+            ? Text(user.status!, maxLines: 1, overflow: TextOverflow.ellipsis)
             : null,
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Text(
-              '${user.distance}m away',
-              textAlign: TextAlign.right,
-            ),
+            Text('${user.distance}m away', textAlign: TextAlign.right),
             const SizedBox(height: 4),
             Text(
               'last seen ${timeago.format(user.lastSeen)}',
@@ -381,10 +413,12 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         ),
         trailing: room.joinRequested
             ? Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
-                  color:
-                      Theme.of(context).colorScheme.surfaceContainerHighest,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: const Text('Requested'),

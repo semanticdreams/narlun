@@ -32,14 +32,20 @@ async def test_client_errors_are_logged_to_dedicated_jsonl_file(
             'client_session_id': 'session-1',
             'fingerprint': 'fp-1',
             'kind': 'flutter_uncaught',
+            'level': 'debug',
             'message': 'Null check operator used on a null value',
             'stack': 'frame-1\nframe-2',
+            'details': {
+                'source': 'frontend-diagnostic',
+                'step': 'push-config',
+            },
             'user_agent': 'Mozilla/5.0',
             'screen': {'w': 1440, 'h': 900},
         },
     )
 
     assert response.status == 204
+    assert response.headers['X-Request-ID']
     logged = [json.loads(line) for line in log_path.read_text().splitlines()]
     assert len(logged) == 1
     assert logged[0]['message'] == 'Null check operator used on a null value'
@@ -48,6 +54,11 @@ async def test_client_errors_are_logged_to_dedicated_jsonl_file(
     assert logged[0]['client_session_id'] == 'session-1'
     assert logged[0]['screen'] == {'w': 1440, 'h': 900}
     assert logged[0]['remote_ip'] == '127.0.0.1'
+    assert logged[0]['level'] == 'debug'
+    assert logged[0]['details'] == {
+        'source': 'frontend-diagnostic',
+        'step': 'push-config',
+    }
 
 
 async def test_client_errors_are_rate_limited_per_fingerprint(

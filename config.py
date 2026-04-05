@@ -22,6 +22,7 @@ FRONTEND_ERROR_LOG_PATH = os.path.join(basedir, 'frontend-errors.jsonl')
 PUSH_VAPID_PUBLIC_KEY = ''
 PUSH_VAPID_PRIVATE_KEY = ''
 PUSH_VAPID_SUBJECT = DOMAIN
+LOG_LEVEL = 'INFO'
 
 # load local config
 if app_settings := os.environ.get('APP_SETTINGS'):

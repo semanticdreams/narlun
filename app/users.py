@@ -175,6 +175,10 @@ async def upload_profile_picture(req):
 @routes.get('/push-config')
 @authenticated
 async def get_push_config(req):
+    logger.info(
+        'Served push config',
+        extra={'user_id': req.user['id'], 'push_enabled': req.push.enabled},
+    )
     return jsonify(req.push.client_config())
 
 
@@ -182,6 +186,10 @@ async def get_push_config(req):
 @authenticated
 async def create_push_subscription(req):
     if req.push.enabled is not True:
+        logger.warning(
+            'Rejected push subscription because push is disabled',
+            extra={'user_id': req.user['id']},
+        )
         return jsonify({'enabled': False, 'saved': False})
     subscription = req.data.get('subscription')
     if isinstance(subscription, dict):
@@ -196,7 +204,18 @@ async def create_push_subscription(req):
             user_agent=req.headers.get('User-Agent', ''),
         )
     except InvalidPushSubscriptionError as exc:
+        logger.warning(
+            'Rejected invalid push subscription payload',
+            extra={'user_id': req.user['id'], 'error': str(exc)},
+        )
         raise InvalidPushSubscriptionErrorResponse(str(exc))
+    logger.info(
+        'Saved push subscription',
+        extra={
+            'user_id': req.user['id'],
+            'endpoint': subscription.get('endpoint') if isinstance(subscription, dict) else None,
+        },
+    )
     return no_content()
 
 
@@ -205,6 +224,10 @@ async def create_push_subscription(req):
 async def delete_push_subscription(req):
     endpoint = req.data.get('endpoint', '')
     await req.push.delete_subscription(req.user['id'], endpoint)
+    logger.info(
+        'Deleted push subscription',
+        extra={'user_id': req.user['id'], 'endpoint': endpoint},
+    )
     return no_content()
 
 

@@ -7,6 +7,8 @@ import 'config.dart';
 import 'client_identity_default.dart'
     if (dart.library.html) 'client_identity_browser.dart'
     as client_identity;
+import 'frontend_error_reporter.dart';
+import 'frontend_runtime_info.dart';
 import 'http_client_default.dart'
     if (dart.library.html) 'http_client_browser.dart'
     as session_http;
@@ -61,6 +63,20 @@ class WebsocketService {
   final Set<int> _activeRoomSubscriptions = <int>{};
   final Map<int, Completer<void>> _pendingSubscriptions = {};
 
+  void _log(String kind, String message, {Map<String, Object?>? details}) {
+    logFrontendDiagnostic(
+      'websocket_$kind',
+      message,
+      details: {
+        'base_url': baseurl,
+        'has_connected': _hasConnected,
+        'desired_room_count': _desiredRoomSubscriptions.length,
+        'active_room_count': _activeRoomSubscriptions.length,
+        ...?details,
+      },
+    );
+  }
+
   Future<Map<String, dynamic>?> _buildHeaders() async {
     final sessionCookie = await session_http.readSessionCookie();
     if (sessionCookie == null || sessionCookie.isEmpty) {
@@ -104,6 +120,12 @@ class WebsocketService {
     final wsUri = createWebSocketUri(
       baseurl,
       clientId: await client_identity.readClientIdentity(),
+      clientSessionId: getOrCreateClientSessionId(),
+    );
+    _log(
+      'connect_started',
+      'Starting websocket connection.',
+      details: {'uri': wsUri.toString()},
     );
 
     late final WebSocketChannel channel;
@@ -112,9 +134,19 @@ class WebsocketService {
       await channel.ready;
     } catch (error) {
       if (_isUnauthorizedWebSocketError(error)) {
+        _log(
+          'connect_unauthorized',
+          'Websocket connection was unauthorized.',
+          details: {'error': error.toString()},
+        );
         _handleUnauthorizedDisconnect();
         return;
       }
+      _log(
+        'connect_failed',
+        'Websocket connection failed.',
+        details: {'error': error.toString()},
+      );
       _scheduleReconnectIfNeeded();
       rethrow;
     }
@@ -139,6 +171,12 @@ class WebsocketService {
     }
     final event = _hasConnected ? 'reconnected' : 'connected';
     _hasConnected = true;
+    _log(
+      event,
+      event == 'connected'
+          ? 'Websocket connection established.'
+          : 'Websocket connection re-established.',
+    );
     _connectionController.add(event);
   }
 
@@ -147,6 +185,10 @@ class WebsocketService {
     try {
       event = jsonDecode(rawEvent) as Map<String, dynamic>;
     } catch (_) {
+      _log(
+        'event_parse_failed',
+        'Dropped a websocket event because it was not valid JSON.',
+      );
       return;
     }
 
@@ -157,11 +199,21 @@ class WebsocketService {
       if (roomId != null) {
         _activeRoomSubscriptions.add(roomId);
         _pendingSubscriptions.remove(roomId)?.complete();
+        _log(
+          'subscribed_room',
+          'Websocket room subscription confirmed.',
+          details: {'room_id': roomId},
+        );
       }
     } else if (type == 'unsubscribed-room' && data is Map<String, dynamic>) {
       final roomId = _roomIdFromData(data);
       if (roomId != null) {
         _activeRoomSubscriptions.remove(roomId);
+        _log(
+          'unsubscribed_room',
+          'Websocket room subscription removed.',
+          details: {'room_id': roomId},
+        );
       }
     } else if (type == 'room-deleted' && data is Map<String, dynamic>) {
       final roomId = _roomIdFromData(data);
@@ -174,6 +226,11 @@ class WebsocketService {
       if (code == 'room-access-denied' && roomId != null) {
         _handleRoomUnavailable(roomId, code: code, emitRoomDeleted: true);
       }
+      _log(
+        'server_error',
+        'Received a websocket error event from the server.',
+        details: {'code': code, 'room_id': roomId},
+      );
     } else if (type == 'signout') {
       _desiredRoomSubscriptions.clear();
       _activeRoomSubscriptions.clear();
@@ -181,6 +238,18 @@ class WebsocketService {
       _cancelReconnectTimer();
       unawaited(_closeCurrentConnection());
       _connectionController.add('signed-out');
+      _log('signed_out', 'Websocket session was signed out by the server.');
+    } else if (type != 'new-messages') {
+      _log(
+        'event_received',
+        'Received a websocket event.',
+        details: {
+          'type': '$type',
+          'room_id': data is Map<String, dynamic>
+              ? _roomIdFromData(data)
+              : null,
+        },
+      );
     }
     _streamController.add(event);
   }
@@ -194,6 +263,11 @@ class WebsocketService {
     _activeRoomSubscriptions.clear();
     _failPendingSubscriptions(StateError('WebSocket disconnected'));
     _connectionController.add('disconnected');
+    _log(
+      'disconnected',
+      'Websocket connection closed.',
+      details: {'should_reconnect': _shouldReconnect},
+    );
     if (_shouldReconnect) {
       _scheduleReconnect();
     }
@@ -210,6 +284,7 @@ class WebsocketService {
     _activeRoomSubscriptions.clear();
     _failPendingSubscriptions(StateError('WebSocket unauthorized'));
     _connectionController.add('signed-out');
+    _log('unauthorized_disconnect', 'Websocket session became unauthorized.');
   }
 
   void _scheduleReconnect() {
@@ -228,6 +303,11 @@ class WebsocketService {
         unawaited(_runScheduledReconnect());
       }
     });
+    _log(
+      'reconnect_scheduled',
+      'Scheduled a websocket reconnect attempt.',
+      details: {'delay_ms': delay.inMilliseconds},
+    );
   }
 
   void _scheduleReconnectIfNeeded() {
@@ -293,6 +373,11 @@ class WebsocketService {
     _activeRoomSubscriptions.remove(roomId);
     final waiter = _pendingSubscriptions.remove(roomId);
     final error = RoomUnavailable(roomId, code: code);
+    _log(
+      'room_unavailable',
+      'Websocket room became unavailable.',
+      details: {'room_id': roomId, 'code': code},
+    );
     if (waiter != null && !waiter.isCompleted) {
       waiter.completeError(error);
     }
@@ -322,6 +407,11 @@ class WebsocketService {
 
     final completer = Completer<void>();
     _pendingSubscriptions[roomId] = completer;
+    _log(
+      'subscribe_requested',
+      'Requested a websocket room subscription.',
+      details: {'room_id': roomId},
+    );
     _websocket!.sink.add(
       jsonEncode({
         'type': 'subscribe-room',
@@ -337,6 +427,11 @@ class WebsocketService {
       }
     } on TimeoutException {
       _pendingSubscriptions.remove(roomId);
+      _log(
+        'subscribe_timed_out',
+        'Timed out waiting for websocket room subscription.',
+        details: {'room_id': roomId},
+      );
       rethrow;
     }
   }
@@ -372,9 +467,10 @@ class WebsocketService {
   Stream<Map<String, dynamic>> nearbyChangedStream() =>
       eventsStream('nearby-changed');
 
-  Stream<Map<String, dynamic>> roomRequestsChangedStream(roomId) => eventsStream(
-    'room-requests-changed',
-  ).where((event) => event['data']['room_id'] == roomId);
+  Stream<Map<String, dynamic>> roomRequestsChangedStream(roomId) =>
+      eventsStream(
+        'room-requests-changed',
+      ).where((event) => event['data']['room_id'] == roomId);
 
   Future<void> ensureConnected() async {
     if (_websocket == null) {
@@ -415,6 +511,11 @@ class WebsocketService {
     if (_websocket == null) {
       return;
     }
+    _log(
+      'unsubscribe_requested',
+      'Requested a websocket room unsubscription.',
+      details: {'room_id': normalizedRoomId},
+    );
     _websocket!.sink.add(
       jsonEncode({
         'type': 'unsubscribe-room',

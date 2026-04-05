@@ -1,6 +1,7 @@
 import redis.asyncio as redis
 import hashlib
 import json
+import logging
 import secrets
 import time
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ AVATAR_SIZE = 256
 MAX_AVATAR_BYTES = 2 * 1024 * 1024
 MAX_AVATAR_PIXELS = 20_000_000
 MAX_STATUS_LENGTH = 80
+logger = logging.getLogger(__name__)
 
 
 class UsernameAlreadyExists(Exception):
@@ -576,13 +578,41 @@ class RedisStore:
                 item['room']['name'] or '',
             ),
         )
-        return {
+        response = {
             'nearby': [*nearby[:MAX_NEARBY_RESULTS], *pinned_requested_rooms],
             'nearby_users': [
                 item['user']
                 for item in sorted_nearby_users[:MAX_NEARBY_RESULTS]
             ],
         }
+        logger.info(
+            'Computed nearby checkin result',
+            extra={
+                'user_id': user_id,
+                'lat_rounded': round(float(lat), 4),
+                'lon_rounded': round(float(lon), 4),
+                'geo_candidate_count': len(result),
+                'excluded_user_count': len(excluded_user_ids),
+                'joined_room_count': len(joined_room_ids),
+                'requested_room_count': len(requested_room_ids),
+                'rejected_room_count': len(rejected_room_ids),
+                'returned_item_count': len(response['nearby']),
+                'returned_user_ids': self._sample_ids(
+                    item['user']['id']
+                    for item in response['nearby']
+                    if item['type'] == 'user'
+                ),
+                'returned_room_ids': self._sample_ids(
+                    item['room']['id']
+                    for item in response['nearby']
+                    if item['type'] == 'room'
+                ),
+                'pinned_requested_room_ids': self._sample_ids(
+                    item['room']['id'] for item in pinned_requested_rooms
+                ),
+            },
+        )
+        return response
 
     async def _shared_room_user_ids(self, user_id):
         room_ids = await self.redis.zrange(self._user_rooms_key(user_id), 0, -1)
@@ -944,29 +974,58 @@ class RedisStore:
             'messages': [message],
         })
         await self.redis.publish(f'room:{room_id}', payload)
+        logger.debug(
+            'Published room message event',
+            extra={
+                'room_id': int(room_id),
+                'message_id': message.get('id'),
+            },
+        )
 
     async def publish_signout(self, user_id):
         await self.redis.publish(f'user:{user_id}', json.dumps({'type': 'signout'}))
+        logger.debug('Published signout event', extra={'user_id': int(user_id)})
 
     async def publish_rooms_changed(self, user_ids):
-        for user_id in {int(user_id) for user_id in user_ids}:
+        normalized_user_ids = sorted({int(user_id) for user_id in user_ids})
+        for user_id in normalized_user_ids:
             await self.redis.publish(f'user:{user_id}', json.dumps({'type': 'rooms-changed'}))
+        logger.debug(
+            'Published rooms changed event',
+            extra={
+                'target_user_count': len(normalized_user_ids),
+                'target_user_ids': self._sample_ids(normalized_user_ids),
+            },
+        )
 
     async def publish_nearby_changed(self, user_ids):
-        for user_id in {int(user_id) for user_id in user_ids}:
+        normalized_user_ids = sorted({int(user_id) for user_id in user_ids})
+        for user_id in normalized_user_ids:
             await self.redis.publish(f'user:{user_id}', json.dumps({'type': 'nearby-changed'}))
+        logger.debug(
+            'Published nearby changed event',
+            extra={
+                'target_user_count': len(normalized_user_ids),
+                'target_user_ids': self._sample_ids(normalized_user_ids),
+            },
+        )
 
     async def publish_room_deleted(self, room_id):
         await self.redis.publish(f'room:{room_id}', json.dumps({
             'type': 'room-deleted',
             'room_id': int(room_id),
         }))
+        logger.debug('Published room deleted event', extra={'room_id': int(room_id)})
 
     async def publish_room_requests_changed(self, room_id):
         await self.redis.publish(f'room:{room_id}', json.dumps({
             'type': 'room-requests-changed',
             'room_id': int(room_id),
         }))
+        logger.debug(
+            'Published room requests changed event',
+            extra={'room_id': int(room_id)},
+        )
 
     async def upsert_push_subscription(self, user_id, subscription, *, user_agent='', client_id=None):
         endpoint = subscription['endpoint']
@@ -1068,6 +1127,15 @@ class RedisStore:
         expires_at = now + WEBSOCKET_PRESENCE_TTL_SECONDS
         await self.redis.zremrangebyscore(key, '-inf', now)
         await self.redis.zadd(key, {connection_id: expires_at})
+        logger.debug(
+            'Marked active websocket presence',
+            extra={
+                'user_id': int(user_id),
+                'connection_id': connection_id,
+                'client_id': client_id,
+                'expires_at': expires_at,
+            },
+        )
         return expires_at
 
     async def clear_active_websocket(self, user_id, connection_id, *, client_id=None):
@@ -1076,6 +1144,14 @@ class RedisStore:
             if client_id else self._user_websocket_presence_key(user_id)
         )
         await self.redis.zrem(key, connection_id)
+        logger.debug(
+            'Cleared active websocket presence',
+            extra={
+                'user_id': int(user_id),
+                'connection_id': connection_id,
+                'client_id': client_id,
+            },
+        )
 
     async def has_active_websocket(self, user_id, *, client_id=None):
         key = (
@@ -1149,6 +1225,14 @@ class RedisStore:
             room = await self._serialize_room(room_id, viewer_user_id=user_id)
             if room is not None:
                 rooms.append(room)
+        logger.info(
+            'Built room summaries',
+            extra={
+                'user_id': int(user_id),
+                'room_count': len(rooms),
+                'room_ids': self._sample_ids(room['id'] for room in rooms),
+            },
+        )
         return rooms
 
     async def _serialize_room(self, room_id, *, viewer_user_id=None):
@@ -1260,3 +1344,6 @@ class RedisStore:
             await self.redis.delete(self._room_messages_key(room_id))
         if nearby_viewer_ids:
             await self.publish_nearby_changed(nearby_viewer_ids)
+
+    def _sample_ids(self, values, *, limit=10):
+        return [int(value) for value in list(values)[:limit]]

@@ -5,14 +5,16 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'client_observability.dart';
 import 'config.dart';
 import 'frontend_runtime_info.dart';
 import 'http_client_default.dart'
-    if (dart.library.html) 'http_client_browser.dart' as session_http;
+    if (dart.library.html) 'http_client_browser.dart'
+    as session_http;
 import 'me_model.dart';
 
-const _maxEventsPerSession = 20;
-const _fingerprintCooldown = Duration(minutes: 1);
+const _maxEventsPerSession = 200;
+const _fingerprintCooldown = Duration(seconds: 10);
 
 class FrontendErrorReporter {
   FrontendErrorReporter({
@@ -59,15 +61,16 @@ class FrontendErrorReporter {
         }
         final reporter = _currentReporter;
         if (reporter != null) {
-          unawaited(reporter._reportFlutterError(details, kind: 'flutter_error'));
+          unawaited(
+            reporter._reportFlutterError(details, kind: 'flutter_error'),
+          );
         }
       };
 
       _previousPlatformErrorHandler = PlatformDispatcher.instance.onError;
-      PlatformDispatcher.instance.onError = (
-        Object error,
-        StackTrace stackTrace,
-      ) {
+      PlatformDispatcher
+          .instance
+          .onError = (Object error, StackTrace stackTrace) {
         final reporter = _currentReporter;
         if (reporter != null) {
           unawaited(
@@ -123,6 +126,15 @@ class FrontendErrorReporter {
     if (normalized == null || normalized.isEmpty) {
       return;
     }
+    if (_currentRoute != normalized) {
+      unawaited(
+        logDiagnostic(
+          'route_changed',
+          'Navigated to a new route.',
+          details: {'route': normalized},
+        ),
+      );
+    }
     _currentRoute = normalized;
   }
 
@@ -132,18 +144,41 @@ class FrontendErrorReporter {
     required String kind,
     String? message,
   }) async {
+    await _sendEvent(
+      kind: kind,
+      level: 'error',
+      message: message ?? error.toString(),
+      stack: (stackTrace ?? StackTrace.current).toString(),
+    );
+  }
+
+  Future<void> logDiagnostic(
+    String kind,
+    String message, {
+    Map<String, Object?>? details,
+  }) async {
+    await _sendEvent(
+      kind: kind,
+      level: 'debug',
+      message: message,
+      stack: StackTrace.current.toString(),
+      details: details,
+    );
+  }
+
+  Future<void> _sendEvent({
+    required String kind,
+    required String level,
+    required String message,
+    required String stack,
+    Map<String, Object?>? details,
+  }) async {
     if (_disposed) {
       return;
     }
     try {
-      final resolvedMessage = _truncate(
-        (message ?? error.toString()).trim(),
-        1000,
-      );
-      final resolvedStack = _truncate(
-        (stackTrace ?? StackTrace.current).toString().trim(),
-        8000,
-      );
+      final resolvedMessage = _truncate(message.trim(), 1000);
+      final resolvedStack = _truncate(stack.trim(), 8000);
       if (resolvedMessage.isEmpty || resolvedStack.isEmpty) {
         return;
       }
@@ -168,15 +203,20 @@ class FrontendErrorReporter {
         'client_session_id': _clientSessionId,
         'fingerprint': fingerprint,
         'kind': kind,
+        'level': level,
         'message': resolvedMessage,
         'stack': resolvedStack,
+        'details': _sanitizeDetails(details),
         'user_agent': _truncate(getUserAgent(), 512),
         'screen': getScreenInfo(),
       };
 
       await _client.post(
         _endpoint,
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          clientSessionHeader: _clientSessionId,
+        },
         body: jsonEncode(payload),
       );
     } catch (_) {}
@@ -266,6 +306,74 @@ class FrontendErrorReporter {
     }
     return value.substring(0, maxLength);
   }
+}
+
+void logFrontendDiagnostic(
+  String kind,
+  String message, {
+  Map<String, Object?>? details,
+}) {
+  final reporter = FrontendErrorReporter._currentReporter;
+  if (reporter == null) {
+    return;
+  }
+  unawaited(reporter.logDiagnostic(kind, message, details: details));
+}
+
+Map<String, Object?>? _sanitizeDetails(Map<String, Object?>? details) {
+  if (details == null || details.isEmpty) {
+    return null;
+  }
+  final sanitized = <String, Object?>{};
+  details.forEach((key, value) {
+    sanitized[_truncateStatic(key.trim(), 64)] = _sanitizeDetailValue(value);
+  });
+  sanitized.removeWhere((key, value) => key.isEmpty || value == null);
+  return sanitized.isEmpty ? null : sanitized;
+}
+
+Object? _sanitizeDetailValue(Object? value) {
+  if (value == null || value is bool || value is num) {
+    return value;
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return _truncateStatic(trimmed, 512);
+  }
+  if (value is Map<Object?, Object?>) {
+    final nested = <String, Object?>{};
+    value.forEach((nestedKey, nestedValue) {
+      if (nestedKey is! String) {
+        return;
+      }
+      nested[_truncateStatic(nestedKey.trim(), 64)] = _sanitizeDetailValue(
+        nestedValue,
+      );
+    });
+    nested.removeWhere(
+      (key, nestedValue) => key.isEmpty || nestedValue == null,
+    );
+    return nested.isEmpty ? null : nested;
+  }
+  if (value is Iterable<Object?>) {
+    final nested = value
+        .map(_sanitizeDetailValue)
+        .where((nestedValue) => nestedValue != null)
+        .take(20)
+        .toList();
+    return nested.isEmpty ? null : nested;
+  }
+  return _truncateStatic(value.toString(), 512);
+}
+
+String _truncateStatic(String value, int maxLength) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return value.substring(0, maxLength);
 }
 
 class _ErrorReportingNavigatorObserver extends NavigatorObserver {

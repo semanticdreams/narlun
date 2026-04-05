@@ -1,9 +1,9 @@
 {
   "name": "narlun",
   "short_name": "narlun",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
+  "id": ".",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
   "background_color": "#1B1328",

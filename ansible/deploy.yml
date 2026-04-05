@@ -89,6 +89,11 @@
         state: restarted
         enabled: true
 
+    - name: Validate nginx configuration
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+
     - name: Reload nginx
       ansible.builtin.service:
         name: nginx

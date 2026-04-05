@@ -21,11 +21,11 @@ server {
     root {{ web_root_dir }};
     index index.html;
 
-    location ~ (^|/)\.(?!well-known(?:/|$)) {
+    location ~ '(^|/)\.(?!well-known(?:/|$))' {
         return 404;
     }
 
-    location ~* \.[a-z0-9]{1,8}$ {
+    location ~* '\.[a-z0-9]{1,8}$' {
         try_files $uri =404;
     }
 
@@ -83,11 +83,11 @@ server {
         root {{ nginx_acme_webroot }};
     }
 
-    location ~ (^|/)\.(?!well-known(?:/|$)) {
+    location ~ '(^|/)\.(?!well-known(?:/|$))' {
         return 404;
     }
 
-    location ~* \.[a-z0-9]{1,8}$ {
+    location ~* '\.[a-z0-9]{1,8}$' {
         try_files $uri =404;
     }
 
@@ -138,11 +138,11 @@ server {
         root {{ nginx_acme_webroot }};
     }
 
-    location ~ (^|/)\.(?!well-known(?:/|$)) {
+    location ~ '(^|/)\.(?!well-known(?:/|$))' {
         return 404;
     }
 
-    location ~* \.[a-z0-9]{1,8}$ {
+    location ~* '\.[a-z0-9]{1,8}$' {
         try_files $uri =404;
     }
 

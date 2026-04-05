@@ -9,6 +9,7 @@ import 'location_service.dart';
 import 'messages_view.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'narlun_app_bar_title.dart';
 import 'nearby_users_view.dart';
 
 class HomeView extends StatelessWidget {
@@ -128,7 +129,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     final tabController = _tabController ?? DefaultTabController.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Narlun'),
+        title: const NarlunAppBarTitle(),
         actions: const [InviteQrButton(), AppBarAvatar()],
         bottom: const TabBar(
           tabs: [

@@ -187,7 +187,9 @@ class MessagesState extends State<MessagesView> {
       if (!mounted || _roomClosed) {
         return;
       }
-      _showRefreshFailure('Could not refresh join requests. Trying again soon.');
+      _showRefreshFailure(
+        'Could not refresh join requests. Trying again soon.',
+      );
     }
   }
 
@@ -353,8 +355,7 @@ class MessagesState extends State<MessagesView> {
     super.initState();
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     httpService =
-        widget.httpService ??
-        Provider.of<HttpService>(context, listen: false);
+        widget.httpService ?? Provider.of<HttpService>(context, listen: false);
     room = widget.room;
 
     _scrollController.addListener(_scrollListener);
@@ -388,7 +389,9 @@ class MessagesState extends State<MessagesView> {
         .listen((_) {
           unawaited(_refreshJoinRequests(silentErrors: true));
         });
-    roomsChangedSubscription = websocketService.roomsChangedStream().listen((_) {
+    roomsChangedSubscription = websocketService.roomsChangedStream().listen((
+      _,
+    ) {
       unawaited(_refreshRoomSummary(silentErrors: true));
     });
     connectionEventsSubscription = websocketService.connectionEvents.listen((
@@ -520,6 +523,7 @@ class MessagesState extends State<MessagesView> {
       appBar: AppBar(
         title: Text(room.displayTitleFor(widget.me)),
         actions: [
+          InviteQrButton(room: room),
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'toggle-push') {
@@ -537,7 +541,6 @@ class MessagesState extends State<MessagesView> {
               ),
             ],
           ),
-          InviteQrButton(room: room),
         ],
       ),
       body: Column(
@@ -574,19 +577,23 @@ class MessagesState extends State<MessagesView> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(request.user.username),
-                                    if (request.user.status?.isNotEmpty ?? false)
+                                    if (request.user.status?.isNotEmpty ??
+                                        false)
                                       Text(
                                         request.user.status!,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context).textTheme.bodySmall,
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodySmall,
                                       ),
                                   ],
                                 ),
                               ),
                               const SizedBox(width: 8),
                               TextButton(
-                                onPressed: _updatingJoinRequestUserIds.contains(
+                                onPressed:
+                                    _updatingJoinRequestUserIds.contains(
                                       request.user.id,
                                     )
                                     ? null
@@ -601,7 +608,8 @@ class MessagesState extends State<MessagesView> {
                                 child: const Text('Reject'),
                               ),
                               FilledButton(
-                                onPressed: _updatingJoinRequestUserIds.contains(
+                                onPressed:
+                                    _updatingJoinRequestUserIds.contains(
                                       request.user.id,
                                     )
                                     ? null

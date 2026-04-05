@@ -148,6 +148,38 @@ void main() {
     expect(passwordField.autofillHints, const [AutofillHints.newPassword]);
   });
 
+  testWidgets('shows that a password is already set without prefill', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    final passwordField = tester.widget<TextField>(
+      find.byType(TextField).at(1),
+    );
+
+    expect(passwordField.controller!.text, isEmpty);
+    expect(find.text('Password'), findsOneWidget);
+    expect(find.text('••••••••'), findsOneWidget);
+    expect(
+      find.text(
+        'A password is already set. Leave blank to keep it, or enter a new one.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('saving a username change finishes credential autofill context', (
     tester,
   ) async {

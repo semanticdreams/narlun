@@ -234,11 +234,9 @@ class ProfileFormState extends State<ProfileForm> {
                     return null;
                   },
                   decoration: InputDecoration(
-                    hintText: hasPassword
-                        ? 'Set a new password'
-                        : 'Set a password',
+                    hintText: hasPassword ? '••••••••' : 'Set a password',
                     helperText: hasPassword
-                        ? 'Leave blank to keep your current password.'
+                        ? 'A password is already set. Leave blank to keep it, or enter a new one.'
                         : 'Add a password to keep this account after sign out.',
                     labelText: hasPassword
                         ? 'Password'

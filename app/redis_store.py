@@ -10,6 +10,7 @@ from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from app.random_statuses import pick_random_status
 from app.util import create_random_avatar
 
 
@@ -234,11 +235,11 @@ class RedisStore:
             'picture': avatar_url(user_id, int(raw_user.get('avatar_version', 0))),
         }
 
-    def _default_room_name(self, raw_user, member_count):
+    def _default_room_name(self, raw_user, *, seed=None):
         status = normalize_status(raw_user.get('status') or raw_user.get('about_me') or '')
         if status:
             return status
-        return f'Room with {int(member_count)} people'
+        return pick_random_status(seed=seed)
 
     def _message_sort_key(self, message):
         message_id = str(message.get('id') or '')
@@ -377,7 +378,7 @@ class RedisStore:
         room['member_count'] = len(room['participants'])
         room['join_requested'] = join_requested
         if not room.get('name'):
-            room['name'] = f'Room with {room["member_count"]} people'
+            room['name'] = pick_random_status(seed=room['id'])
         return {
             'type': 'room',
             'distance': round(distance_meters, -1) if distance_meters is not None else None,
@@ -797,7 +798,7 @@ class RedisStore:
             room_id,
             dm_key,
             members,
-            name=self._default_room_name(owner, len(members)),
+            name=self._default_room_name(owner, seed=room_id),
         )
         return {'id': int(room_id), 'created': created}
 
@@ -824,11 +825,11 @@ class RedisStore:
             if await self._load_user_hash(member_id) is None:
                 raise UserNotFound()
 
+        room_id = await self._next_room_id()
         owner = await self._load_user_hash(owner_id)
         resolved_name = name.strip()
         if not resolved_name:
-            resolved_name = self._default_room_name(owner, len(member_ids))
-        room_id = await self._next_room_id()
+            resolved_name = self._default_room_name(owner, seed=room_id)
         timestamp_ms = now_ms()
         await self.redis.hset(self._room_meta_key(room_id), mapping={
             'id': room_id,

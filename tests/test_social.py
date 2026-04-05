@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import app.redis_store as redis_store
+from app.random_statuses import RANDOM_STATUSES
 from tests.helpers import (
     accept_invite,
     approve_room_request,
@@ -231,6 +234,40 @@ async def test_room_name_snapshots_creator_status_on_creation(cli):
     assert response.status == 200
     rooms = await get_rooms(cli, created['jwt'])
     assert rooms[0]['name'] == 'Morning coffee crew'
+
+
+async def test_room_name_falls_back_to_curated_random_status_without_creator_status(cli):
+    created = await signup(cli)
+    other = await signup(cli)
+
+    room = await join_user(cli, created['jwt'], other['user']['id'])
+    rooms = await get_rooms(cli, created['jwt'])
+
+    assert len(RANDOM_STATUSES) == 100
+    assert len(set(RANDOM_STATUSES)) == 100
+    assert rooms[0]['id'] == room['id']
+    assert rooms[0]['name'] in RANDOM_STATUSES
+
+    rooms_again = await get_rooms(cli, created['jwt'])
+    assert rooms_again[0]['name'] == rooms[0]['name']
+
+
+def test_backend_random_statuses_match_frontend_catalog():
+    frontend_file = (
+        Path(__file__).resolve().parents[1] / 'ui' / 'lib' / 'random_statuses.dart'
+    )
+    frontend_statuses = []
+    inside_list = False
+    for raw_line in frontend_file.read_text().splitlines():
+        line = raw_line.strip()
+        if line.startswith('const randomStatuses = <String>['):
+            inside_list = True
+            continue
+        if inside_list and line == '];':
+            break
+        if inside_list and line.startswith("'") and line.endswith("',"):
+            frontend_statuses.append(line[1:-2].replace("\\'", "'"))
+    assert tuple(frontend_statuses) == RANDOM_STATUSES
 
 
 async def test_expired_join_request_clears_member_count_and_requester_pinned_room(cli, monkeypatch):

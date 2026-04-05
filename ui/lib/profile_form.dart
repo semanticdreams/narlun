@@ -13,8 +13,9 @@ const maxStatusLength = 80;
 
 class ProfileForm extends StatefulWidget {
   final SessionUser data;
+  final ValueChanged<bool>? onDirtyChanged;
 
-  const ProfileForm({super.key, required this.data});
+  const ProfileForm({super.key, required this.data, this.onDirtyChanged});
 
   @override
   ProfileFormState createState() {
@@ -25,22 +26,90 @@ class ProfileForm extends StatefulWidget {
 class ProfileFormState extends State<ProfileForm> {
   late final HttpService httpService;
   final _formKey = GlobalKey<FormState>();
+  final usernameController = TextEditingController();
   final passwordController = TextEditingController();
+  final statusController = TextEditingController();
 
-  String? username;
-  String? status;
+  late String _savedUsername;
+  late String _savedStatus;
+  bool _hasUnsavedChanges = false;
   bool obscurePassword = true;
 
   @override
   void initState() {
     super.initState();
     httpService = Provider.of<HttpService>(context, listen: false);
+    _savedUsername = widget.data.username ?? '';
+    _savedStatus = widget.data.status ?? '';
+    usernameController.text = _savedUsername;
+    statusController.text = _savedStatus;
+    usernameController.addListener(_handleFieldChange);
+    passwordController.addListener(_handleFieldChange);
+    statusController.addListener(_handleFieldChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_hasUnsavedChanges) {
+      return;
+    }
+    if (oldWidget.data == widget.data) {
+      return;
+    }
+    _savedUsername = widget.data.username ?? '';
+    _savedStatus = widget.data.status ?? '';
+    usernameController.text = _savedUsername;
+    statusController.text = _savedStatus;
+    passwordController.clear();
+    obscurePassword = true;
+    _updateDirtyState();
   }
 
   @override
   void dispose() {
-    passwordController.dispose();
+    usernameController
+      ..removeListener(_handleFieldChange)
+      ..dispose();
+    passwordController
+      ..removeListener(_handleFieldChange)
+      ..dispose();
+    statusController
+      ..removeListener(_handleFieldChange)
+      ..dispose();
     super.dispose();
+  }
+
+  bool get hasUnsavedChanges => _hasUnsavedChanges;
+
+  void _handleFieldChange() {
+    _updateDirtyState();
+  }
+
+  void _updateDirtyState() {
+    final nextHasUnsavedChanges =
+        usernameController.text != _savedUsername ||
+        statusController.text != _savedStatus ||
+        passwordController.text.isNotEmpty;
+    if (nextHasUnsavedChanges == _hasUnsavedChanges) {
+      return;
+    }
+    setState(() {
+      _hasUnsavedChanges = nextHasUnsavedChanges;
+    });
+    widget.onDirtyChanged?.call(_hasUnsavedChanges);
+  }
+
+  void _applySavedProfile(SessionUser me) {
+    _savedUsername = me.username ?? '';
+    _savedStatus = me.status ?? '';
+    usernameController.text = _savedUsername;
+    statusController.text = _savedStatus;
+    passwordController.clear();
+    setState(() {
+      obscurePassword = true;
+    });
+    _updateDirtyState();
   }
 
   void _fillGeneratedPassphrase() {
@@ -57,12 +126,62 @@ class ProfileFormState extends State<ProfileForm> {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Generated an 8-word passphrase. Save it somewhere safe.',
+        const SnackBar(
+          content: Text(
+            'Generated an 8-word passphrase. Save it somewhere safe.',
+          ),
         ),
-      ),
-    );
+      );
+  }
+
+  Future<bool> saveProfile({bool showSuccessMessage = true}) async {
+    if (!_formKey.currentState!.validate()) {
+      return false;
+    }
+
+    final meModel = Provider.of<MeModel>(context, listen: false);
+    final messenger = ScaffoldMessenger.of(context);
+    final username = usernameController.text;
+    final status = statusController.text.trim();
+    final password = passwordController.text;
+
+    final data = <String, String?>{'username': username, 'status': status};
+    if (password.trim().isNotEmpty) {
+      data['password'] = password;
+    }
+
+    try {
+      final me = await httpService.update_profile(data);
+      if (!mounted) {
+        return false;
+      }
+      meModel.setData(me);
+      _applySavedProfile(me);
+
+      if (showSuccessMessage) {
+        messenger.showSnackBar(const SnackBar(content: Text('Profile saved')));
+      }
+      return true;
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return false;
+      }
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+      return false;
+    } catch (error) {
+      await showActionErrorDialog(
+        locator<DialogService>(),
+        title: 'Could not save profile',
+        error: error,
+        fallbackDescription:
+            'Your profile could not be saved right now. Try again.',
+      );
+      return false;
+    }
   }
 
   @override
@@ -74,10 +193,7 @@ class ProfileFormState extends State<ProfileForm> {
       child: Column(
         children: [
           TextFormField(
-            initialValue: widget.data.username,
-            onSaved: (String? value) {
-              username = value;
-            },
+            controller: usernameController,
             validator: (value) {
               if (value == null || value.isEmpty) {
                 return 'Username can\'t be empty';
@@ -143,10 +259,7 @@ class ProfileFormState extends State<ProfileForm> {
             ),
           ),
           TextFormField(
-            initialValue: widget.data.status ?? '',
-            onSaved: (String? value) {
-              status = value?.trim();
-            },
+            controller: statusController,
             maxLines: 1,
             maxLength: maxStatusLength,
             decoration: const InputDecoration(
@@ -166,52 +279,8 @@ class ProfileFormState extends State<ProfileForm> {
           Align(
             alignment: Alignment.centerRight,
             child: ElevatedButton(
+              onPressed: saveProfile,
               child: const Text('Save'),
-              onPressed: () async {
-                if (_formKey.currentState!.validate()) {
-                  final meModel = Provider.of<MeModel>(context, listen: false);
-                  final messenger = ScaffoldMessenger.of(context);
-                  _formKey.currentState!.save();
-                  final password = passwordController.text;
-
-                  final data = <String, String?>{
-                    'username': username,
-                    'status': status,
-                  };
-                  if (password.trim().isNotEmpty) {
-                    data['password'] = password;
-                  }
-
-                  try {
-                    final me = await httpService.update_profile(data);
-                    if (!mounted) {
-                      return;
-                    }
-                    meModel.setData(me);
-
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('Profile saved')),
-                    );
-                  } on UnauthorizedResponse {
-                    if (!mounted) {
-                      return;
-                    }
-                    await expireSession(
-                      context,
-                      httpService: httpService,
-                      description: 'Your session has ended. Please sign in again.',
-                    );
-                  } catch (error) {
-                    await showActionErrorDialog(
-                      locator<DialogService>(),
-                      title: 'Could not save profile',
-                      error: error,
-                      fallbackDescription:
-                          'Your profile could not be saved right now. Try again.',
-                    );
-                  }
-                }
-              },
             ),
           ),
         ],

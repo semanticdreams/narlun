@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -35,6 +37,22 @@ class FakeProfileHttpService extends HttpService {
         dialogService: DialogService(),
         client: _DummyHttpClient(),
       );
+
+  int updateProfileCalls = 0;
+  Map<String, dynamic>? lastProfilePayload;
+
+  @override
+  Future<SessionUser> update_profile(data) async {
+    updateProfileCalls += 1;
+    lastProfilePayload = Map<String, dynamic>.from(data as Map);
+    return SessionUser(
+      authenticated: true,
+      id: 1,
+      username: data['username'] as String?,
+      status: data['status'] as String?,
+      hasPassword: true,
+    );
+  }
 }
 
 class FakeInstallPromptService extends InstallPromptService {
@@ -115,6 +133,42 @@ class FakePushNotificationsService extends PushNotificationsService {
   Future<void> syncSession(SessionUser? user) async {}
 }
 
+class _ProfileRouteHost extends StatefulWidget {
+  const _ProfileRouteHost();
+
+  @override
+  State<_ProfileRouteHost> createState() => _ProfileRouteHostState();
+}
+
+class _ProfileRouteHostState extends State<_ProfileRouteHost> {
+  bool _didPushProfile = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didPushProfile) {
+      return;
+    }
+    _didPushProfile = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const ProfileView(),
+          settings: const RouteSettings(name: '/profile'),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(body: Text('Root screen'));
+  }
+}
+
 void main() {
   setUp(() async {
     await setupLocator(reset: true, dialogService: DialogService());
@@ -124,34 +178,49 @@ void main() {
     await locator.reset();
   });
 
+  Widget buildProfileApp({
+    required FakeProfileHttpService httpService,
+    required InstallPromptService installPromptService,
+    required PushNotificationsService pushNotificationsService,
+  }) {
+    return MultiProvider(
+      providers: [
+        Provider<HttpService>.value(value: httpService),
+        ChangeNotifierProvider<InstallPromptService>.value(
+          value: installPromptService,
+        ),
+        ChangeNotifierProvider<PushNotificationsService>.value(
+          value: pushNotificationsService,
+        ),
+        ChangeNotifierProvider(
+          create: (_) => MeModel()
+            ..setData(
+              const SessionUser(
+                authenticated: true,
+                id: 1,
+                username: 'alice',
+                status: 'busy',
+                hasPassword: true,
+              ),
+            ),
+        ),
+      ],
+      child: const MaterialApp(home: _ProfileRouteHost()),
+    );
+  }
+
   testWidgets('shows an install action in profile when install is available', (
     tester,
   ) async {
     final installPromptService = FakeInstallPromptService(available: true);
     final pushNotificationsService = FakePushNotificationsService();
+    final httpService = FakeProfileHttpService();
 
     await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: FakeProfileHttpService()),
-          ChangeNotifierProvider<InstallPromptService>.value(
-            value: installPromptService,
-          ),
-          ChangeNotifierProvider<PushNotificationsService>.value(
-            value: pushNotificationsService,
-          ),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(
-                  authenticated: true,
-                  id: 1,
-                  username: 'alice',
-                ),
-              ),
-          ),
-        ],
-        child: const MaterialApp(home: ProfileView()),
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: installPromptService,
+        pushNotificationsService: pushNotificationsService,
       ),
     );
     await tester.pumpAndSettle();
@@ -170,29 +239,13 @@ void main() {
     tester,
   ) async {
     final pushNotificationsService = FakePushNotificationsService();
+    final httpService = FakeProfileHttpService();
 
     await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: FakeProfileHttpService()),
-          ChangeNotifierProvider<InstallPromptService>.value(
-            value: FakeInstallPromptService(available: false),
-          ),
-          ChangeNotifierProvider<PushNotificationsService>.value(
-            value: pushNotificationsService,
-          ),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(
-                  authenticated: true,
-                  id: 1,
-                  username: 'alice',
-                ),
-              ),
-          ),
-        ],
-        child: const MaterialApp(home: ProfileView()),
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: FakeInstallPromptService(available: false),
+        pushNotificationsService: pushNotificationsService,
       ),
     );
     await tester.pumpAndSettle();
@@ -207,5 +260,108 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(pushNotificationsService.enableCalls, 1);
+  });
+
+  testWidgets('discarding edited profile changes pops back without saving', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+
+    await tester.pumpWidget(
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: FakeInstallPromptService(available: false),
+        pushNotificationsService: FakePushNotificationsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Username'),
+      'bob',
+    );
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save changes?'), findsOneWidget);
+
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.updateProfileCalls, 0);
+    expect(find.text('Root screen'), findsOneWidget);
+  });
+
+  testWidgets('saving edited profile changes pops back after save', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+
+    await tester.pumpWidget(
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: FakeInstallPromptService(available: false),
+        pushNotificationsService: FakePushNotificationsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Status'),
+      'away',
+    );
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save changes?'), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Save'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(httpService.updateProfileCalls, 1);
+    expect(httpService.lastProfilePayload?['status'], 'away');
+    expect(find.text('Root screen'), findsOneWidget);
+  });
+
+  testWidgets('canceling the unsaved changes prompt keeps profile open', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+
+    await tester.pumpWidget(
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: FakeInstallPromptService(available: false),
+        pushNotificationsService: FakePushNotificationsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Username'),
+      'bob',
+    );
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save changes?'), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Cancel'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(httpService.updateProfileCalls, 0);
+    expect(find.text('Profile'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'Username'), findsOneWidget);
   });
 }

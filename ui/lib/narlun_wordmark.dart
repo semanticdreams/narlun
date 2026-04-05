@@ -12,6 +12,11 @@ class NarlunWordmark extends StatelessWidget {
   final Color color;
   final TextAlign? textAlign;
 
+  double get _letterSpacing {
+    final scaledSpacing = -size * 0.02;
+    return scaledSpacing.clamp(-1.0, -0.45);
+  }
+
   @override
   Widget build(BuildContext context) {
     final shadowColor = Color.lerp(color, Colors.black, 0.45) ?? Colors.black;
@@ -22,8 +27,8 @@ class NarlunWordmark extends StatelessWidget {
         color: color,
         fontSize: size,
         fontWeight: FontWeight.w900,
-        letterSpacing: -1.3,
-        height: 0.9,
+        letterSpacing: _letterSpacing,
+        height: 0.96,
         fontFamilyFallback: const [
           'Arial Rounded MT Bold',
           'Trebuchet MS',

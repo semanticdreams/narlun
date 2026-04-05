@@ -568,6 +568,87 @@ class MessagesState extends State<MessagesView> {
     }
   }
 
+  Future<void> _leaveRoom() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_isDirectRoom ? 'Leave conversation?' : 'Leave room?'),
+        content: Text(
+          _isDirectRoom
+              ? 'You will leave this conversation. You can start a new one later.'
+              : 'You will leave this room. If another member is nearby, it may show up in Nearby again and you can request to rejoin.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || _roomClosed) {
+      return;
+    }
+
+    try {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      await httpService.leave_room(room.id);
+      if (!mounted) {
+        return;
+      }
+      _roomClosed = true;
+      Navigator.pop(context, true);
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            _isDirectRoom ? 'Conversation left.' : 'Room left.',
+          ),
+        ),
+      );
+    } on UnauthorizedResponse {
+      if (_roomClosed || !mounted) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } on InvalidUsage catch (e) {
+      if (e.code == 1000) {
+        await _handleRoomDeleted();
+      } else {
+        rethrow;
+      }
+    } catch (error) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription: _isDirectRoom
+                    ? 'Could not leave this conversation right now.'
+                    : 'Could not leave this room right now.',
+              ),
+            ),
+          ),
+        );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1205,11 +1286,6 @@ class MessagesState extends State<MessagesView> {
         actions: [
           InviteQrButton(room: room),
           PopupMenuButton<String>(
-            onSelected: (value) {
-              if (value == 'toggle-push') {
-                unawaited(_updatePushMuted(!room.pushMuted));
-              }
-            },
             itemBuilder: (context) => [
               PopupMenuItem<String>(
                 value: 'toggle-push',
@@ -1219,7 +1295,18 @@ class MessagesState extends State<MessagesView> {
                       : 'Mute notifications',
                 ),
               ),
+              PopupMenuItem<String>(
+                value: 'leave-room',
+                child: Text(_isDirectRoom ? 'Leave conversation' : 'Leave room'),
+              ),
             ],
+            onSelected: (value) {
+              if (value == 'toggle-push') {
+                unawaited(_updatePushMuted(!room.pushMuted));
+              } else if (value == 'leave-room') {
+                unawaited(_leaveRoom());
+              }
+            },
           ),
         ],
       ),

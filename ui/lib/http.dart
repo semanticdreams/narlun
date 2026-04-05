@@ -448,6 +448,13 @@ class HttpService {
     );
   }
 
+  Future<void> leave_room(room_id) async {
+    await client.post(
+      Uri.parse(baseurl + '/social/leave-room'),
+      body: jsonEncode({'room_id': room_id}),
+    );
+  }
+
   Future<List<ChatMessage>> get_messages(
     room_id, {
     bool silentErrors = false,

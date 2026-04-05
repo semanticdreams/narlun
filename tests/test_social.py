@@ -16,6 +16,7 @@ from tests.helpers import (
     mark_room_read,
     get_rooms,
     join_user,
+    leave_room,
     request_room_join,
     reject_room_request,
     send_message,
@@ -268,6 +269,39 @@ def test_backend_random_statuses_match_frontend_catalog():
         if inside_list and line.startswith("'") and line.endswith("',"):
             frontend_statuses.append(line[1:-2].replace("\\'", "'"))
     assert tuple(frontend_statuses) == RANDOM_STATUSES
+
+
+async def test_leaving_group_room_removes_it_and_allows_requesting_to_rejoin_from_nearby(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        '',
+        [users[1]['user']['id'], users[2]['user']['id']],
+    )
+
+    await checkin(cli, users[0]['jwt'], BERLIN)
+    await checkin(cli, users[1]['jwt'], BERLIN)
+
+    response = await leave_room(cli, users[1]['jwt'], room['id'])
+    assert response.status == 204
+
+    remaining_rooms = await get_rooms(cli, users[1]['jwt'])
+    assert all(candidate['id'] != room['id'] for candidate in remaining_rooms)
+
+    nearby = await checkin(cli, users[1]['jwt'], BERLIN)
+    nearby_item = next(
+        item
+        for item in nearby['nearby']
+        if item['type'] == 'room' and item['room']['id'] == room['id']
+    )
+    assert nearby_item['room']['join_requested'] is False
+
+    rejoin_request = await request_room_join(cli, users[1]['jwt'], room['id'])
+    assert rejoin_request.status == 200
+    request_body = await rejoin_request.json()
+    assert request_body['created'] is True
+    assert request_body['room']['id'] == room['id']
 
 
 async def test_expired_join_request_clears_member_count_and_requester_pinned_room(cli, monkeypatch):

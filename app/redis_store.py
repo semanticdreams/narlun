@@ -1510,7 +1510,9 @@ class RedisStore:
         requested_room_ids = await self._clear_join_requests_for_user(user_id)
         room_ids = await self.redis.zrange(self._user_rooms_key(user_id), 0, -1)
         for room_id in room_ids:
-            await self._remove_user_from_room(user_id, int(room_id))
+            result = await self._remove_user_from_room(user_id, int(room_id))
+            if result['remaining_member_ids']:
+                await self.publish_rooms_changed(result['remaining_member_ids'])
 
         await self.redis.delete(self._user_rooms_key(user_id))
         await self.redis.delete(self._user_key(user_id))
@@ -1536,13 +1538,24 @@ class RedisStore:
             await self.publish_nearby_changed([user_id])
         return True
 
+    async def leave_room(self, user_id, room_id):
+        room_id = int(room_id)
+        user_id = int(user_id)
+        if not await self.user_in_room(user_id, room_id):
+            raise PermissionDenied()
+        return await self._remove_user_from_room(user_id, room_id)
+
     async def _remove_user_from_room(self, user_id, room_id):
         meta_key = self._room_meta_key(room_id)
         meta = await self.redis.hgetall(meta_key)
         if not meta:
-            return
+            return {
+                'room_deleted': True,
+                'remaining_member_ids': [],
+            }
 
         nearby_viewer_ids = set(await self.get_room_nearby_update_targets(room_id))
+        nearby_viewer_ids.add(int(user_id))
         members_key = self._room_members_key(room_id)
         await self.redis.srem(members_key, user_id)
         await self.redis.zrem(self._user_rooms_key(user_id), room_id)
@@ -1560,7 +1573,6 @@ class RedisStore:
             requester_ids = await self._clear_join_requests_for_room(room_id)
             nearby_viewer_ids.update(requester_ids)
             await self.publish_room_deleted(room_id)
-            await self.publish_rooms_changed(remaining_members)
             for member in remaining_members:
                 await self.redis.zrem(self._user_rooms_key(member), room_id)
                 await self.redis.hdel(self._user_room_prefs_key(member), room_id)
@@ -1572,6 +1584,10 @@ class RedisStore:
             await self.redis.delete(self._room_read_states_key(room_id))
         if nearby_viewer_ids:
             await self.publish_nearby_changed(nearby_viewer_ids)
+        return {
+            'room_deleted': should_delete_room,
+            'remaining_member_ids': remaining_members,
+        }
 
     def _sample_ids(self, values, *, limit=10):
         return [int(value) for value in list(values)[:limit]]

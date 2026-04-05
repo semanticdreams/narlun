@@ -46,6 +46,7 @@ class FakeHttpService extends HttpService {
   final updatedRoomSettings = <Map<String, dynamic>>[];
   final approvedRoomRequests = <Map<String, dynamic>>[];
   final rejectedRoomRequests = <Map<String, dynamic>>[];
+  final leftRooms = <int>[];
   final sentMessages = <Map<String, dynamic>>[];
   final markedReads = <Map<String, dynamic>>[];
 
@@ -157,6 +158,11 @@ class FakeHttpService extends HttpService {
   @override
   Future<void> reject_room_request(room_id, user_id) async {
     rejectedRoomRequests.add({'room_id': room_id, 'user_id': user_id});
+  }
+
+  @override
+  Future<void> leave_room(room_id) async {
+    leftRooms.add(room_id as int);
   }
 
   @override
@@ -746,6 +752,83 @@ void main() {
       {'room_id': 1, 'push_muted': true},
     ]);
     expect(find.text('Notifications muted for this room.'), findsOneWidget);
+  });
+
+  testWidgets('leaves the room from the room menu after confirmation', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: true,
+          name: 'Coffee crew',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MessagesView(
+                        room: RoomSummary(
+                          id: 1,
+                          isGroup: true,
+                          name: 'Coffee crew',
+                          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                          participants: const [
+                            RoomParticipant(id: 1, username: 'me'),
+                            RoomParticipant(id: 2, username: 'other'),
+                          ],
+                        ),
+                        me: const SessionUser(
+                          authenticated: true,
+                          id: 1,
+                          username: 'me',
+                        ),
+                        httpService: httpService,
+                        websocketService: websocketService,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Open room'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open room'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Leave room'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Leave room?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Leave'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.leftRooms, [1]);
+    expect(find.text('Open room'), findsOneWidget);
   });
 
   testWidgets('shows pending join requests and approves them from the room', (

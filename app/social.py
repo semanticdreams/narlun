@@ -294,6 +294,34 @@ async def reject_room_request(req):
     return web.Response(status=204)
 
 
+@routes.post('/leave-room')
+@authenticated
+async def leave_room(req):
+    try:
+        room_id = int(req.data.get('room_id'))
+    except (TypeError, ValueError):
+        raise InvalidRoomError()
+
+    try:
+        result = await req.store.leave_room(req.user['id'], room_id)
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    except RoomNotFound:
+        raise NoSuchRoomError()
+
+    await req.store.publish_rooms_changed([req.user['id'], *result['remaining_member_ids']])
+    logger.info(
+        'Left room',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            room_deleted=result['room_deleted'] is True,
+            remaining_member_ids=sample_values(result['remaining_member_ids']),
+        ),
+    )
+    return web.Response(status=204)
+
+
 @routes.post('/send-message')
 @authenticated
 async def send_message(req):

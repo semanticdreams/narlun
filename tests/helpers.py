@@ -150,6 +150,15 @@ async def reject_room_request(cli, jwt, room_id, user_id):
     return response
 
 
+async def leave_room(cli, jwt, room_id):
+    response = await cli.post(
+        '/api/social/leave-room',
+        json={'room_id': room_id},
+        headers=auth_headers(jwt),
+    )
+    return response
+
+
 async def send_message(cli, jwt, room_id, body):
     response = await cli.post(
         '/api/social/send-message',

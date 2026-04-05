@@ -173,3 +173,15 @@ async def get_messages(cli, jwt, room_id):
         headers=auth_headers(jwt),
     )
     return response
+
+
+async def mark_room_read(cli, jwt, room_id, message_id=None):
+    payload = {'room_id': room_id}
+    if message_id is not None:
+        payload['message_id'] = message_id
+    response = await cli.post(
+        '/api/social/mark-room-read',
+        json=payload,
+        headers=auth_headers(jwt),
+    )
+    return response

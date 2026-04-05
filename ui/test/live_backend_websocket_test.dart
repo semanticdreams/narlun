@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -274,6 +276,16 @@ class BackendClient {
     return jsonDecode(response.body) as List<dynamic>;
   }
 
+  Future<List<dynamic>> getMessages(String jwtCookie, int roomId) async {
+    final response = await _client.post(
+      apiBaseUri.resolve('social/get-messages'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode({'room_id': roomId}),
+    );
+    expect(response.statusCode, 200);
+    return jsonDecode(response.body) as List<dynamic>;
+  }
+
   Future<Map<String, dynamic>> sendMessage(
     String jwtCookie,
     int roomId,
@@ -286,6 +298,40 @@ class BackendClient {
     );
     expect(response.statusCode, 200);
     return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>?> markRoomRead(
+    String jwtCookie,
+    int roomId, {
+    String? messageId,
+  }) async {
+    final payload = <String, Object?>{'room_id': roomId};
+    if (messageId != null) {
+      payload['message_id'] = messageId;
+    }
+    final response = await _client.post(
+      apiBaseUri.resolve('social/mark-room-read'),
+      headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
+      body: jsonEncode(payload),
+    );
+    expect(response.statusCode, anyOf(200, 204));
+    if (response.statusCode == 204) {
+      return null;
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<RawBackendWebSocket> connectWebSocket(String jwtCookie) async {
+    final wsBaseUri = apiBaseUri.resolve('ws');
+    final wsUri = wsBaseUri.replace(
+      scheme: wsBaseUri.scheme == 'https' ? 'wss' : 'ws',
+      queryParameters: const {'client_session_id': 'live-test-client'},
+    );
+    final socket = await WebSocket.connect(
+      wsUri.toString(),
+      headers: {'Cookie': jwtCookie},
+    );
+    return RawBackendWebSocket(socket);
   }
 
   Future<void> signout(String jwtCookie) async {
@@ -350,12 +396,57 @@ class BackendSession {
     return client.getRooms(jwtCookie);
   }
 
+  Future<List<dynamic>> getMessages(int roomId) {
+    return client.getMessages(jwtCookie, roomId);
+  }
+
   Future<Map<String, dynamic>> sendMessage(int roomId, String body) {
     return client.sendMessage(jwtCookie, roomId, body);
   }
 
+  Future<Map<String, dynamic>?> markRoomRead(int roomId, {String? messageId}) {
+    return client.markRoomRead(jwtCookie, roomId, messageId: messageId);
+  }
+
   Future<void> signout() {
     return client.signout(jwtCookie);
+  }
+}
+
+class RawBackendWebSocket {
+  RawBackendWebSocket(this._socket) {
+    _subscription = _socket.listen((event) {
+      _buffer.addLast(event as String);
+      _waiter?.complete();
+      _waiter = null;
+    });
+  }
+
+  final WebSocket _socket;
+  final Queue<String> _buffer = Queue<String>();
+  StreamSubscription? _subscription;
+  Completer<void>? _waiter;
+
+  Future<void> sendJson(Map<String, Object?> payload) async {
+    _socket.add(jsonEncode(payload));
+  }
+
+  Future<Map<String, dynamic>> nextJson({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (_buffer.isEmpty) {
+      _waiter ??= Completer<void>();
+      await _waiter!.future.timeout(timeout);
+    }
+    if (_buffer.isEmpty) {
+      throw StateError('No websocket event arrived');
+    }
+    return jsonDecode(_buffer.removeFirst()) as Map<String, dynamic>;
+  }
+
+  Future<void> close() async {
+    await _subscription?.cancel();
+    await _socket.close();
   }
 }
 
@@ -748,4 +839,69 @@ void main() {
       await pumpUntilNotFound(tester, find.text('Old status'));
     },
   );
+
+  testWidgets('typing indicator appears from a live websocket room event', (
+    tester,
+  ) async {
+    await launchApp(tester, harness);
+    final aliceUsername = randomUsername('alice');
+    await signUpThroughUi(tester, aliceUsername);
+
+    final aliceJwtCookie = await currentFrontendJwtCookie();
+    final alice = await backendClient.getMe(aliceJwtCookie);
+    final bob = await backendClient.signupGuest(randomUsername('bob'));
+    final room = await bob.joinUser(alice['id'] as int);
+
+    await pumpUntilFound(tester, find.text(bob.username));
+    await openRoomFromList(tester, bob.username);
+
+    final bobSocket = await backendClient.connectWebSocket(bob.jwtCookie);
+    try {
+      await bobSocket.sendJson({
+        'type': 'subscribe-room',
+        'data': {'room_id': room['id']},
+      });
+      final subscribed = await bobSocket.nextJson();
+      expect(subscribed['type'], 'subscribed-room');
+
+      await bobSocket.sendJson({
+        'type': 'typing-state',
+        'data': {'room_id': room['id'], 'is_typing': true},
+      });
+      await pumpUntilFound(
+        tester,
+        find.text('${bob.username} is typing...'),
+      );
+    } finally {
+      await bobSocket.close();
+    }
+  });
+
+  testWidgets('read receipts update in the live room view', (tester) async {
+    await launchApp(tester, harness);
+    final aliceUsername = randomUsername('alice');
+    await signUpThroughUi(tester, aliceUsername);
+
+    final aliceJwtCookie = await currentFrontendJwtCookie();
+    final alice = await backendClient.getMe(aliceJwtCookie);
+    final bob = await backendClient.signupGuest(randomUsername('bob'));
+    final room = await bob.joinUser(alice['id'] as int);
+
+    await pumpUntilFound(tester, find.text(bob.username));
+    await openRoomFromList(tester, bob.username);
+
+    await tester.enterText(
+      find.byKey(const Key('message-input-field')),
+      'hello with receipt',
+    );
+    await tester.tap(find.byKey(const Key('message-send-button')));
+    await tester.pump();
+    await pumpUntilFound(tester, find.text('hello with receipt'));
+
+    final bobMessages = await bob.getMessages(room['id'] as int);
+    final latestMessageId = bobMessages.first['id'] as String;
+    await bob.markRoomRead(room['id'] as int, messageId: latestMessageId);
+
+    await pumpUntilFound(tester, find.text('Seen'));
+  });
 }

@@ -472,10 +472,27 @@ class HttpService {
     return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future<void> send_message(room_id, message_body) async {
+  Future<ChatMessage> send_message(room_id, message_body) async {
     final data = {'room_id': room_id, 'body': message_body};
-    await client.post(
+    final resp = await client.post(
       Uri.parse(baseurl + '/social/send-message'),
+      body: jsonEncode(data),
+    );
+    return ChatMessage.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<void> mark_room_read(
+    room_id, {
+    String? messageId,
+    bool silentErrors = true,
+  }) async {
+    final data = <String, Object?>{'room_id': room_id};
+    if (messageId != null && messageId.isNotEmpty) {
+      data['message_id'] = messageId;
+    }
+    await client.post(
+      Uri.parse(baseurl + '/social/mark-room-read'),
+      headers: _requestHeaders(silentErrors: silentErrors),
       body: jsonEncode(data),
     );
   }

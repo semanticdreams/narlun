@@ -63,19 +63,51 @@ class RoomParticipant {
   factory RoomParticipant.fromJson(Map<String, dynamic> json) {
     return RoomParticipant(
       id: json['id'] as int,
-      username: json['username'] as String,
+      username: json['username'] as String? ?? 'Unknown user',
       picture: json['picture'] as String?,
     );
+  }
+
+  RoomParticipant copyWith({
+    int? id,
+    String? username,
+    String? picture,
+  }) {
+    return RoomParticipant(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      picture: picture ?? this.picture,
+    );
+  }
+
+  static List<RoomParticipant> listFromJson(List<dynamic> jsonList) {
+    return jsonList
+        .cast<Map<String, dynamic>>()
+        .map(RoomParticipant.fromJson)
+        .toList();
   }
 }
 
 class MessagePreview {
   final String body;
+  final int? senderId;
+  final String? senderUsername;
 
-  const MessagePreview({required this.body});
+  const MessagePreview({
+    required this.body,
+    this.senderId,
+    this.senderUsername,
+  });
 
   factory MessagePreview.fromJson(Map<String, dynamic> json) {
-    return MessagePreview(body: json['body'] as String? ?? '');
+    final sender = json['sender'] as Map<String, dynamic>?;
+    return MessagePreview(
+      body: json['body'] as String? ?? '',
+      senderId: json['sender_id'] as int? ?? sender?['id'] as int?,
+      senderUsername:
+          json['sender_username'] as String? ??
+          sender?['username'] as String?,
+    );
   }
 }
 
@@ -195,21 +227,36 @@ class ChatMessage {
   final String id;
   final String body;
   final int senderId;
+  final String? senderUsername;
+  final String? senderPicture;
   final DateTime timestamp;
+  final List<RoomParticipant> readByUsers;
 
   const ChatMessage({
     required this.id,
     required this.body,
     required this.senderId,
     required this.timestamp,
+    this.senderUsername,
+    this.senderPicture,
+    this.readByUsers = const [],
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    final sender = json['sender'] as Map<String, dynamic>?;
     return ChatMessage(
       id: '${json['id']}',
       body: json['body'] as String? ?? '',
-      senderId: json['sender_id'] as int,
+      senderId: json['sender_id'] as int? ?? sender?['id'] as int,
+      senderUsername:
+          json['sender_username'] as String? ??
+          sender?['username'] as String?,
+      senderPicture:
+          json['sender_picture'] as String? ?? sender?['picture'] as String?,
       timestamp: DateTime.parse(json['timestamp'] as String),
+      readByUsers: json['read_by_users'] is List<dynamic>
+          ? RoomParticipant.listFromJson(json['read_by_users'] as List<dynamic>)
+          : const [],
     );
   }
 
@@ -218,6 +265,26 @@ class ChatMessage {
         .cast<Map<String, dynamic>>()
         .map(ChatMessage.fromJson)
         .toList();
+  }
+
+  ChatMessage copyWith({
+    String? id,
+    String? body,
+    int? senderId,
+    String? senderUsername,
+    String? senderPicture,
+    DateTime? timestamp,
+    List<RoomParticipant>? readByUsers,
+  }) {
+    return ChatMessage(
+      id: id ?? this.id,
+      body: body ?? this.body,
+      senderId: senderId ?? this.senderId,
+      senderUsername: senderUsername ?? this.senderUsername,
+      senderPicture: senderPicture ?? this.senderPicture,
+      timestamp: timestamp ?? this.timestamp,
+      readByUsers: readByUsers ?? this.readByUsers,
+    );
   }
 }
 

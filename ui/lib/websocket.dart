@@ -476,6 +476,14 @@ class WebsocketService {
         'room-requests-changed',
       ).where((event) => event['data']['room_id'] == roomId);
 
+  Stream<Map<String, dynamic>> typingStateStream(roomId) => eventsStream(
+    'typing-state',
+  ).where((event) => event['data']['room_id'] == roomId);
+
+  Stream<Map<String, dynamic>> roomReadStream(roomId) => eventsStream(
+    'room-read',
+  ).where((event) => event['data']['room_id'] == roomId);
+
   Future<void> ensureConnected() async {
     if (_websocket == null) {
       _shouldReconnect = true;
@@ -581,6 +589,20 @@ class WebsocketService {
         'data': {'room_id': normalizedRoomId},
       }),
     );
+  }
+
+  Future<void> sendTypingState(roomId, {required bool isTyping}) async {
+    final normalizedRoomId = _roomIdFromData({'room_id': roomId});
+    if (normalizedRoomId == null) {
+      throw ArgumentError.value(roomId, 'roomId', 'roomId must be an integer');
+    }
+    await send({
+      'type': 'typing-state',
+      'data': {
+        'room_id': normalizedRoomId,
+        'is_typing': isTyping,
+      },
+    });
   }
 
   Future<void> close() async {

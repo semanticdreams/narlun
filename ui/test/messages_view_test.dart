@@ -37,6 +37,8 @@ class FakeHttpService extends HttpService {
   _roomSettingsHandlers = Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>();
   final Queue<Future<List<RoomJoinRequest>> Function(int roomId)>
   _roomRequestHandlers = Queue<Future<List<RoomJoinRequest>> Function(int roomId)>();
+  final Queue<Future<ChatMessage> Function(int roomId, String body)>
+  _sendMessageHandlers = Queue<Future<ChatMessage> Function(int roomId, String body)>();
   var getMessagesCalls = 0;
   var getRoomsCalls = 0;
   var getRoomRequestsCalls = 0;
@@ -44,6 +46,8 @@ class FakeHttpService extends HttpService {
   final updatedRoomSettings = <Map<String, dynamic>>[];
   final approvedRoomRequests = <Map<String, dynamic>>[];
   final rejectedRoomRequests = <Map<String, dynamic>>[];
+  final sentMessages = <Map<String, dynamic>>[];
+  final markedReads = <Map<String, dynamic>>[];
 
   void enqueueMessages(Future<List<ChatMessage>> Function(int roomId) handler) {
     _messageHandlers.add(handler);
@@ -63,6 +67,12 @@ class FakeHttpService extends HttpService {
     Future<List<RoomJoinRequest>> Function(int roomId) handler,
   ) {
     _roomRequestHandlers.add(handler);
+  }
+
+  void enqueueSendMessage(
+    Future<ChatMessage> Function(int roomId, String body) handler,
+  ) {
+    _sendMessageHandlers.add(handler);
   }
 
   @override
@@ -148,6 +158,35 @@ class FakeHttpService extends HttpService {
   Future<void> reject_room_request(room_id, user_id) async {
     rejectedRoomRequests.add({'room_id': room_id, 'user_id': user_id});
   }
+
+  @override
+  Future<ChatMessage> send_message(room_id, message_body) async {
+    sentMessages.add({'room_id': room_id, 'body': message_body});
+    if (_sendMessageHandlers.isNotEmpty) {
+      return _sendMessageHandlers.removeFirst()(room_id as int, message_body as String);
+    }
+    return ChatMessage(
+      id: 'local-${sentMessages.length}',
+      body: message_body as String,
+      senderId: 1,
+      senderUsername: 'me',
+      timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+      readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+    );
+  }
+
+  @override
+  Future<void> mark_room_read(
+    room_id, {
+    String? messageId,
+    bool silentErrors = true,
+  }) async {
+    markedReads.add({
+      'room_id': room_id,
+      'message_id': messageId,
+      'silent_errors': silentErrors,
+    });
+  }
 }
 
 class FakeWebsocketService extends WebsocketService {
@@ -165,10 +204,15 @@ class FakeWebsocketService extends WebsocketService {
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _roomRequestsChangedController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _typingStateController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _roomReadController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _connectionController =
       StreamController<String>.broadcast();
   final subscribedRooms = <int>[];
   final unsubscribedRooms = <int>[];
+  final typingStates = <Map<String, dynamic>>[];
   var ensureConnectedCalls = 0;
   Object? subscribeError;
 
@@ -212,7 +256,24 @@ class FakeWebsocketService extends WebsocketService {
       );
 
   @override
+  Stream<Map<String, dynamic>> typingStateStream(roomId) =>
+      _typingStateController.stream.where(
+        (event) => event['data']['room_id'] == roomId,
+      );
+
+  @override
+  Stream<Map<String, dynamic>> roomReadStream(roomId) =>
+      _roomReadController.stream.where(
+        (event) => event['data']['room_id'] == roomId,
+      );
+
+  @override
   Stream<String> get connectionEvents => _connectionController.stream;
+
+  @override
+  Future<void> sendTypingState(roomId, {required bool isTyping}) async {
+    typingStates.add({'room_id': roomId, 'is_typing': isTyping});
+  }
 
   void emitMessage(int roomId, List<dynamic> messages) {
     _messagesController.add({
@@ -242,13 +303,49 @@ class FakeWebsocketService extends WebsocketService {
       'data': {'room_id': roomId},
     });
   }
+
+  void emitTypingState({
+    required int roomId,
+    required int userId,
+    required bool isTyping,
+    String username = 'Someone',
+  }) {
+    _typingStateController.add({
+      'type': 'typing-state',
+      'data': {
+        'room_id': roomId,
+        'user_id': userId,
+        'is_typing': isTyping,
+        'user': {'id': userId, 'username': username},
+      },
+    });
+  }
+
+  void emitRoomRead({
+    required int roomId,
+    required int userId,
+    required String messageId,
+    String username = 'Someone',
+  }) {
+    _roomReadController.add({
+      'type': 'room-read',
+      'data': {
+        'room_id': roomId,
+        'user_id': userId,
+        'message_id': messageId,
+        'user': {'id': userId, 'username': username},
+      },
+    });
+  }
 }
 
 Widget _buildMessagesApp({
   required FakeHttpService httpService,
   required FakeWebsocketService websocketService,
+  RoomSummary? room,
+  SessionUser me = const SessionUser(authenticated: true, id: 1, username: 'me'),
 }) {
-  final room = RoomSummary(
+  room ??= RoomSummary(
     id: 1,
     isGroup: false,
     updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
@@ -257,7 +354,6 @@ Widget _buildMessagesApp({
       RoomParticipant(id: 2, username: 'other'),
     ],
   );
-  const me = SessionUser(authenticated: true, id: 1, username: 'me');
   return MaterialApp(
     home: MessagesView(
       room: room,
@@ -318,6 +414,32 @@ void main() {
       expect(websocketService.subscribedRooms, [1]);
     },
   );
+
+  testWidgets('shows loading state before the first room history response', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final historyCompleter = Completer<List<ChatMessage>>();
+    httpService.enqueueMessages((_) => historyCompleter.future);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('No messages yet'), findsNothing);
+
+    historyCompleter.complete(const []);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('No messages yet'), findsOneWidget);
+  });
 
   testWidgets('refreshes room history when a new fetch succeeds', (tester) async {
     final websocketService = FakeWebsocketService();
@@ -774,5 +896,262 @@ void main() {
     expect(find.text('Updated status'), findsOneWidget);
     expect(find.text('newcomer'), findsNothing);
     expect(find.text('Old status'), findsNothing);
+  });
+
+  testWidgets('group chat shows author labels for received message clusters', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final groupRoom = RoomSummary(
+      id: 1,
+      isGroup: true,
+      name: 'Coffee crew',
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 1, username: 'me'),
+        RoomParticipant(id: 2, username: 'Bob'),
+        RoomParticipant(id: 3, username: 'Charlie'),
+      ],
+    );
+    httpService.enqueueRooms(() async => [groupRoom]);
+    httpService.enqueueMessages((_) async => [
+      ChatMessage(
+        id: 'm1',
+        body: 'First from Bob',
+        senderId: 2,
+        senderUsername: 'Bob',
+        timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      ),
+      ChatMessage(
+        id: 'm2',
+        body: 'Second from Bob',
+        senderId: 2,
+        senderUsername: 'Bob',
+        timestamp: DateTime.parse('2026-04-04T10:01:00.000Z'),
+      ),
+      ChatMessage(
+        id: 'm3',
+        body: 'From Charlie',
+        senderId: 3,
+        senderUsername: 'Charlie',
+        timestamp: DateTime.parse('2026-04-04T10:06:00.000Z'),
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        room: groupRoom,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bob'), findsOneWidget);
+    expect(find.text('Charlie'), findsOneWidget);
+    expect(find.text('First from Bob'), findsOneWidget);
+    expect(find.text('Second from Bob'), findsOneWidget);
+    expect(find.text('From Charlie'), findsOneWidget);
+  });
+
+  testWidgets('composer publishes typing state changes', (tester) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: true,
+          name: 'Coffee crew',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'Bob'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('message-input-field')),
+      'typing now',
+    );
+    await tester.pump();
+
+    expect(websocketService.typingStates.last, {
+      'room_id': 1,
+      'is_typing': true,
+    });
+
+    await tester.enterText(find.byKey(const Key('message-input-field')), '');
+    await tester.pump();
+
+    expect(websocketService.typingStates.last, {
+      'room_id': 1,
+      'is_typing': false,
+    });
+  });
+
+  testWidgets('updates seen label when another member reads the latest message', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => [
+      ChatMessage(
+        id: 'own-1',
+        body: 'My message',
+        senderId: 1,
+        senderUsername: 'me',
+        timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Seen'), findsNothing);
+
+    websocketService.emitRoomRead(
+      roomId: 1,
+      userId: 2,
+      messageId: 'own-1',
+      username: 'other',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Seen'), findsOneWidget);
+  });
+
+  testWidgets('sending a message renders it immediately and marks it read', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueSendMessage((roomId, body) async {
+      return ChatMessage(
+        id: 'sent-1',
+        body: body,
+        senderId: 1,
+        senderUsername: 'me',
+        timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+      );
+    });
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('message-input-field')), 'Hello now');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('message-send-button')));
+    await tester.pump();
+
+    expect(find.text('Hello now'), findsOneWidget);
+    expect(httpService.sentMessages, [
+      {'room_id': 1, 'body': 'Hello now'},
+    ]);
+
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(httpService.markedReads.last['message_id'], 'sent-1');
+  });
+
+  testWidgets('outgoing message uses single check until someone reads it', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => [
+      ChatMessage(
+        id: 'own-1',
+        body: 'Waiting to be seen',
+        senderId: 1,
+        senderUsername: 'me',
+        timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+
+    websocketService.emitRoomRead(
+      roomId: 1,
+      userId: 2,
+      messageId: 'own-1',
+      username: 'other',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
   });
 }

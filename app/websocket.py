@@ -323,6 +323,47 @@ async def websocket_handler(req):
                             message='Cannot subscribe to that room',
                             room_id=room_id,
                         )
+                elif message_type == 'typing-state':
+                    try:
+                        room_id = int(room_id)
+                    except (TypeError, ValueError):
+                        await _send_error(
+                            ws,
+                            code='invalid-room-id',
+                            message='room_id must be an integer',
+                        )
+                        continue
+                    is_typing = data.get('is_typing')
+                    if not isinstance(is_typing, bool):
+                        await _send_error(
+                            ws,
+                            code='invalid-typing-state',
+                            message='is_typing must be a boolean',
+                        )
+                        continue
+                    if not await req.store.user_in_room(req.user['id'], room_id):
+                        await _send_error(
+                            ws,
+                            code='room-access-denied',
+                            message='Cannot send typing updates for that room',
+                            room_id=room_id,
+                        )
+                        continue
+                    await req.store.publish_room_typing(
+                        room_id,
+                        req.user['id'],
+                        is_typing=is_typing,
+                    )
+                    logger.info(
+                        'Updated room typing state',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                            room_id=room_id,
+                            is_typing=is_typing,
+                        ),
+                    )
                 elif message_type == 'unsubscribe-room':
                     if await _unsubscribe_room(channel, room_id, subscribed_rooms):
                         logger.info(

@@ -64,6 +64,11 @@ class InvalidJoinRequestError(InvalidUsage):
             self.message = message
 
 
+class InvalidReadReceiptError(InvalidUsage):
+    code = 1007
+    message = 'Invalid read receipt'
+
+
 @routes.post('/checkin')
 @authenticated
 async def checkin(req):
@@ -319,6 +324,37 @@ async def send_message(req):
         ),
     )
     return jsonify(message)
+
+
+@routes.post('/mark-room-read')
+@authenticated
+async def mark_room_read(req):
+    room_id = req.data.get('room_id')
+    message_id = req.data.get('message_id')
+    try:
+        read_state = await req.store.mark_room_read(
+            req.user['id'],
+            room_id,
+            message_id=message_id,
+        )
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    except RoomNotFound:
+        raise InvalidReadReceiptError(message='Message is no longer available')
+
+    if read_state is None:
+        return web.Response(status=204)
+
+    await req.store.publish_room_read(room_id, read_state)
+    logger.info(
+        'Marked room read',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            message_id=read_state['message_id'],
+        ),
+    )
+    return jsonify(read_state)
 
 
 @routes.post('/create-invite')

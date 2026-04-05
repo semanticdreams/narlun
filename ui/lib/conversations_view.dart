@@ -62,6 +62,20 @@ class _ConversationsState extends State<ConversationsView> {
   bool _reportedPushPromptVisible = false;
   bool _reportedInstallPromptVisible = false;
 
+  String _lastMessagePreview(RoomSummary room, SessionUser? currentUser) {
+    final preview = room.lastMessage;
+    if (preview == null || preview.body.isEmpty) {
+      return '';
+    }
+    if (room.isGroup &&
+        preview.senderUsername != null &&
+        preview.senderUsername!.isNotEmpty &&
+        preview.senderId != currentUser?.id) {
+      return '${preview.senderUsername}: ${preview.body}';
+    }
+    return preview.body;
+  }
+
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger
@@ -561,7 +575,7 @@ class _ConversationsState extends State<ConversationsView> {
                             ? (room.name ?? '')
                             : room.displayTitleFor(currentUser),
                       ),
-                      subtitle: Text(room.lastMessage?.body ?? ''),
+                      subtitle: Text(_lastMessagePreview(room, currentUser)),
                       onTap: currentUser == null
                           ? null
                           : () async {

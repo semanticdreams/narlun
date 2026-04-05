@@ -10,6 +10,7 @@ from tests.helpers import (
     create_group_room,
     get_room_requests,
     get_messages,
+    mark_room_read,
     get_rooms,
     join_user,
     request_room_join,
@@ -355,6 +356,11 @@ async def test_dm_rooms_messages_and_group_rooms(cli):
     assert messages_response.status == 200
     messages = await messages_response.json()
     assert messages[0]['body'] == 'hello there'
+    assert messages[0]['sender']['id'] == users[0]['user']['id']
+    assert messages[0]['sender']['username'] == users[0]['username']
+    assert [reader['id'] for reader in messages[0]['read_by_users']] == [
+        users[0]['user']['id'],
+    ]
 
     group_room = await create_group_room(
         cli,
@@ -364,6 +370,23 @@ async def test_dm_rooms_messages_and_group_rooms(cli):
     )
     rooms = await get_rooms(cli, users[2]['jwt'])
     assert any(room['id'] == group_room['id'] and room['is_group'] for room in rooms)
+
+
+async def test_mark_room_read_adds_read_receipts_to_messages(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    sent = await send_message(cli, users[0]['jwt'], room['id'], 'hello there')
+
+    response = await mark_room_read(cli, users[1]['jwt'], room['id'], sent['id'])
+    assert response.status == 200
+
+    messages_response = await get_messages(cli, users[0]['jwt'], room['id'])
+    assert messages_response.status == 200
+    messages = await messages_response.json()
+    assert sorted(reader['id'] for reader in messages[0]['read_by_users']) == sorted([
+        users[0]['user']['id'],
+        users[1]['user']['id'],
+    ])
 
 
 async def test_message_expiry_after_seven_days(cli, monkeypatch):
@@ -389,13 +412,13 @@ async def test_message_ordering_within_one_second(cli, monkeypatch):
     users = [await signup(cli) for _ in range(2)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
 
-    values = iter([1000001, 1000002])
+    values = iter([1000001, 1000002, 1000003, 1000004])
     monkeypatch.setattr(redis_store, 'now_ms', lambda: next(values))
 
     await send_message(cli, users[0]['jwt'], room['id'], 'first')
     await send_message(cli, users[0]['jwt'], room['id'], 'second')
 
-    monkeypatch.setattr(redis_store, 'now_ms', lambda: 1000003)
+    monkeypatch.setattr(redis_store, 'now_ms', lambda: 1000005)
     response = await get_messages(cli, users[0]['jwt'], room['id'])
     assert response.status == 200
     messages = await response.json()

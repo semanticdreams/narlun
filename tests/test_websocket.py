@@ -13,8 +13,10 @@ from tests.helpers import (
     checkin,
     create_group_room,
     create_avatar_bytes,
+    get_messages,
     get_rooms,
     join_user,
+    mark_room_read,
     reject_room_request,
     request_room_join,
     send_message,
@@ -161,6 +163,81 @@ async def test_invalid_websocket_payload_returns_error_and_connection_stays_open
         delivered = await ws.receive_json()
         assert delivered['type'] == 'new-messages'
         assert delivered['data']['messages'][0]['body'] == 'still alive'
+        assert delivered['data']['messages'][0]['sender']['id'] == users[0]['user']['id']
+
+
+async def test_mark_room_read_broadcasts_room_read_event(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    sent = await send_message(cli, users[0]['jwt'], room['id'], 'hello')
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        await ws.send_str(json.dumps({'type': 'subscribe-room', 'data': {'room_id': room['id']}}))
+        subscribed = await ws.receive_json()
+        assert subscribed == {
+            'type': 'subscribed-room',
+            'data': {'room_id': room['id']},
+        }
+
+        response = await mark_room_read(cli, users[1]['jwt'], room['id'], sent['id'])
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event['type'] == 'room-read'
+        assert event['data']['room_id'] == room['id']
+        assert event['data']['user_id'] == users[1]['user']['id']
+        assert event['data']['message_id'] == sent['id']
+
+        messages_response = await get_messages(cli, users[0]['jwt'], room['id'])
+        messages = await messages_response.json()
+        assert sorted(reader['id'] for reader in messages[0]['read_by_users']) == sorted([
+            users[0]['user']['id'],
+            users[1]['user']['id'],
+        ])
+
+
+async def test_typing_state_is_broadcast_to_room_subscribers(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        await ws.send_str(json.dumps({'type': 'subscribe-room', 'data': {'room_id': room['id']}}))
+        subscribed = await ws.receive_json()
+        assert subscribed == {
+            'type': 'subscribed-room',
+            'data': {'room_id': room['id']},
+        }
+
+        async with cli.ws_connect(
+            '/api/ws',
+            headers=websocket_cookie_headers(users[1]['jwt']),
+        ) as other_ws:
+            await other_ws.send_str(json.dumps({
+                'type': 'typing-state',
+                'data': {'room_id': room['id'], 'is_typing': True},
+            }))
+
+            event = await ws.receive_json()
+            assert event == {
+                'type': 'typing-state',
+                'data': {
+                    'type': 'typing-state',
+                    'room_id': room['id'],
+                    'user_id': users[1]['user']['id'],
+                    'is_typing': True,
+                    'user': {
+                        'id': users[1]['user']['id'],
+                        'username': users[1]['username'],
+                        'picture': users[1]['user']['picture'],
+                    },
+                },
+            }
 
 
 async def test_invalid_room_id_returns_error(cli):

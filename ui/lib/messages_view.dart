@@ -37,6 +37,32 @@ class MessagesState extends State<MessagesView> {
   static const _typingPresenceTimeout = Duration(seconds: 6);
   static const _messageGroupWindow = Duration(minutes: 4);
   static const _readAckDebounce = Duration(milliseconds: 180);
+  static const List<String> _composerEmojiOptions = [
+    '😀',
+    '😂',
+    '😍',
+    '🥹',
+    '😎',
+    '🤔',
+    '😭',
+    '😡',
+    '👍',
+    '👏',
+    '🙏',
+    '❤️',
+    '🔥',
+    '✨',
+    '🎉',
+    '🤝',
+    '☕',
+    '🍕',
+    '🌞',
+    '🌧️',
+    '🎶',
+    '📍',
+    '👋',
+    '💬',
+  ];
 
   late final HttpService httpService;
   late final WebsocketService websocketService;
@@ -67,6 +93,7 @@ class MessagesState extends State<MessagesView> {
   Timer? _typingPresenceCleanupTimer;
   Timer? _markReadTimer;
   bool _typingActive = false;
+  bool _showEmojiPicker = false;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -226,7 +253,8 @@ class MessagesState extends State<MessagesView> {
       return;
     }
     final participant =
-        _participantsById[userId] ?? RoomParticipant(id: userId, username: 'Someone');
+        _participantsById[userId] ??
+        RoomParticipant(id: userId, username: 'Someone');
     var foundMarker = false;
     var changed = false;
     final updatedMessages = <ChatMessage>[];
@@ -573,9 +601,7 @@ class MessagesState extends State<MessagesView> {
   Future<void> _leaveRoom() async {
     final userId = widget.me.id;
     final showLeaveInfo =
-        !_isDirectRoom &&
-        userId != null &&
-        !hasSeenLeaveRoomInfo(userId);
+        !_isDirectRoom && userId != null && !hasSeenLeaveRoomInfo(userId);
     if (showLeaveInfo) {
       markLeaveRoomInfoSeen(userId);
     }
@@ -615,9 +641,7 @@ class MessagesState extends State<MessagesView> {
       Navigator.pop(context, true);
       messenger?.showSnackBar(
         SnackBar(
-          content: Text(
-            _isDirectRoom ? 'Conversation left.' : 'Room left.',
-          ),
+          content: Text(_isDirectRoom ? 'Conversation left.' : 'Room left.'),
         ),
       );
     } on UnauthorizedResponse {
@@ -671,6 +695,11 @@ class MessagesState extends State<MessagesView> {
     _scrollController.addListener(_scrollListener);
     messageFocusNode = FocusNode();
     messageFocusNode.addListener(() {
+      if (messageFocusNode.hasFocus && _showEmojiPicker && mounted) {
+        setState(() {
+          _showEmojiPicker = false;
+        });
+      }
       if (!messageFocusNode.hasFocus) {
         _typingIdleTimer?.cancel();
         unawaited(_setTypingState(false));
@@ -706,14 +735,14 @@ class MessagesState extends State<MessagesView> {
           }
           _applyTypingStateEvent(value['data'] as Map<String, dynamic>);
         });
-    roomReadSubscription = websocketService.roomReadStream(widget.room.id).listen((
-      value,
-    ) {
-      if (!mounted || _roomClosed) {
-        return;
-      }
-      _applyRoomRead(value['data'] as Map<String, dynamic>);
-    });
+    roomReadSubscription = websocketService
+        .roomReadStream(widget.room.id)
+        .listen((value) {
+          if (!mounted || _roomClosed) {
+            return;
+          }
+          _applyRoomRead(value['data'] as Map<String, dynamic>);
+        });
     roomDeletedSubscription = websocketService
         .roomDeletedStream(widget.room.id)
         .listen((_) async {
@@ -814,10 +843,7 @@ class MessagesState extends State<MessagesView> {
   Widget _buildAppBarTitle() {
     return Row(
       children: [
-        AvatarImage(
-          picture: room.displayPictureFor(widget.me),
-          radius: 18,
-        ),
+        AvatarImage(picture: room.displayPictureFor(widget.me), radius: 18),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -828,9 +854,9 @@ class MessagesState extends State<MessagesView> {
                 room.displayTitleFor(widget.me),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
               Text(
                 _roomSubtitle(),
@@ -924,6 +950,41 @@ class MessagesState extends State<MessagesView> {
     }
   }
 
+  void _toggleComposerInputMode() {
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+      messageFocusNode.requestFocus();
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _showEmojiPicker = true;
+    });
+  }
+
+  void _insertEmoji(String emoji) {
+    final value = messageController.value;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    final replacementStart = start < 0 ? value.text.length : start;
+    final replacementEnd = end < 0 ? value.text.length : end;
+    final nextText = value.text.replaceRange(
+      replacementStart,
+      replacementEnd,
+      emoji,
+    );
+    final caretOffset = replacementStart + emoji.length;
+    messageController.value = value.copyWith(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: caretOffset),
+      composing: TextRange.empty,
+    );
+  }
+
   bool _isSameConversationDay(ChatMessage left, ChatMessage right) {
     final leftLocal = left.timestamp.toLocal();
     final rightLocal = right.timestamp.toLocal();
@@ -936,7 +997,8 @@ class MessagesState extends State<MessagesView> {
     if (left.senderId != right.senderId) {
       return false;
     }
-    return right.timestamp.difference(left.timestamp).abs() <= _messageGroupWindow;
+    return right.timestamp.difference(left.timestamp).abs() <=
+        _messageGroupWindow;
   }
 
   BorderRadius _bubbleRadius({
@@ -992,7 +1054,8 @@ class MessagesState extends State<MessagesView> {
   List<RoomParticipant> _otherReaders(ChatMessage message) {
     return message.readByUsers
         .where(
-          (reader) => reader.id != widget.me.id && reader.id != message.senderId,
+          (reader) =>
+              reader.id != widget.me.id && reader.id != message.senderId,
         )
         .toList()
       ..sort((left, right) => left.username.compareTo(right.username));
@@ -1046,9 +1109,10 @@ class MessagesState extends State<MessagesView> {
                       ),
                       const SizedBox(width: 8),
                       TextButton(
-                        onPressed: _updatingJoinRequestUserIds.contains(
-                          request.user.id,
-                        )
+                        onPressed:
+                            _updatingJoinRequestUserIds.contains(
+                              request.user.id,
+                            )
                             ? null
                             : () {
                                 unawaited(
@@ -1058,9 +1122,10 @@ class MessagesState extends State<MessagesView> {
                         child: const Text('Reject'),
                       ),
                       FilledButton(
-                        onPressed: _updatingJoinRequestUserIds.contains(
-                          request.user.id,
-                        )
+                        onPressed:
+                            _updatingJoinRequestUserIds.contains(
+                              request.user.id,
+                            )
                             ? null
                             : () {
                                 unawaited(
@@ -1128,76 +1193,123 @@ class MessagesState extends State<MessagesView> {
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 56),
-                child: DecoratedBox(
-                  key: const Key('message-input-shell'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 56),
+                    child: DecoratedBox(
+                      key: const Key('message-input-shell'),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(26),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x14000000),
+                            blurRadius: 16,
+                            offset: Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 52,
+                            height: 56,
+                            child: IconButton(
+                              key: const Key('message-emoji-toggle-button'),
+                              icon: Icon(
+                                _showEmojiPicker
+                                    ? Icons.keyboard_rounded
+                                    : Icons.emoji_emotions_outlined,
+                                color: const Color(0xFF61706E),
+                              ),
+                              onPressed: _toggleComposerInputMode,
+                            ),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              key: const Key('message-input-field'),
+                              autofocus: true,
+                              focusNode: messageFocusNode,
+                              controller: messageController,
+                              minLines: 1,
+                              maxLines: 5,
+                              textInputAction: TextInputAction.send,
+                              onTap: () {
+                                if (_showEmojiPicker) {
+                                  setState(() {
+                                    _showEmojiPicker = false;
+                                  });
+                                }
+                              },
+                              onSubmitted: (v) async {
+                                await send_message();
+                                messageFocusNode.requestFocus();
+                              },
+                              decoration: const InputDecoration(
+                                hintText: 'Type a message',
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.fromLTRB(
+                                  6,
+                                  14,
+                                  18,
+                                  14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DecoratedBox(
+                  key: const Key('message-send-shell'),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(26),
+                    color: primaryColor,
+                    borderRadius: BorderRadius.circular(24),
                     boxShadow: const [
                       BoxShadow(
-                        color: Color(0x14000000),
-                        blurRadius: 16,
+                        color: Color(0x22000000),
+                        blurRadius: 14,
                         offset: Offset(0, 6),
                       ),
                     ],
                   ),
-                  child: TextField(
-                    key: const Key('message-input-field'),
-                    autofocus: true,
-                    focusNode: messageFocusNode,
-                    controller: messageController,
-                    minLines: 1,
-                    maxLines: 5,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (v) async {
-                      await send_message();
-                      messageFocusNode.requestFocus();
-                    },
-                    decoration: const InputDecoration(
-                      hintText: 'Type a message',
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.fromLTRB(18, 14, 18, 14),
+                  child: Semantics(
+                    label: 'message-send',
+                    button: true,
+                    child: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: IconButton(
+                        key: const Key('message-send-button'),
+                        icon: const Icon(
+                          Icons.send_rounded,
+                          color: Colors.white,
+                        ),
+                        onPressed: () async {
+                          await send_message();
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
-            const SizedBox(width: 8),
-            DecoratedBox(
-              key: const Key('message-send-shell'),
-              decoration: BoxDecoration(
-                color: primaryColor,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x22000000),
-                    blurRadius: 14,
-                    offset: Offset(0, 6),
-                  ),
-                ],
+            if (_showEmojiPicker) ...[
+              const SizedBox(height: 10),
+              _EmojiPickerPanel(
+                emojis: _composerEmojiOptions,
+                onSelected: _insertEmoji,
               ),
-              child: Semantics(
-                label: 'message-send',
-                button: true,
-                child: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: IconButton(
-                    key: const Key('message-send-button'),
-                    icon: const Icon(Icons.send_rounded, color: Colors.white),
-                    onPressed: () async {
-                      await send_message();
-                    },
-                  ),
-                ),
-              ),
-            ),
+            ],
           ],
         ),
       ),
@@ -1206,9 +1318,7 @@ class MessagesState extends State<MessagesView> {
 
   Widget _buildMessageList() {
     if (!_initialHistoryLoaded && messages.isEmpty) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
     if (messages.isEmpty) {
       return Center(
@@ -1272,10 +1382,7 @@ class MessagesState extends State<MessagesView> {
           children: [
             if (showDateDivider)
               Padding(
-                padding: EdgeInsets.only(
-                  top: index == 0 ? 0 : 14,
-                  bottom: 12,
-                ),
+                padding: EdgeInsets.only(top: index == 0 ? 0 : 14, bottom: 12),
                 child: _DayDivider(label: _formatDayLabel(message.timestamp)),
               ),
             _MessageBubbleRow(
@@ -1319,7 +1426,9 @@ class MessagesState extends State<MessagesView> {
               ),
               PopupMenuItem<String>(
                 value: 'leave-room',
-                child: Text(_isDirectRoom ? 'Leave conversation' : 'Leave room'),
+                child: Text(
+                  _isDirectRoom ? 'Leave conversation' : 'Leave room',
+                ),
               ),
             ],
             onSelected: (value) {
@@ -1337,10 +1446,7 @@ class MessagesState extends State<MessagesView> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFFF4EBDD),
-              Color(0xFFEBE1D2),
-            ],
+            colors: [Color(0xFFF4EBDD), Color(0xFFEBE1D2)],
           ),
         ),
         child: Column(
@@ -1364,6 +1470,55 @@ class _TypingParticipantState {
 
   final RoomParticipant participant;
   final DateTime expiresAt;
+}
+
+class _EmojiPickerPanel extends StatelessWidget {
+  const _EmojiPickerPanel({required this.emojis, required this.onSelected});
+
+  final List<String> emojis;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      key: const Key('message-emoji-panel'),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x16000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+        child: GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 8,
+            mainAxisSpacing: 4,
+            crossAxisSpacing: 4,
+            childAspectRatio: 1,
+          ),
+          itemCount: emojis.length,
+          itemBuilder: (context, index) {
+            final emoji = emojis[index];
+            return IconButton(
+              key: Key('message-emoji-option-$index'),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              onPressed: () => onSelected(emoji),
+              icon: Text(emoji, style: const TextStyle(fontSize: 24)),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 class _DayDivider extends StatelessWidget {
@@ -1496,10 +1651,7 @@ class _MessageBubbleRow extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: endsCluster
-                  ? AvatarImage(
-                      picture: message.senderPicture,
-                      radius: 15,
-                    )
+                  ? AvatarImage(picture: message.senderPicture, radius: 15)
                   : const SizedBox(width: 30),
             ),
           Flexible(
@@ -1538,10 +1690,8 @@ class _MessageBubbleRow extends StatelessWidget {
                       children: [
                         SelectableText(
                           message.body,
-                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: textColor,
-                            height: 1.25,
-                          ),
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(color: textColor, height: 1.25),
                         ),
                         const SizedBox(height: 4),
                         Row(
@@ -1550,17 +1700,11 @@ class _MessageBubbleRow extends StatelessWidget {
                             Text(
                               timeLabel,
                               style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: const Color(0xFF7A7E80),
-                                  ),
+                                  ?.copyWith(color: const Color(0xFF7A7E80)),
                             ),
                             if (isSender) const SizedBox(width: 6),
                             if (isSender)
-                              Icon(
-                                statusIcon,
-                                size: 15,
-                                color: statusColor,
-                              ),
+                              Icon(statusIcon, size: 15, color: statusColor),
                           ],
                         ),
                       ],

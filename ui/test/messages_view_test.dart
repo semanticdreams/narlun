@@ -36,11 +36,14 @@ class FakeHttpService extends HttpService {
   final Queue<Future<List<RoomSummary>> Function()> _roomHandlers =
       Queue<Future<List<RoomSummary>> Function()>();
   final Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>
-  _roomSettingsHandlers = Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>();
+  _roomSettingsHandlers =
+      Queue<Future<RoomSummary> Function(int roomId, bool pushMuted)>();
   final Queue<Future<List<RoomJoinRequest>> Function(int roomId)>
-  _roomRequestHandlers = Queue<Future<List<RoomJoinRequest>> Function(int roomId)>();
+  _roomRequestHandlers =
+      Queue<Future<List<RoomJoinRequest>> Function(int roomId)>();
   final Queue<Future<ChatMessage> Function(int roomId, String body)>
-  _sendMessageHandlers = Queue<Future<ChatMessage> Function(int roomId, String body)>();
+  _sendMessageHandlers =
+      Queue<Future<ChatMessage> Function(int roomId, String body)>();
   var getMessagesCalls = 0;
   var getRoomsCalls = 0;
   var getRoomRequestsCalls = 0;
@@ -79,7 +82,10 @@ class FakeHttpService extends HttpService {
   }
 
   @override
-  Future<List<ChatMessage>> get_messages(room_id, {bool silentErrors = false}) async {
+  Future<List<ChatMessage>> get_messages(
+    room_id, {
+    bool silentErrors = false,
+  }) async {
     getMessagesCalls += 1;
     return _messageHandlers.removeFirst()(room_id as int);
   }
@@ -171,7 +177,10 @@ class FakeHttpService extends HttpService {
   Future<ChatMessage> send_message(room_id, message_body) async {
     sentMessages.add({'room_id': room_id, 'body': message_body});
     if (_sendMessageHandlers.isNotEmpty) {
-      return _sendMessageHandlers.removeFirst()(room_id as int, message_body as String);
+      return _sendMessageHandlers.removeFirst()(
+        room_id as int,
+        message_body as String,
+      );
     }
     return ChatMessage(
       id: 'local-${sentMessages.length}',
@@ -270,10 +279,9 @@ class FakeWebsocketService extends WebsocketService {
       );
 
   @override
-  Stream<Map<String, dynamic>> roomReadStream(roomId) =>
-      _roomReadController.stream.where(
-        (event) => event['data']['room_id'] == roomId,
-      );
+  Stream<Map<String, dynamic>> roomReadStream(roomId) => _roomReadController
+      .stream
+      .where((event) => event['data']['room_id'] == roomId);
 
   @override
   Stream<String> get connectionEvents => _connectionController.stream;
@@ -351,7 +359,11 @@ Widget _buildMessagesApp({
   required FakeHttpService httpService,
   required FakeWebsocketService websocketService,
   RoomSummary? room,
-  SessionUser me = const SessionUser(authenticated: true, id: 1, username: 'me'),
+  SessionUser me = const SessionUser(
+    authenticated: true,
+    id: 1,
+    username: 'me',
+  ),
 }) {
   room ??= RoomSummary(
     id: 1,
@@ -450,7 +462,9 @@ void main() {
     expect(find.text('No messages yet'), findsOneWidget);
   });
 
-  testWidgets('refreshes room history when a new fetch succeeds', (tester) async {
+  testWidgets('refreshes room history when a new fetch succeeds', (
+    tester,
+  ) async {
     final websocketService = FakeWebsocketService();
     final httpService = FakeHttpService(websocketService: websocketService);
     httpService.enqueueRooms(
@@ -627,11 +641,13 @@ void main() {
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                      builder: (_) => MessagesView(
+                        builder: (_) => MessagesView(
                           room: RoomSummary(
                             id: 1,
                             isGroup: false,
-                            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                            updatedAt: DateTime.parse(
+                              '2026-04-04T10:00:00.000Z',
+                            ),
                             participants: const [
                               RoomParticipant(id: 1, username: 'me'),
                               RoomParticipant(id: 2, username: 'other'),
@@ -687,23 +703,23 @@ void main() {
             routes: {
               '/': (_) => const Scaffold(body: Text('Welcome landing')),
               '/room': (_) => MessagesView(
-                    room: RoomSummary(
-                      id: 1,
-                      isGroup: false,
-                      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-                      participants: const [
-                        RoomParticipant(id: 1, username: 'me'),
-                        RoomParticipant(id: 2, username: 'other'),
-                      ],
-                    ),
-                    me: const SessionUser(
-                      authenticated: true,
-                      id: 1,
-                      username: 'me',
-                    ),
-                    httpService: httpService,
-                    websocketService: websocketService,
-                  ),
+                room: RoomSummary(
+                  id: 1,
+                  isGroup: false,
+                  updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                  participants: const [
+                    RoomParticipant(id: 1, username: 'me'),
+                    RoomParticipant(id: 2, username: 'other'),
+                  ],
+                ),
+                me: const SessionUser(
+                  authenticated: true,
+                  id: 1,
+                  username: 'me',
+                ),
+                httpService: httpService,
+                websocketService: websocketService,
+              ),
             },
           ),
         ),
@@ -847,24 +863,15 @@ void main() {
 
   test('leave room notice copy becomes brief after the first explanation', () {
     expect(
-      describeLeaveRoomDialogBody(
-        isDirectRoom: false,
-        showNearbyHint: true,
-      ),
+      describeLeaveRoomDialogBody(isDirectRoom: false, showNearbyHint: true),
       'You will leave this room. If another member is nearby, it may show up in Nearby again and you can request to rejoin.',
     );
     expect(
-      describeLeaveRoomDialogBody(
-        isDirectRoom: false,
-        showNearbyHint: false,
-      ),
+      describeLeaveRoomDialogBody(isDirectRoom: false, showNearbyHint: false),
       'You will leave this room.',
     );
     expect(
-      describeLeaveRoomDialogBody(
-        isDirectRoom: true,
-        showNearbyHint: true,
-      ),
+      describeLeaveRoomDialogBody(isDirectRoom: true, showNearbyHint: true),
       'You will leave this conversation. You can start a new one later.',
     );
   });
@@ -912,112 +919,114 @@ void main() {
     expect(find.text('Pending join requests'), findsNothing);
   });
 
-  testWidgets('refreshes the room title when another participant updates profile', (
-    tester,
-  ) async {
-    final websocketService = FakeWebsocketService();
-    final httpService = FakeHttpService(websocketService: websocketService);
-    httpService.enqueueRooms(
-      () async => [
-        RoomSummary(
-          id: 1,
-          isGroup: false,
-          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          participants: const [
-            RoomParticipant(id: 1, username: 'me'),
-            RoomParticipant(id: 2, username: 'other'),
-          ],
-        ),
-      ],
-    );
-    httpService.enqueueRooms(
-      () async => [
-        RoomSummary(
-          id: 1,
-          isGroup: false,
-          updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
-          participants: const [
-            RoomParticipant(id: 1, username: 'me'),
-            RoomParticipant(id: 2, username: 'renamed'),
-          ],
-        ),
-      ],
-    );
-    httpService.enqueueMessages((_) async => []);
-
-    await tester.pumpWidget(
-      _buildMessagesApp(
-        httpService: httpService,
-        websocketService: websocketService,
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('other'), findsWidgets);
-
-    websocketService.emitRoomsChanged();
-    await tester.pumpAndSettle();
-
-    expect(find.text('renamed'), findsOneWidget);
-    expect(find.text('other'), findsNothing);
-  });
-
-  testWidgets('refreshes pending join request details when requester updates profile', (
-    tester,
-  ) async {
-    final websocketService = FakeWebsocketService();
-    final httpService = FakeHttpService(websocketService: websocketService);
-    httpService.enqueueMessages((_) async => []);
-    httpService.enqueueRoomRequests((_) async {
-      return [
-        RoomJoinRequest(
-          user: NearbyUser(
-            id: 7,
-            username: 'newcomer',
-            distance: 0,
-            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-            status: 'Old status',
+  testWidgets(
+    'refreshes the room title when another participant updates profile',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
           ),
-          createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
-        ),
-      ];
-    });
-    httpService.enqueueRoomRequests((_) async {
-      return [
-        RoomJoinRequest(
-          user: NearbyUser(
-            id: 7,
-            username: 'renamed newcomer',
-            distance: 0,
-            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-            status: 'Updated status',
+        ],
+      );
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'renamed'),
+            ],
           ),
-          createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
+        ],
+      );
+      httpService.enqueueMessages((_) async => []);
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
         ),
-      ];
-    });
+      );
+      await tester.pumpAndSettle();
 
-    await tester.pumpWidget(
-      _buildMessagesApp(
-        httpService: httpService,
-        websocketService: websocketService,
-      ),
-    );
-    await tester.pumpAndSettle();
+      expect(find.text('other'), findsWidgets);
 
-    expect(find.text('newcomer'), findsOneWidget);
-    expect(find.text('Old status'), findsOneWidget);
+      websocketService.emitRoomsChanged();
+      await tester.pumpAndSettle();
 
-    websocketService.emitRoomRequestsChanged(1);
-    await tester.pumpAndSettle();
+      expect(find.text('renamed'), findsOneWidget);
+      expect(find.text('other'), findsNothing);
+    },
+  );
 
-    expect(find.text('renamed newcomer'), findsOneWidget);
-    expect(find.text('Updated status'), findsOneWidget);
-    expect(find.text('newcomer'), findsNothing);
-    expect(find.text('Old status'), findsNothing);
-  });
+  testWidgets(
+    'refreshes pending join request details when requester updates profile',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      httpService.enqueueMessages((_) async => []);
+      httpService.enqueueRoomRequests((_) async {
+        return [
+          RoomJoinRequest(
+            user: NearbyUser(
+              id: 7,
+              username: 'newcomer',
+              distance: 0,
+              lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              status: 'Old status',
+            ),
+            createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
+          ),
+        ];
+      });
+      httpService.enqueueRoomRequests((_) async {
+        return [
+          RoomJoinRequest(
+            user: NearbyUser(
+              id: 7,
+              username: 'renamed newcomer',
+              distance: 0,
+              lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              status: 'Updated status',
+            ),
+            createdAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            expiresAt: DateTime.parse('2026-04-11T10:00:00.000Z'),
+          ),
+        ];
+      });
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('newcomer'), findsOneWidget);
+      expect(find.text('Old status'), findsOneWidget);
+
+      websocketService.emitRoomRequestsChanged(1);
+      await tester.pumpAndSettle();
+
+      expect(find.text('renamed newcomer'), findsOneWidget);
+      expect(find.text('Updated status'), findsOneWidget);
+      expect(find.text('newcomer'), findsNothing);
+      expect(find.text('Old status'), findsNothing);
+    },
+  );
 
   testWidgets('group chat shows author labels for received message clusters', (
     tester,
@@ -1036,29 +1045,31 @@ void main() {
       ],
     );
     httpService.enqueueRooms(() async => [groupRoom]);
-    httpService.enqueueMessages((_) async => [
-      ChatMessage(
-        id: 'm1',
-        body: 'First from Bob',
-        senderId: 2,
-        senderUsername: 'Bob',
-        timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
-      ),
-      ChatMessage(
-        id: 'm2',
-        body: 'Second from Bob',
-        senderId: 2,
-        senderUsername: 'Bob',
-        timestamp: DateTime.parse('2026-04-04T10:01:00.000Z'),
-      ),
-      ChatMessage(
-        id: 'm3',
-        body: 'From Charlie',
-        senderId: 3,
-        senderUsername: 'Charlie',
-        timestamp: DateTime.parse('2026-04-04T10:06:00.000Z'),
-      ),
-    ]);
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'm1',
+          body: 'First from Bob',
+          senderId: 2,
+          senderUsername: 'Bob',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        ),
+        ChatMessage(
+          id: 'm2',
+          body: 'Second from Bob',
+          senderId: 2,
+          senderUsername: 'Bob',
+          timestamp: DateTime.parse('2026-04-04T10:01:00.000Z'),
+        ),
+        ChatMessage(
+          id: 'm3',
+          body: 'From Charlie',
+          senderId: 3,
+          senderUsername: 'Charlie',
+          timestamp: DateTime.parse('2026-04-04T10:06:00.000Z'),
+        ),
+      ],
+    );
 
     await tester.pumpWidget(
       _buildMessagesApp(
@@ -1123,7 +1134,7 @@ void main() {
     });
   });
 
-  testWidgets('updates seen label when another member reads the latest message', (
+  testWidgets('composer toggles between emoji panel and keyboard button', (
     tester,
   ) async {
     final websocketService = FakeWebsocketService();
@@ -1141,16 +1152,7 @@ void main() {
         ),
       ],
     );
-    httpService.enqueueMessages((_) async => [
-      ChatMessage(
-        id: 'own-1',
-        body: 'My message',
-        senderId: 1,
-        senderUsername: 'me',
-        timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
-        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
-      ),
-    ]);
+    httpService.enqueueMessages((_) async => []);
 
     await tester.pumpWidget(
       _buildMessagesApp(
@@ -1160,18 +1162,116 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Seen'), findsNothing);
+    expect(find.byKey(const Key('message-emoji-panel')), findsNothing);
+    expect(find.byIcon(Icons.emoji_emotions_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_rounded), findsNothing);
 
-    websocketService.emitRoomRead(
-      roomId: 1,
-      userId: 2,
-      messageId: 'own-1',
-      username: 'other',
+    await tester.tap(find.byKey(const Key('message-emoji-toggle-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('message-emoji-panel')), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.emoji_emotions_outlined), findsNothing);
+
+    await tester.tap(find.byKey(const Key('message-emoji-toggle-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('message-emoji-panel')), findsNothing);
+    expect(find.byIcon(Icons.emoji_emotions_outlined), findsOneWidget);
+  });
+
+  testWidgets('emoji picker inserts emoji into the composer', (tester) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Seen'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('message-input-field')), 'Hi ');
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('message-emoji-toggle-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('message-emoji-option-0')));
+    await tester.pump();
+
+    final input = tester.widget<TextField>(
+      find.byKey(const Key('message-input-field')),
+    );
+    expect(input.controller!.text, 'Hi 😀');
   });
+
+  testWidgets(
+    'updates seen label when another member reads the latest message',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
+          ),
+        ],
+      );
+      httpService.enqueueMessages(
+        (_) async => [
+          ChatMessage(
+            id: 'own-1',
+            body: 'My message',
+            senderId: 1,
+            senderUsername: 'me',
+            timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Seen'), findsNothing);
+
+      websocketService.emitRoomRead(
+        roomId: 1,
+        userId: 2,
+        messageId: 'own-1',
+        username: 'other',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Seen'), findsOneWidget);
+    },
+  );
 
   testWidgets('sending a message renders it immediately and marks it read', (
     tester,
@@ -1211,7 +1311,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(const Key('message-input-field')), 'Hello now');
+    await tester.enterText(
+      find.byKey(const Key('message-input-field')),
+      'Hello now',
+    );
     await tester.pump();
     await tester.tap(find.byKey(const Key('message-send-button')));
     await tester.pump();
@@ -1225,51 +1328,54 @@ void main() {
     expect(httpService.markedReads.last['message_id'], 'sent-1');
   });
 
-  testWidgets('composer send button uses primary color and matches input height', (
-    tester,
-  ) async {
-    final websocketService = FakeWebsocketService();
-    final httpService = FakeHttpService(websocketService: websocketService);
-    httpService.enqueueRooms(
-      () async => [
-        RoomSummary(
-          id: 1,
-          isGroup: false,
-          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          participants: const [
-            RoomParticipant(id: 1, username: 'me'),
-            RoomParticipant(id: 2, username: 'other'),
-          ],
+  testWidgets(
+    'composer send button uses primary color and matches input height',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
+          ),
+        ],
+      );
+      httpService.enqueueMessages((_) async => []);
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
         ),
-      ],
-    );
-    httpService.enqueueMessages((_) async => []);
+      );
+      await tester.pumpAndSettle();
 
-    await tester.pumpWidget(
-      _buildMessagesApp(
-        httpService: httpService,
-        websocketService: websocketService,
-      ),
-    );
-    await tester.pumpAndSettle();
+      final theme = Theme.of(
+        tester.element(find.byKey(const Key('message-send-button'))),
+      );
+      final sendShell = tester.widget<DecoratedBox>(
+        find.byKey(const Key('message-send-shell')),
+      );
+      final inputHeight = tester
+          .getSize(find.byKey(const Key('message-input-shell')))
+          .height;
+      final sendHeight = tester
+          .getSize(find.byKey(const Key('message-send-shell')))
+          .height;
 
-    final theme = Theme.of(
-      tester.element(find.byKey(const Key('message-send-button'))),
-    );
-    final sendShell = tester.widget<DecoratedBox>(
-      find.byKey(const Key('message-send-shell')),
-    );
-    final inputHeight =
-        tester.getSize(find.byKey(const Key('message-input-shell'))).height;
-    final sendHeight =
-        tester.getSize(find.byKey(const Key('message-send-shell'))).height;
-
-    expect(
-      (sendShell.decoration as BoxDecoration).color,
-      theme.colorScheme.primary,
-    );
-    expect(sendHeight, inputHeight);
-  });
+      expect(
+        (sendShell.decoration as BoxDecoration).color,
+        theme.colorScheme.primary,
+      );
+      expect(sendHeight, inputHeight);
+    },
+  );
 
   testWidgets('outgoing message uses single check until someone reads it', (
     tester,
@@ -1289,16 +1395,18 @@ void main() {
         ),
       ],
     );
-    httpService.enqueueMessages((_) async => [
-      ChatMessage(
-        id: 'own-1',
-        body: 'Waiting to be seen',
-        senderId: 1,
-        senderUsername: 'me',
-        timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
-        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
-      ),
-    ]);
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'own-1',
+          body: 'Waiting to be seen',
+          senderId: 1,
+          senderUsername: 'me',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      ],
+    );
 
     await tester.pumpWidget(
       _buildMessagesApp(

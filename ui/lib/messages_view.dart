@@ -7,6 +7,8 @@ import 'avatar_image.dart';
 import 'chat_labels.dart';
 import 'http.dart';
 import 'invite_qr_button.dart';
+import 'leave_room_notice.dart';
+import 'leave_room_notice_storage.dart';
 import 'locator.dart';
 import 'models.dart';
 import 'session_actions.dart';
@@ -569,14 +571,23 @@ class MessagesState extends State<MessagesView> {
   }
 
   Future<void> _leaveRoom() async {
+    final userId = widget.me.id;
+    final showLeaveInfo =
+        !_isDirectRoom &&
+        userId != null &&
+        !hasSeenLeaveRoomInfo(userId);
+    if (showLeaveInfo) {
+      markLeaveRoomInfoSeen(userId);
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(_isDirectRoom ? 'Leave conversation?' : 'Leave room?'),
         content: Text(
-          _isDirectRoom
-              ? 'You will leave this conversation. You can start a new one later.'
-              : 'You will leave this room. If another member is nearby, it may show up in Nearby again and you can request to rejoin.',
+          describeLeaveRoomDialogBody(
+            isDirectRoom: _isDirectRoom,
+            showNearbyHint: showLeaveInfo,
+          ),
         ),
         actions: [
           TextButton(

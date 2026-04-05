@@ -8,6 +8,8 @@ import 'package:provider/provider.dart';
 
 import 'package:narlun/dialog_service.dart';
 import 'package:narlun/http.dart';
+import 'package:narlun/leave_room_notice.dart';
+import 'package:narlun/leave_room_notice_storage.dart';
 import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/messages_view.dart';
@@ -373,6 +375,7 @@ Widget _buildMessagesApp({
 void main() {
   setUp(() async {
     await setupLocator(reset: true, dialogService: DialogService());
+    clearLeaveRoomInfoStorageForTests();
   });
 
   tearDown(() async {
@@ -817,9 +820,10 @@ void main() {
     await tester.tap(find.text('Open room'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Leave room'));
+    tester
+        .widget<PopupMenuButton<String>>(find.byType(PopupMenuButton<String>))
+        .onSelected
+        ?.call('leave-room');
     await tester.pumpAndSettle();
 
     expect(find.text('Leave room?'), findsOneWidget);
@@ -829,6 +833,40 @@ void main() {
 
     expect(httpService.leftRooms, [1]);
     expect(find.text('Open room'), findsOneWidget);
+  });
+
+  test('leave room notice storage is scoped per user', () {
+    expect(hasSeenLeaveRoomInfo(1), isFalse);
+    expect(hasSeenLeaveRoomInfo(2), isFalse);
+
+    markLeaveRoomInfoSeen(1);
+
+    expect(hasSeenLeaveRoomInfo(1), isTrue);
+    expect(hasSeenLeaveRoomInfo(2), isFalse);
+  });
+
+  test('leave room notice copy becomes brief after the first explanation', () {
+    expect(
+      describeLeaveRoomDialogBody(
+        isDirectRoom: false,
+        showNearbyHint: true,
+      ),
+      'You will leave this room. If another member is nearby, it may show up in Nearby again and you can request to rejoin.',
+    );
+    expect(
+      describeLeaveRoomDialogBody(
+        isDirectRoom: false,
+        showNearbyHint: false,
+      ),
+      'You will leave this room.',
+    );
+    expect(
+      describeLeaveRoomDialogBody(
+        isDirectRoom: true,
+        showNearbyHint: true,
+      ),
+      'You will leave this conversation. You can start a new one later.',
+    );
   });
 
   testWidgets('shows pending join requests and approves them from the room', (

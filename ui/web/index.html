@@ -138,8 +138,8 @@
 
   <script>
     (function () {
-      var deferredInstallPrompt = null;
       var installDetected = false;
+      var installPromptObserved = false;
       var bootstrapDiagnostics = [];
 
       function pushBootstrapDiagnostic(kind, message, details) {
@@ -153,16 +153,14 @@
 
       window.__narlunPushBootstrapDiagnostic = pushBootstrapDiagnostic;
 
-      window.__narlunConsumeDeferredInstallPrompt = function () {
-        var prompt = deferredInstallPrompt;
-        deferredInstallPrompt = null;
-        return prompt;
-      };
-
       window.__narlunConsumeBootstrapDiagnostics = function () {
         var events = bootstrapDiagnostics.slice();
         bootstrapDiagnostics = [];
         return events;
+      };
+
+      window.__narlunObservedBeforeInstallPrompt = function () {
+        return installPromptObserved;
       };
 
       window.__narlunInstalledFromBootstrap = function () {
@@ -179,11 +177,10 @@
       );
 
       window.addEventListener('beforeinstallprompt', function (event) {
-        event.preventDefault();
-        deferredInstallPrompt = event;
+        installPromptObserved = true;
         pushBootstrapDiagnostic(
-          'install_beforeinstallprompt_captured',
-          'Captured beforeinstallprompt during HTML bootstrap.',
+          'install_beforeinstallprompt_observed',
+          'Observed beforeinstallprompt during HTML bootstrap.',
           {
             platform_count: Array.isArray(event.platforms) ? event.platforms.length : null,
           },
@@ -192,7 +189,6 @@
 
       window.addEventListener('appinstalled', function () {
         installDetected = true;
-        deferredInstallPrompt = null;
         pushBootstrapDiagnostic(
           'install_appinstalled_bootstrap',
           'Browser reported installation during HTML bootstrap.',

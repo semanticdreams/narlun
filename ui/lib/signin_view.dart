@@ -93,28 +93,43 @@ class SigninState extends State<SigninView> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Semantics(
-                    label: 'signin-username',
-                    textField: true,
-                    child: TextField(
-                      key: const Key('signin-username-field'),
-                      autofocus: true,
-                      decoration: const InputDecoration(labelText: 'Username'),
-                      controller: usernameController,
-                      onSubmitted: (_) => submit(),
-                    ),
-                  ),
-                  Semantics(
-                    label: 'signin-password',
-                    textField: true,
-                    child: TextField(
-                      key: const Key('signin-password-field'),
-                      decoration: const InputDecoration(labelText: 'Password'),
-                      obscureText: true,
-                      enableSuggestions: false,
-                      autocorrect: false,
-                      controller: passwordController,
-                      onSubmitted: (_) => submit(),
+                  AutofillGroup(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Semantics(
+                          label: 'signin-username',
+                          textField: true,
+                          child: TextField(
+                            key: const Key('signin-username-field'),
+                            autofocus: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                            ),
+                            controller: usernameController,
+                            autofillHints: const [AutofillHints.username],
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => submit(),
+                          ),
+                        ),
+                        Semantics(
+                          label: 'signin-password',
+                          textField: true,
+                          child: TextField(
+                            key: const Key('signin-password-field'),
+                            decoration: const InputDecoration(
+                              labelText: 'Password',
+                            ),
+                            obscureText: true,
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            controller: passwordController,
+                            autofillHints: const [AutofillHints.password],
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => submit(),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   Container(

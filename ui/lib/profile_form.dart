@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'dialog_service.dart';
@@ -144,6 +145,8 @@ class ProfileFormState extends State<ProfileForm> {
     final username = usernameController.text;
     final status = statusController.text.trim();
     final password = passwordController.text;
+    final shouldSaveCredentials =
+        username != _savedUsername || password.trim().isNotEmpty;
 
     final data = <String, String?>{'username': username, 'status': status};
     if (password.trim().isNotEmpty) {
@@ -156,6 +159,9 @@ class ProfileFormState extends State<ProfileForm> {
         return false;
       }
       meModel.setData(me);
+      if (shouldSaveCredentials) {
+        TextInput.finishAutofillContext();
+      }
       _applySavedProfile(me);
 
       if (showSuccessMessage) {
@@ -192,70 +198,84 @@ class ProfileFormState extends State<ProfileForm> {
       key: _formKey,
       child: Column(
         children: [
-          TextFormField(
-            controller: usernameController,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'Username can\'t be empty';
-              }
-              return null;
-            },
-            decoration: const InputDecoration(
-              hintText: 'Enter a username',
-              labelText: 'Username',
-            ),
-          ),
-          TextFormField(
-            controller: passwordController,
-            obscureText: obscurePassword,
-            enableSuggestions: false,
-            autocorrect: false,
-            textInputAction: TextInputAction.done,
-            autofillHints: const [AutofillHints.newPassword],
-            validator: (value) {
-              final password = value ?? '';
-              if (password.trim().isEmpty) {
-                return null;
-              }
-              if (password.length < 8) {
-                return 'Password must be at least 8 characters';
-              }
-              return null;
-            },
-            decoration: InputDecoration(
-              hintText: hasPassword ? 'Set a new password' : 'Set a password',
-              helperText: hasPassword
-                  ? 'Leave blank to keep your current password.'
-                  : 'Add a password to keep this account after sign out.',
-              labelText: hasPassword ? 'Password' : 'Make account permanent',
-              suffixIconConstraints: const BoxConstraints(minWidth: 96),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    key: const Key('profile-generate-password-button'),
-                    icon: const Icon(Icons.casino_outlined),
-                    tooltip: 'Generate a memorable passphrase',
-                    onPressed: _fillGeneratedPassphrase,
+          AutofillGroup(
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: usernameController,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.newUsername],
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Username can\'t be empty';
+                    }
+                    return null;
+                  },
+                  decoration: const InputDecoration(
+                    hintText: 'Enter a username',
+                    labelText: 'Username',
                   ),
-                  IconButton(
-                    key: const Key('profile-toggle-password-visibility-button'),
-                    icon: Icon(
-                      obscurePassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
+                ),
+                TextFormField(
+                  controller: passwordController,
+                  obscureText: obscurePassword,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.newPassword],
+                  validator: (value) {
+                    final password = value ?? '';
+                    if (password.trim().isEmpty) {
+                      return null;
+                    }
+                    if (password.length < 8) {
+                      return 'Password must be at least 8 characters';
+                    }
+                    return null;
+                  },
+                  decoration: InputDecoration(
+                    hintText: hasPassword
+                        ? 'Set a new password'
+                        : 'Set a password',
+                    helperText: hasPassword
+                        ? 'Leave blank to keep your current password.'
+                        : 'Add a password to keep this account after sign out.',
+                    labelText: hasPassword
+                        ? 'Password'
+                        : 'Make account permanent',
+                    suffixIconConstraints: const BoxConstraints(minWidth: 96),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          key: const Key('profile-generate-password-button'),
+                          icon: const Icon(Icons.casino_outlined),
+                          tooltip: 'Generate a memorable passphrase',
+                          onPressed: _fillGeneratedPassphrase,
+                        ),
+                        IconButton(
+                          key: const Key(
+                            'profile-toggle-password-visibility-button',
+                          ),
+                          icon: Icon(
+                            obscurePassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                          ),
+                          tooltip: obscurePassword
+                              ? 'Show password'
+                              : 'Hide password',
+                          onPressed: () {
+                            setState(() {
+                              obscurePassword = !obscurePassword;
+                            });
+                          },
+                        ),
+                      ],
                     ),
-                    tooltip: obscurePassword
-                        ? 'Show password'
-                        : 'Hide password',
-                    onPressed: () {
-                      setState(() {
-                        obscurePassword = !obscurePassword;
-                      });
-                    },
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
           TextFormField(

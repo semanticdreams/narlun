@@ -82,7 +82,45 @@ void main() {
     await locator.reset();
   });
 
-  testWidgets('shows status near the top and saves it through the profile form', (
+  testWidgets(
+    'shows status near the top and saves it through the profile form',
+    (tester) async {
+      final httpService = FakeProfileHttpService();
+      final meModel = MeModel()
+        ..setData(
+          const SessionUser(
+            authenticated: true,
+            id: 1,
+            username: 'alice',
+            status: 'busy',
+            hasPassword: true,
+          ),
+        );
+
+      await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+      expect(find.text('Status'), findsOneWidget);
+      expect(find.text('Phone'), findsNothing);
+
+      final statusField = find.byType(TextFormField).at(2);
+
+      await tester.enterText(statusField, '  new status  ');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(httpService.lastPayload?['status'], 'new status');
+      expect(httpService.lastPayload?.containsKey('phone'), isFalse);
+      expect(meModel.data?.status, 'new status');
+      expect(
+        tester.testTextInput.log.where(
+          (call) => call.method == 'TextInput.finishAutofillContext',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets('marks profile credentials for autofill save and update', (
     tester,
   ) async {
     final httpService = FakeProfileHttpService();
@@ -99,18 +137,46 @@ void main() {
 
     await tester.pumpWidget(_buildProfileForm(httpService, meModel));
 
-    expect(find.text('Status'), findsOneWidget);
-    expect(find.text('Phone'), findsNothing);
+    final usernameField = tester.widget<EditableText>(
+      find.byType(EditableText).at(0),
+    );
+    final passwordField = tester.widget<EditableText>(
+      find.byType(EditableText).at(1),
+    );
 
-    final statusField = find.byType(TextFormField).at(2);
+    expect(usernameField.autofillHints, const [AutofillHints.newUsername]);
+    expect(passwordField.autofillHints, const [AutofillHints.newPassword]);
+  });
 
-    await tester.enterText(statusField, '  new status  ');
+  testWidgets('saving a username change finishes credential autofill context', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    await tester.enterText(find.byType(TextFormField).first, 'alice-renamed');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
-    expect(httpService.lastPayload?['status'], 'new status');
-    expect(httpService.lastPayload?.containsKey('phone'), isFalse);
-    expect(meModel.data?.status, 'new status');
+    expect(httpService.lastPayload?['username'], 'alice-renamed');
+    expect(httpService.lastPayload?.containsKey('password'), isFalse);
+    expect(
+      tester.testTextInput.log.where(
+        (call) => call.method == 'TextInput.finishAutofillContext',
+      ),
+      hasLength(1),
+    );
   });
 
   testWidgets('generates a memorable passphrase and saves it as password', (
@@ -150,30 +216,37 @@ void main() {
       (httpService.lastPayload?['password'] as String).split(' '),
       hasLength(8),
     );
+    expect(
+      tester.testTextInput.log.where(
+        (call) => call.method == 'TextInput.finishAutofillContext',
+      ),
+      hasLength(1),
+    );
   });
 
-  testWidgets('leaves current password unchanged when password field stays blank', (
-    tester,
-  ) async {
-    final httpService = FakeProfileHttpService();
-    final meModel = MeModel()
-      ..setData(
-        const SessionUser(
-          authenticated: true,
-          id: 1,
-          username: 'alice',
-          status: 'busy',
-          hasPassword: true,
-        ),
-      );
+  testWidgets(
+    'leaves current password unchanged when password field stays blank',
+    (tester) async {
+      final httpService = FakeProfileHttpService();
+      final meModel = MeModel()
+        ..setData(
+          const SessionUser(
+            authenticated: true,
+            id: 1,
+            username: 'alice',
+            status: 'busy',
+            hasPassword: true,
+          ),
+        );
 
-    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+      await tester.pumpWidget(_buildProfileForm(httpService, meModel));
 
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
 
-    expect(httpService.lastPayload?.containsKey('password'), isFalse);
-  });
+      expect(httpService.lastPayload?.containsKey('password'), isFalse);
+    },
+  );
 
   testWidgets('shows a local validation error for a short password', (
     tester,

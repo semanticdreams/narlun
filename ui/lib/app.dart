@@ -40,7 +40,7 @@ class MyApp extends StatelessWidget {
       ),
       debugShowCheckedModeBanner: false,
       navigatorObservers: [errorReporter.createNavigatorObserver()],
-      title: 'narlun',
+      title: 'narlun | opening',
       theme: theme,
       onGenerateRoute: (RouteSettings settings) {
         Widget? pageView;
@@ -62,7 +62,7 @@ class MyApp extends StatelessWidget {
         }
 
         if (resolvedUri != null) {
-          setPageTitle(resolvedUri.path, context);
+          setPageTitle(resolvedUri, context);
         }
         errorReporter.updateRoute(
           resolvedSettings.name ?? resolvedUri?.toString(),

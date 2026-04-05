@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:narlun/models.dart';
 import 'package:narlun/route_utils.dart';
+import 'package:narlun/set_page_title.dart';
 
 void main() {
   test('keeps welcome route when session state is still unknown', () {
@@ -44,5 +45,24 @@ void main() {
     expect(roomsRouteWithOpenRoom(42), '/rooms?open_room=42');
     expect(inviteQrRoute(), '/invite');
     expect(inviteQrRoute(roomId: 7), '/invite?room_id=7');
+  });
+
+  test('describes user-facing page titles', () {
+    expect(describePageTitle(Uri.parse('/')), 'narlun | opening');
+    expect(describePageTitle(Uri.parse('/home')), 'narlun | home');
+    expect(describePageTitle(Uri.parse('/nearby')), 'narlun | nearby');
+    expect(describePageTitle(Uri.parse('/rooms')), 'narlun | rooms');
+    expect(
+      describePageTitle(Uri.parse('/rooms?open_room=42')),
+      'narlun | room',
+    );
+    expect(describePageTitle(Uri.parse('/profile')), 'narlun | profile');
+    expect(describePageTitle(Uri.parse('/signin')), 'narlun | sign in');
+    expect(describePageTitle(Uri.parse('/signup')), 'narlun | sign up');
+    expect(describePageTitle(Uri.parse('/invite')), 'narlun | invite');
+    expect(
+      describePageTitle(Uri.parse('/invite/token-123')),
+      'narlun | invite',
+    );
   });
 }

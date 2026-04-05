@@ -8,6 +8,7 @@ import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'passphrase_generator.dart';
+import 'random_statuses.dart';
 import 'session_actions.dart';
 
 const maxStatusLength = 80;
@@ -133,6 +134,14 @@ class ProfileFormState extends State<ProfileForm> {
           ),
         ),
       );
+  }
+
+  void _fillRandomStatus() {
+    final nextStatus = pickRandomStatus(excluding: statusController.text);
+    statusController.text = nextStatus;
+    statusController.selection = TextSelection.collapsed(
+      offset: nextStatus.length,
+    );
   }
 
   Future<bool> saveProfile({bool showSuccessMessage = true}) async {
@@ -280,9 +289,15 @@ class ProfileFormState extends State<ProfileForm> {
             controller: statusController,
             maxLines: 1,
             maxLength: maxStatusLength,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: 'Set a short status people see nearby',
               labelText: 'Status',
+              suffixIcon: IconButton(
+                key: const Key('profile-generate-status-button'),
+                icon: const Icon(Icons.casino_outlined),
+                tooltip: 'Generate random status',
+                onPressed: _fillRandomStatus,
+              ),
             ),
           ),
           const SizedBox(height: 10),

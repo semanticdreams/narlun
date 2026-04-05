@@ -11,6 +11,7 @@ import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/models.dart';
 import 'package:narlun/profile_form.dart';
+import 'package:narlun/random_statuses.dart';
 import 'package:narlun/websocket.dart';
 
 class _DummyHttpClient extends http.BaseClient {
@@ -178,6 +179,54 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  test('random status list contains 100 distinct options', () {
+    expect(randomStatuses, hasLength(100));
+    expect(randomStatuses.toSet(), hasLength(100));
+    expect(
+      randomStatuses.every((status) => status.length <= maxStatusLength),
+      isTrue,
+    );
+  });
+
+  test('random status picker avoids the excluded current status', () {
+    final picked = <String>{};
+    for (var i = 0; i < 32; i += 1) {
+      final nextStatus = pickRandomStatus(excluding: randomStatuses.first);
+      expect(nextStatus, isNot(randomStatuses.first));
+      picked.add(nextStatus);
+    }
+    expect(picked, isNotEmpty);
+  });
+
+  testWidgets('status field has a dice button that fills a random status', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    await tester.tap(find.byKey(const Key('profile-generate-status-button')));
+    await tester.pump();
+
+    final statusField = tester.widget<TextFormField>(
+      find.byType(TextFormField).at(2),
+    );
+    final generatedStatus = statusField.controller!.text;
+    expect(generatedStatus, isNotEmpty);
+    expect(randomStatuses.contains(generatedStatus), isTrue);
+    expect(generatedStatus, isNot('busy'));
   });
 
   testWidgets('saving a username change finishes credential autofill context', (

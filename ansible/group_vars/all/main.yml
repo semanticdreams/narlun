@@ -41,6 +41,7 @@ public_host: "{{ ansible_host | default(inventory_hostname) }}"
 domain: "{{ public_scheme }}://{{ nginx_server_name if nginx_server_name not in ['_', '', 'localhost'] else public_host }}"
 
 frontend_error_log_path: "{{ log_dir }}/frontend-errors.jsonl"
+feedback_log_path: "{{ log_dir }}/feedback.jsonl"
 redis_url: redis://localhost:6379
 redis_data_dir: /var/lib/redis
 redis_appendonly: "yes"
@@ -58,6 +59,7 @@ backend_env:
   DOMAIN: "{{ domain }}"
   WEB_ROOT: "{{ web_root_dir }}"
   FRONTEND_ERROR_LOG_PATH: "{{ frontend_error_log_path }}"
+  FEEDBACK_LOG_PATH: "{{ feedback_log_path }}"
   PUSH_VAPID_PUBLIC_KEY: "{{ push_vapid_public_key }}"
   PUSH_VAPID_PRIVATE_KEY: "{{ push_vapid_private_key }}"
   PUSH_VAPID_SUBJECT: "{{ push_vapid_subject }}"

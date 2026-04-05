@@ -113,13 +113,16 @@
         - { path: "{{ web_root_dir }}", mode: "0755" }
         - { path: "{{ nginx_acme_webroot }}", owner: root, group: root, mode: "0755" }
 
-    - name: Ensure frontend error log file exists
+    - name: Ensure application log files exist
       ansible.builtin.file:
-        path: "{{ frontend_error_log_path }}"
+        path: "{{ item }}"
         state: touch
         owner: "{{ app_user }}"
         group: "{{ app_group }}"
         mode: "0640"
+      loop:
+        - "{{ frontend_error_log_path }}"
+        - "{{ feedback_log_path }}"
 
     - name: Ensure TLS directory exists
       ansible.builtin.file:

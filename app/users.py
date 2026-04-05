@@ -5,6 +5,8 @@ import jwt
 from aiohttp import web
 
 import config
+from app.feedback import MAX_FEEDBACK_MESSAGE_CHARS, build_feedback_event
+from app.observability import request_log_context
 from app.push import InvalidPushSubscriptionError, normalized_client_id
 from app.redis_store import StatusTooLong, UserNotFound, UsernameAlreadyExists
 from app.util import InvalidUsage, authenticated, is_request_secure, jsonify, no_content
@@ -63,6 +65,16 @@ class InvalidPushSubscriptionErrorResponse(InvalidUsage):
     def __init__(self, message=None):
         if message is not None:
             self.message = message
+
+
+class MissingFeedbackMessageError(InvalidUsage):
+    code = 12
+    message = 'Feedback message is required'
+
+
+class FeedbackMessageTooLongError(InvalidUsage):
+    code = 13
+    message = f'Feedback message must be {MAX_FEEDBACK_MESSAGE_CHARS} characters or fewer'
 
 
 def issue_auth_cookie(req, resp, user):
@@ -227,6 +239,40 @@ async def delete_push_subscription(req):
     logger.info(
         'Deleted push subscription',
         extra={'user_id': req.user['id'], 'endpoint': endpoint},
+    )
+    return no_content()
+
+
+@routes.post('/feedback')
+@authenticated
+async def submit_feedback(req):
+    message = req.data.get('message')
+    if not isinstance(message, str) or not message.strip():
+        raise MissingFeedbackMessageError()
+    normalized_message = message.strip()
+    if len(normalized_message) > MAX_FEEDBACK_MESSAGE_CHARS:
+        raise FeedbackMessageTooLongError()
+
+    event = build_feedback_event(
+        req,
+        message=normalized_message,
+        source=req.data.get('source'),
+        route=req.data.get('route'),
+        details=req.data.get('details'),
+        app=req.data.get('app'),
+        env=req.data.get('env'),
+        release=req.data.get('release'),
+        user_agent=req.data.get('user_agent'),
+        screen=req.data.get('screen'),
+    )
+    await req.config_dict['feedback_log_writer'].write(event)
+    logger.info(
+        'Logged user feedback',
+        extra=request_log_context(
+            req,
+            feedback_source=event.get('source'),
+            feedback_route=event.get('route'),
+        ),
     )
     return no_content()
 

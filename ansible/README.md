@@ -91,7 +91,8 @@ Then re-run `make provision`.
 
 The backend writes structured JSON logs to stdout, so on the VPS they live in
 the `systemd` journal for `narlun-backend`. Frontend client errors are written
-to `/home/narlun/log/frontend-errors.jsonl` and nginx writes to:
+to `/home/narlun/log/frontend-errors.jsonl`, user feedback is written to
+`/home/narlun/log/feedback.jsonl`, and nginx writes to:
 
 - `/var/log/nginx/narlun.access.log`
 - `/var/log/nginx/narlun.error.log`
@@ -103,7 +104,8 @@ make logs
 ```
 
 That exports the backend journal from the last 24 hours into a file and also
-downloads the frontend error log plus the active nginx access/error logs.
+downloads the frontend error log, user feedback log, and the active nginx
+access/error logs.
 
 To change the journal window:
 

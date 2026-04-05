@@ -19,6 +19,7 @@ DOMAIN = 'https://narlun.com'
 BIND_HOST = '127.0.0.1'
 WEB_ROOT = ''
 FRONTEND_ERROR_LOG_PATH = os.path.join(basedir, 'frontend-errors.jsonl')
+FEEDBACK_LOG_PATH = os.path.join(basedir, 'feedback.jsonl')
 PUSH_VAPID_PUBLIC_KEY = ''
 PUSH_VAPID_PRIVATE_KEY = ''
 PUSH_VAPID_SUBJECT = DOMAIN

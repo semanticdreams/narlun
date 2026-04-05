@@ -249,6 +249,34 @@ class HttpService {
     }
   }
 
+  Future<String?> submit_feedback({
+    required String message,
+    required String source,
+    String? route,
+    Map<String, Object?>? details,
+    bool silentErrors = false,
+  }) async {
+    final response = await client.post(
+      Uri.parse('$baseurl/users/feedback'),
+      headers: {
+        'Content-Type': 'application/json',
+        ..._requestHeaders(silentErrors: silentErrors),
+      },
+      body: jsonEncode({
+        'app': 'narlun-ui',
+        'release': const String.fromEnvironment('APP_RELEASE'),
+        'message': message,
+        'source': source,
+        'route': route,
+        'details': details,
+        'client_session_id': getOrCreateClientSessionId(),
+        'user_agent': getUserAgent(),
+        'screen': getScreenInfo(),
+      }),
+    );
+    return response.headers['x-request-id'] ?? response.headers['X-Request-ID'];
+  }
+
   Future<SessionUser> fetch_me({
     bool silentErrors = false,
     bool reconnectWebsocket = true,

@@ -135,6 +135,20 @@ async def test_invalid_json_encoding_returns_usage_error(cli):
     assert body['code'] == 11
 
 
+async def test_feedback_requires_a_message(cli):
+    created = await signup(cli)
+
+    response = await cli.post(
+        '/api/users/feedback',
+        json={'message': '   '},
+        headers=auth_headers(created['jwt']),
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 12
+
+
 async def test_delete_account_removes_permanent_user(cli):
     username = random_username()
     created = await signup(cli, username=username)

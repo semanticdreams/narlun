@@ -40,6 +40,11 @@ class FakeProfileHttpService extends HttpService {
 
   int updateProfileCalls = 0;
   Map<String, dynamic>? lastProfilePayload;
+  int submitFeedbackCalls = 0;
+  String? lastFeedbackMessage;
+  String? lastFeedbackRoute;
+  String? lastFeedbackSource;
+  bool? lastFeedbackSilentErrors;
 
   @override
   Future<SessionUser> update_profile(data) async {
@@ -52,6 +57,22 @@ class FakeProfileHttpService extends HttpService {
       status: data['status'] as String?,
       hasPassword: true,
     );
+  }
+
+  @override
+  Future<String?> submit_feedback({
+    required String message,
+    required String source,
+    String? route,
+    Map<String, Object?>? details,
+    bool silentErrors = false,
+  }) async {
+    submitFeedbackCalls += 1;
+    lastFeedbackMessage = message;
+    lastFeedbackRoute = route;
+    lastFeedbackSource = source;
+    lastFeedbackSilentErrors = silentErrors;
+    return 'request-1';
   }
 }
 
@@ -260,6 +281,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(pushNotificationsService.enableCalls, 1);
+  });
+
+  testWidgets('submits in-app feedback from profile', (tester) async {
+    final pushNotificationsService = FakePushNotificationsService();
+    final httpService = FakeProfileHttpService();
+
+    await tester.pumpWidget(
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: FakeInstallPromptService(available: false),
+        pushNotificationsService: pushNotificationsService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Send feedback'), findsOneWidget);
+
+    await tester.tap(find.text('Send feedback'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('feedback-message-field')),
+      'Nearby stayed empty even though another user was close by.',
+    );
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.submitFeedbackCalls, 1);
+    expect(
+      httpService.lastFeedbackMessage,
+      'Nearby stayed empty even though another user was close by.',
+    );
+    expect(httpService.lastFeedbackRoute, '/profile');
+    expect(httpService.lastFeedbackSource, 'profile');
+    expect(httpService.lastFeedbackSilentErrors, isTrue);
+    expect(find.text('Feedback sent. Thank you.'), findsOneWidget);
   });
 
   testWidgets('discarding edited profile changes pops back without saving', (

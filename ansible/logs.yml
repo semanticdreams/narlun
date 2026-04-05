@@ -7,6 +7,7 @@
     log_since_effective: "{{ log_since | default('24 hours ago', true) }}"
     file_logs_to_download:
       - "{{ frontend_error_log_path }}"
+      - "{{ feedback_log_path }}"
       - "{{ nginx_access_log_path }}"
       - "{{ nginx_error_log_path }}"
 

@@ -12,6 +12,7 @@ from aiohttp.web import middleware
 
 import app.log  # noqa: F401
 import config
+from app.feedback import create_feedback_tools
 from app.frontend_errors import create_frontend_error_tools, frontend_error_handler
 from app.observability import request_log_context
 from app.push import PushService
@@ -110,6 +111,7 @@ async def request_context(req, handler):
 async def create_app(*, redis_url=None, enable_cors=True, push_service=None):
     store = await RedisStore.create(redis_url or config.REDIS_URL)
     frontend_error_tools = create_frontend_error_tools(config.FRONTEND_ERROR_LOG_PATH)
+    feedback_tools = create_feedback_tools(config.FEEDBACK_LOG_PATH)
     app = web.Application(middlewares=[request_context])
     app['store'] = store
     app['push'] = push_service or PushService(store)
@@ -117,6 +119,7 @@ async def create_app(*, redis_url=None, enable_cors=True, push_service=None):
     app['redis_bytes'] = store.redis_bytes
     app['frontend_error_log_writer'] = frontend_error_tools['writer']
     app['frontend_error_rate_limiter'] = frontend_error_tools['rate_limiter']
+    app['feedback_log_writer'] = feedback_tools['writer']
 
     app.router.add_get('/api/ws', websocket_handler)
     app.router.add_post('/api/client-errors', frontend_error_handler)

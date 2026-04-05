@@ -13,6 +13,7 @@ import 'package:narlun/http.dart';
 import 'package:narlun/install_prompt_service.dart';
 import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
+import 'package:narlun/messages_view.dart';
 import 'package:narlun/models.dart';
 import 'package:narlun/push_notifications_service.dart';
 import 'package:narlun/websocket.dart';
@@ -25,17 +26,20 @@ class _DummyHttpClient extends http.BaseClient {
 }
 
 class FakeRoomsHttpService extends HttpService {
-  FakeRoomsHttpService({required WebsocketService websocketService})
-    : super(
-        websocketService: websocketService,
-        dialogService: DialogService(),
-        client: _DummyHttpClient(),
-      );
+  FakeRoomsHttpService({
+    required WebsocketService websocketService,
+    List<Object>? initialResponses,
+  }) : super(
+         websocketService: websocketService,
+         dialogService: DialogService(),
+         client: _DummyHttpClient(),
+       ) {
+    _responses.addAll(
+      initialResponses ?? <Object>[<RoomSummary>[], UnauthorizedResponse()],
+    );
+  }
 
-  final _responses = <Object>[
-    <RoomSummary>[],
-    UnauthorizedResponse(),
-  ];
+  final _responses = <Object>[];
   var getRoomsCalls = 0;
   var clearedLocalSession = false;
 
@@ -104,11 +108,18 @@ class FakeRoomsWebsocketService extends WebsocketService {
   }
 }
 
+class _RouteSpyObserver extends NavigatorObserver {
+  final List<String?> pushedRouteNames = [];
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pushedRouteNames.add(route.settings.name);
+    super.didPush(route, previousRoute);
+  }
+}
+
 class FakeInstallPromptService extends InstallPromptService {
-  FakeInstallPromptService({
-    this.available = false,
-    this.suggest = false,
-  });
+  FakeInstallPromptService({this.available = false, this.suggest = false});
 
   bool available;
   bool suggest;
@@ -207,7 +218,9 @@ void main() {
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+    );
     final installPromptService = FakeInstallPromptService();
     final pushNotificationsService = FakePushNotificationsService();
 
@@ -233,9 +246,9 @@ void main() {
           routes: {
             '/': (_) => const Scaffold(body: Text('Welcome landing')),
             '/rooms': (_) => ConversationsView(
-                  httpService: httpService,
-                  websocketService: websocketService,
-                ),
+              httpService: httpService,
+              websocketService: websocketService,
+            ),
           },
         ),
       ),
@@ -254,7 +267,9 @@ void main() {
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+    );
     final installPromptService = FakeInstallPromptService(
       available: true,
       suggest: true,
@@ -303,11 +318,69 @@ void main() {
     expect(find.text('Install Narlun'), findsNothing);
   });
 
+  testWidgets('deep-linked rooms keep the room route name when opened', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final room = RoomSummary(
+      id: 42,
+      isGroup: false,
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 1, username: 'me'),
+        RoomParticipant(id: 2, username: 'bob'),
+      ],
+    );
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+      initialResponses: [
+        <RoomSummary>[room],
+      ],
+    );
+    final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
+    final routeObserver = _RouteSpyObserver();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          navigatorObservers: [routeObserver],
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+            initialRoomIdToOpen: 42,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MessagesView), findsOneWidget);
+    expect(routeObserver.pushedRouteNames, contains('/rooms?open_room=42'));
+  });
+
   testWidgets('shows a dismissible notification prompt on the rooms screen', (
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+    );
     final installPromptService = FakeInstallPromptService();
     final pushNotificationsService = FakePushNotificationsService(prompt: true);
 
@@ -357,7 +430,9 @@ void main() {
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+    );
     final installPromptService = FakeInstallPromptService();
     final pushNotificationsService = FakePushNotificationsService();
     var openNearbyCalls = 0;
@@ -405,7 +480,9 @@ void main() {
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+    );
     httpService
       .._responses.clear()
       ..queueRoomsResponse([
@@ -458,7 +535,9 @@ void main() {
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+    );
     httpService
       .._responses.clear()
       ..queueRoomsResponse([
@@ -507,71 +586,74 @@ void main() {
     expect(find.text('2 requests'), findsOneWidget);
   });
 
-  testWidgets('refreshes room titles when another participant updates profile', (
-    tester,
-  ) async {
-    final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(websocketService: websocketService);
-    httpService
-      .._responses.clear()
-      ..queueRoomsResponse([
-        RoomSummary(
-          id: 5,
-          isGroup: false,
-          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          participants: const [
-            RoomParticipant(id: 1, username: 'me'),
-            RoomParticipant(id: 2, username: 'bob'),
+  testWidgets(
+    'refreshes room titles when another participant updates profile',
+    (tester) async {
+      final websocketService = FakeRoomsWebsocketService();
+      final httpService = FakeRoomsHttpService(
+        websocketService: websocketService,
+      );
+      httpService
+        .._responses.clear()
+        ..queueRoomsResponse([
+          RoomSummary(
+            id: 5,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'bob'),
+            ],
+          ),
+        ])
+        ..queueRoomsResponse([
+          RoomSummary(
+            id: 5,
+            isGroup: false,
+            updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'robert'),
+            ],
+          ),
+        ]);
+      final installPromptService = FakeInstallPromptService();
+      final pushNotificationsService = FakePushNotificationsService();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider<InstallPromptService>.value(
+              value: installPromptService,
+            ),
+            ChangeNotifierProvider<PushNotificationsService>.value(
+              value: pushNotificationsService,
+            ),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
           ],
-        ),
-      ])
-      ..queueRoomsResponse([
-        RoomSummary(
-          id: 5,
-          isGroup: false,
-          updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
-          participants: const [
-            RoomParticipant(id: 1, username: 'me'),
-            RoomParticipant(id: 2, username: 'robert'),
-          ],
-        ),
-      ]);
-    final installPromptService = FakeInstallPromptService();
-    final pushNotificationsService = FakePushNotificationsService();
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          ChangeNotifierProvider<InstallPromptService>.value(
-            value: installPromptService,
-          ),
-          ChangeNotifierProvider<PushNotificationsService>.value(
-            value: pushNotificationsService,
-          ),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: MaterialApp(
-          home: ConversationsView(
-            httpService: httpService,
-            websocketService: websocketService,
+          child: MaterialApp(
+            home: ConversationsView(
+              httpService: httpService,
+              websocketService: websocketService,
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('bob'), findsOneWidget);
+      expect(find.text('bob'), findsOneWidget);
 
-    websocketService.emitRoomsChanged();
-    await tester.pumpAndSettle();
+      websocketService.emitRoomsChanged();
+      await tester.pumpAndSettle();
 
-    expect(find.text('robert'), findsOneWidget);
-    expect(find.text('bob'), findsNothing);
-  });
+      expect(find.text('robert'), findsOneWidget);
+      expect(find.text('bob'), findsNothing);
+    },
+  );
 }

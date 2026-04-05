@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
+import 'dart:async';
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
 
@@ -23,14 +24,19 @@ class BrowserInstallPromptService extends InstallPromptService {
   _DeferredInstallPrompt? _deferredPrompt;
   late final html.EventListener _beforeInstallPromptListener;
   late final html.EventListener _appInstalledListener;
+  Timer? _availabilityProbeTimer;
   bool _isInstalled = false;
 
   BrowserInstallPromptService() {
     _isInstalled = _detectInstalled();
+    final deferredPromptEvent = _consumeBootstrapDeferredPrompt();
+    if (deferredPromptEvent != null && !_isInstalled) {
+      _capturePromptEventObject(deferredPromptEvent, fromBootstrap: true);
+    }
     _log(
       'service_initialized',
       'Initialized browser install prompt service.',
-      details: {'is_installed': _isInstalled},
+      details: _installStateDetails(),
     );
     _beforeInstallPromptListener = (html.Event event) {
       if (_isInstalled) {
@@ -50,6 +56,7 @@ class BrowserInstallPromptService extends InstallPromptService {
       _beforeInstallPromptListener,
     );
     html.window.addEventListener('appinstalled', _appInstalledListener);
+    _scheduleAvailabilityProbe();
     _installE2eHook();
   }
 
@@ -97,16 +104,27 @@ class BrowserInstallPromptService extends InstallPromptService {
       _log(
         'prompt_unavailable',
         'Install prompt request was unavailable.',
-        details: {
-          'is_installed': _isInstalled,
-          'has_deferred_prompt': deferredPrompt != null,
-        },
+        details: _installStateDetails(
+          extra: {'has_deferred_prompt': deferredPrompt != null},
+        ),
       );
       return InstallPromptOutcome.unavailable;
     }
     _deferredPrompt = null;
 
-    final outcome = await deferredPrompt.prompt();
+    late final InstallPromptOutcome outcome;
+    try {
+      outcome = await deferredPrompt.prompt();
+    } catch (error) {
+      _deferredPrompt = deferredPrompt;
+      _log(
+        'prompt_failed',
+        'Browser install prompt failed.',
+        details: _installStateDetails(extra: {'error': error.toString()}),
+      );
+      notifyListeners();
+      rethrow;
+    }
     if (outcome == InstallPromptOutcome.accepted) {
       _isInstalled = true;
       _clearDismissedUntil();
@@ -126,20 +144,64 @@ class BrowserInstallPromptService extends InstallPromptService {
     );
     final navigatorStandalone =
         js_util.getProperty<bool?>(html.window.navigator, 'standalone') == true;
-    return standaloneMediaQuery.matches || navigatorStandalone;
+    final bootstrapInstalled =
+        js_util.getProperty<Object?>(
+              html.window,
+              '__narlunInstalledFromBootstrap',
+            ) !=
+            null &&
+        js_util.callMethod<bool>(
+          html.window,
+          '__narlunInstalledFromBootstrap',
+          const [],
+        );
+    return standaloneMediaQuery.matches ||
+        navigatorStandalone ||
+        bootstrapInstalled;
   }
 
   void _clearDismissedUntil() {
     html.window.localStorage.remove(_installPromptDismissedUntilKey);
   }
 
+  void _scheduleAvailabilityProbe() {
+    _availabilityProbeTimer?.cancel();
+    _availabilityProbeTimer = Timer(const Duration(seconds: 5), () {
+      if (_isInstalled || _deferredPrompt != null) {
+        return;
+      }
+      _log(
+        'availability_missing',
+        'Install prompt is still unavailable after startup.',
+        details: _installStateDetails(),
+      );
+    });
+  }
+
   void _captureBrowserPrompt(html.Event event) {
     js_util.callMethod<Object>(event, 'preventDefault', const []);
-    _log(
-      'beforeinstallprompt_captured',
-      'Captured the browser beforeinstallprompt event.',
+    _capturePromptEventObject(event);
+  }
+
+  Object? _consumeBootstrapDeferredPrompt() {
+    final consumer = js_util.getProperty<Object?>(
+      html.window,
+      '__narlunConsumeDeferredInstallPrompt',
     );
-    final Object promptEvent = event;
+    if (consumer == null) {
+      return null;
+    }
+    return js_util.callMethod<Object?>(
+      html.window,
+      '__narlunConsumeDeferredInstallPrompt',
+      const [],
+    );
+  }
+
+  void _capturePromptEventObject(
+    Object promptEvent, {
+    bool fromBootstrap = false,
+  }) {
     _deferredPrompt = _DeferredInstallPrompt(() async {
       await js_util.promiseToFuture<Object>(
         js_util.callMethod<Object>(promptEvent, 'prompt', const []),
@@ -153,19 +215,40 @@ class BrowserInstallPromptService extends InstallPromptService {
           ? InstallPromptOutcome.accepted
           : InstallPromptOutcome.dismissed;
     });
+    _log(
+      'beforeinstallprompt_captured',
+      'Captured the browser beforeinstallprompt event.',
+      details: _installStateDetails(extra: {'from_bootstrap': fromBootstrap}),
+    );
     notifyListeners();
+  }
+
+  Map<String, Object?> _installStateDetails({Map<String, Object?>? extra}) {
+    final standaloneMediaQuery = html.window.matchMedia(
+      '(display-mode: standalone)',
+    );
+    return {
+      'is_installed': _isInstalled,
+      'is_install_available': isInstallAvailable,
+      'should_show_suggestion': shouldShowSuggestion,
+      'dismissed_for_now': _isDismissedForNow,
+      'has_deferred_prompt': _deferredPrompt != null,
+      'is_secure_context': html.window.isSecureContext == true,
+      'service_worker_supported': html.window.navigator.serviceWorker != null,
+      'display_mode_standalone': standaloneMediaQuery.matches,
+      'navigator_standalone':
+          js_util.getProperty<bool?>(html.window.navigator, 'standalone') ==
+          true,
+      'document_referrer': html.document.referrer,
+      ...?extra,
+    };
   }
 
   void _log(String kind, String message, {Map<String, Object?>? details}) {
     logFrontendDiagnostic(
       'install_$kind',
       message,
-      details: {
-        'is_installed': _isInstalled,
-        'is_install_available': isInstallAvailable,
-        'should_show_suggestion': shouldShowSuggestion,
-        ...?details,
-      },
+      details: _installStateDetails(extra: details),
     );
   }
 
@@ -201,6 +284,7 @@ class BrowserInstallPromptService extends InstallPromptService {
 
   @override
   void dispose() {
+    _availabilityProbeTimer?.cancel();
     html.window.removeEventListener(
       'beforeinstallprompt',
       _beforeInstallPromptListener,

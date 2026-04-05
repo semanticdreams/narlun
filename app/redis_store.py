@@ -152,6 +152,11 @@ class RedisStore:
         client_hash = hashlib.sha256(client_id.encode('utf-8')).hexdigest()
         return f'user:{{{user_id}}}:websocket_presence:{client_hash}'
 
+    def _user_client_live_view_key(self, user_id, client_id, view_key):
+        client_hash = hashlib.sha256(client_id.encode('utf-8')).hexdigest()
+        view_hash = hashlib.sha256(view_key.encode('utf-8')).hexdigest()
+        return f'user:{{{user_id}}}:live_view:{client_hash}:{view_hash}'
+
     def _push_subscription_key(self, subscription_id):
         return f'push_subscription:{subscription_id}'
 
@@ -1158,6 +1163,43 @@ class RedisStore:
             self._user_client_websocket_presence_key(user_id, client_id)
             if client_id else self._user_websocket_presence_key(user_id)
         )
+        now = now_ts()
+        await self.redis.zremrangebyscore(key, '-inf', now)
+        return int(await self.redis.zcard(key)) > 0
+
+    async def mark_live_view(self, user_id, connection_id, *, client_id, view_key):
+        key = self._user_client_live_view_key(user_id, client_id, view_key)
+        now = now_ts()
+        expires_at = now + WEBSOCKET_PRESENCE_TTL_SECONDS
+        await self.redis.zremrangebyscore(key, '-inf', now)
+        await self.redis.zadd(key, {connection_id: expires_at})
+        logger.debug(
+            'Marked live view presence',
+            extra={
+                'user_id': int(user_id),
+                'connection_id': connection_id,
+                'client_id': client_id,
+                'view_key': view_key,
+                'expires_at': expires_at,
+            },
+        )
+        return expires_at
+
+    async def clear_live_view(self, user_id, connection_id, *, client_id, view_key):
+        key = self._user_client_live_view_key(user_id, client_id, view_key)
+        await self.redis.zrem(key, connection_id)
+        logger.debug(
+            'Cleared live view presence',
+            extra={
+                'user_id': int(user_id),
+                'connection_id': connection_id,
+                'client_id': client_id,
+                'view_key': view_key,
+            },
+        )
+
+    async def has_live_view(self, user_id, *, client_id, view_key):
+        key = self._user_client_live_view_key(user_id, client_id, view_key)
         now = now_ts()
         await self.redis.zremrangebyscore(key, '-inf', now)
         return int(await self.redis.zcard(key)) > 0

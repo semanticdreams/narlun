@@ -128,6 +128,69 @@
   </div>
 
   <script>
+    (function () {
+      var deferredInstallPrompt = null;
+      var installDetected = false;
+      var bootstrapDiagnostics = [];
+
+      function pushBootstrapDiagnostic(kind, message, details) {
+        bootstrapDiagnostics.push({
+          kind: kind,
+          message: message,
+          details: details || {},
+          ts: new Date().toISOString(),
+        });
+      }
+
+      window.__narlunPushBootstrapDiagnostic = pushBootstrapDiagnostic;
+
+      window.__narlunConsumeDeferredInstallPrompt = function () {
+        var prompt = deferredInstallPrompt;
+        deferredInstallPrompt = null;
+        return prompt;
+      };
+
+      window.__narlunConsumeBootstrapDiagnostics = function () {
+        var events = bootstrapDiagnostics.slice();
+        bootstrapDiagnostics = [];
+        return events;
+      };
+
+      window.__narlunInstalledFromBootstrap = function () {
+        return installDetected;
+      };
+
+      pushBootstrapDiagnostic(
+        'bootstrap_shell_initialized',
+        'Initialized the web startup shell.',
+        {
+          is_secure_context: window.isSecureContext === true,
+          service_worker_supported: 'serviceWorker' in navigator,
+        },
+      );
+
+      window.addEventListener('beforeinstallprompt', function (event) {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        pushBootstrapDiagnostic(
+          'install_beforeinstallprompt_captured',
+          'Captured beforeinstallprompt during HTML bootstrap.',
+          {
+            platform_count: Array.isArray(event.platforms) ? event.platforms.length : null,
+          },
+        );
+      });
+
+      window.addEventListener('appinstalled', function () {
+        installDetected = true;
+        deferredInstallPrompt = null;
+        pushBootstrapDiagnostic(
+          'install_appinstalled_bootstrap',
+          'Browser reported installation during HTML bootstrap.',
+        );
+      });
+    }());
+
     window.addEventListener('flutter-first-frame', function () {
       document.body.classList.add('app-ready');
     });
@@ -150,7 +213,34 @@
       window.addEventListener('load', function () {
         loadMainDartJs();
         var serviceWorkerUrl = 'flutter_service_worker.js?v=' + serviceWorkerVersion;
-        navigator.serviceWorker.register(serviceWorkerUrl).catch(() => {});
+        window.__narlunPushBootstrapDiagnostic(
+          'push_service_worker_register_started',
+          'Started browser service worker registration.',
+          {
+            service_worker_url: serviceWorkerUrl,
+          },
+        );
+        navigator.serviceWorker.register(serviceWorkerUrl).then(function (registration) {
+          window.__narlunPushBootstrapDiagnostic(
+            'push_service_worker_registered',
+            'Registered the browser service worker.',
+            {
+              scope: registration && registration.scope ? registration.scope : null,
+              has_active_worker: !!(registration && registration.active),
+              has_waiting_worker: !!(registration && registration.waiting),
+              has_installing_worker: !!(registration && registration.installing),
+            },
+          );
+        }).catch(function (error) {
+          window.__narlunPushBootstrapDiagnostic(
+            'push_service_worker_register_failed',
+            'Browser service worker registration failed.',
+            {
+              error: error ? String(error) : null,
+              service_worker_url: serviceWorkerUrl,
+            },
+          );
+        });
       });
     } else {
       loadMainDartJs();

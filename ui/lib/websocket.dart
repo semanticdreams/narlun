@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'config.dart';
@@ -62,6 +63,7 @@ class WebsocketService {
   final Set<int> _desiredRoomSubscriptions = <int>{};
   final Set<int> _activeRoomSubscriptions = <int>{};
   final Map<int, Completer<void>> _pendingSubscriptions = {};
+  Map<String, Object?>? _desiredLiveView;
 
   void _log(String kind, String message, {Map<String, Object?>? details}) {
     logFrontendDiagnostic(
@@ -332,6 +334,7 @@ class WebsocketService {
   Future<void> _restoreSubscriptions() async {
     _activeRoomSubscriptions.clear();
     if (_desiredRoomSubscriptions.isEmpty || _websocket == null) {
+      await _syncLiveView();
       return;
     }
     for (final roomId in _desiredRoomSubscriptions.toList()..sort()) {
@@ -341,6 +344,7 @@ class WebsocketService {
         continue;
       }
     }
+    await _syncLiveView();
   }
 
   void _failPendingSubscriptions(Object error) {
@@ -479,6 +483,61 @@ class WebsocketService {
     }
   }
 
+  void updateLiveViewForRoute(String? routeName) {
+    final nextLiveView = _liveViewForRoute(routeName);
+    if (_sameLiveView(_desiredLiveView, nextLiveView)) {
+      return;
+    }
+    _desiredLiveView = nextLiveView;
+    _log(
+      'live_view_changed',
+      'Updated desired live view from navigation.',
+      details: {'route': routeName, 'live_view': nextLiveView},
+    );
+    unawaited(_syncLiveView());
+  }
+
+  Future<void> _syncLiveView() async {
+    final websocket = _websocket;
+    if (websocket == null) {
+      return;
+    }
+    websocket.sink.add(
+      jsonEncode({
+        'type': 'set-live-view',
+        'data': _desiredLiveView ?? const {'view': 'none'},
+      }),
+    );
+  }
+
+  Map<String, Object?>? _liveViewForRoute(String? routeName) {
+    if (routeName == null || routeName.isEmpty) {
+      return null;
+    }
+    final uri = Uri.parse(routeName);
+    if (uri.path == '/nearby') {
+      return const {'view': 'nearby'};
+    }
+    if (uri.path == '/rooms') {
+      final roomId = int.tryParse(uri.queryParameters['open_room'] ?? '');
+      if (roomId != null) {
+        return {'view': 'room', 'room_id': roomId};
+      }
+      return const {'view': 'rooms'};
+    }
+    return null;
+  }
+
+  bool _sameLiveView(
+    Map<String, Object?>? left,
+    Map<String, Object?>? right,
+  ) {
+    if (left == null || right == null) {
+      return left == right;
+    }
+    return left['view'] == right['view'] && left['room_id'] == right['room_id'];
+  }
+
   Future<void> send(payload) async {
     await ensureConnected();
     _websocket!.sink.add(jsonEncode(payload));
@@ -527,8 +586,33 @@ class WebsocketService {
   Future<void> close() async {
     _shouldReconnect = false;
     _desiredRoomSubscriptions.clear();
+    _desiredLiveView = null;
     _cancelReconnectTimer();
     _connectTask = null;
     await _closeCurrentConnection();
+  }
+}
+
+class LiveViewNavigatorObserver extends NavigatorObserver {
+  LiveViewNavigatorObserver(this.websocketService);
+
+  final WebsocketService websocketService;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    websocketService.updateLiveViewForRoute(route.settings.name);
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    websocketService.updateLiveViewForRoute(newRoute?.settings.name);
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    websocketService.updateLiveViewForRoute(previousRoute?.settings.name);
+    super.didPop(route, previousRoute);
   }
 }

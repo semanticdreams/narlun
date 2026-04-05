@@ -63,6 +63,24 @@ async def _unsubscribe_room(channel, room_id, subscribed_rooms):
     return False
 
 
+def _normalize_live_view(data):
+    view = data.get('view')
+    if not isinstance(view, str):
+        raise ValueError('view must be a string')
+    normalized_view = view.strip()
+    if normalized_view == 'none':
+        return None
+    if normalized_view in {'rooms', 'nearby'}:
+        return normalized_view
+    if normalized_view == 'room':
+        room_id = data.get('room_id')
+        try:
+            return f'room:{int(room_id)}'
+        except (TypeError, ValueError) as exc:
+            raise ValueError('room_id must be an integer') from exc
+    raise ValueError('view must be one of none, rooms, nearby, room')
+
+
 @authenticated
 async def websocket_handler(req):
     ws = web.WebSocketResponse(
@@ -80,6 +98,7 @@ async def websocket_handler(req):
     client_session_id = req.query.get('client_session_id')
     await req.store.mark_active_websocket(user_id, connection_id, client_id=client_id)
     subscribed_rooms = set()
+    current_live_view = None
     logger.info(
         'Websocket connected',
         extra=request_log_context(
@@ -95,6 +114,13 @@ async def websocket_handler(req):
             try:
                 await asyncio.sleep(_presence_refresh_interval_seconds)
                 await req.store.mark_active_websocket(user_id, connection_id, client_id=client_id)
+                if client_id and current_live_view is not None:
+                    await req.store.mark_live_view(
+                        user_id,
+                        connection_id,
+                        client_id=client_id,
+                        view_key=current_live_view,
+                    )
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -104,8 +130,29 @@ async def websocket_handler(req):
                         req,
                         connection_id=connection_id,
                         client_id=client_id,
-                    ),
+                        ),
                 )
+
+    async def update_live_view(next_live_view):
+        nonlocal current_live_view
+        if not client_id or current_live_view == next_live_view:
+            current_live_view = next_live_view
+            return
+        if current_live_view is not None:
+            await req.store.clear_live_view(
+                user_id,
+                connection_id,
+                client_id=client_id,
+                view_key=current_live_view,
+            )
+        current_live_view = next_live_view
+        if current_live_view is not None:
+            await req.store.mark_live_view(
+                user_id,
+                connection_id,
+                client_id=client_id,
+                view_key=current_live_view,
+            )
 
     async def reader():
         while True:
@@ -288,6 +335,55 @@ async def websocket_handler(req):
                             ),
                         )
                         await _send_event(ws, 'unsubscribed-room', {'room_id': room_id})
+                elif message_type == 'set-live-view':
+                    try:
+                        next_live_view = _normalize_live_view(data)
+                    except ValueError as exc:
+                        logger.warning(
+                            'Rejected websocket payload with invalid live view',
+                            extra=request_log_context(
+                                req,
+                                connection_id=connection_id,
+                                client_id=client_id,
+                                message_type=message_type,
+                                error=str(exc),
+                            ),
+                        )
+                        await _send_error(
+                            ws,
+                            code='invalid-live-view',
+                            message=str(exc),
+                        )
+                        continue
+                    if next_live_view and next_live_view.startswith('room:'):
+                        room_id = int(next_live_view.split(':', 1)[1])
+                        if not await req.store.user_in_room(req.user['id'], room_id):
+                            logger.warning(
+                                'Denied websocket live view for inaccessible room',
+                                extra=request_log_context(
+                                    req,
+                                    connection_id=connection_id,
+                                    client_id=client_id,
+                                    room_id=room_id,
+                                ),
+                            )
+                            await _send_error(
+                                ws,
+                                code='room-access-denied',
+                                message='Cannot track that room as a live view',
+                                room_id=room_id,
+                            )
+                            continue
+                    await update_live_view(next_live_view)
+                    logger.info(
+                        'Updated websocket live view',
+                        extra=request_log_context(
+                            req,
+                            connection_id=connection_id,
+                            client_id=client_id,
+                            live_view=current_live_view,
+                        ),
+                    )
                 else:
                     logger.warning(
                         'Rejected websocket payload with unknown message type',
@@ -319,6 +415,14 @@ async def websocket_handler(req):
         sockets.discard(ws)
         if not sockets and user_id in active_sockets:
             del active_sockets[user_id]
+        if client_id and current_live_view is not None:
+            with contextlib.suppress(Exception):
+                await req.store.clear_live_view(
+                    user_id,
+                    connection_id,
+                    client_id=client_id,
+                    view_key=current_live_view,
+                )
         with contextlib.suppress(Exception):
             await req.store.clear_active_websocket(user_id, connection_id, client_id=client_id)
         await channel.aclose()

@@ -152,6 +152,7 @@ class _ConversationsState extends State<ConversationsView> {
     final roomDeleted = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
+        settings: RouteSettings(name: roomsRouteWithOpenRoom(room.id)),
         builder: (context) => MessagesView(
           room: room!,
           me: currentUser,

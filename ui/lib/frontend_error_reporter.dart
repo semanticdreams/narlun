@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'bootstrap_diagnostics.dart';
 import 'client_observability.dart';
 import 'config.dart';
 import 'frontend_runtime_info.dart';
@@ -15,6 +17,8 @@ import 'me_model.dart';
 
 const _maxEventsPerSession = 200;
 const _fingerprintCooldown = Duration(seconds: 10);
+const _maxBufferedDeliveryFailures = 20;
+const _deliveryFailureRetryDelay = Duration(seconds: 5);
 
 class FrontendErrorReporter {
   FrontendErrorReporter({
@@ -47,6 +51,9 @@ class FrontendErrorReporter {
   String _currentRoute = '/';
   MeModel? _attachedMeModel;
   VoidCallback? _meModelListener;
+  final List<Timer> _bootstrapFlushTimers = [];
+  final List<Map<String, Object?>> _pendingDeliveryFailures = [];
+  Timer? _deliveryFailureRetryTimer;
   bool _disposed = false;
 
   void install() {
@@ -90,6 +97,7 @@ class FrontendErrorReporter {
 
     _disposed = false;
     _currentReporter = this;
+    _scheduleBootstrapDiagnosticFlushes();
   }
 
   static void resetForTests() {
@@ -176,6 +184,7 @@ class FrontendErrorReporter {
     if (_disposed) {
       return;
     }
+    String? reservedFingerprint;
     try {
       final resolvedMessage = _truncate(message.trim(), 1000);
       final resolvedStack = _truncate(stack.trim(), 8000);
@@ -192,34 +201,43 @@ class FrontendErrorReporter {
       if (_shouldDrop(fingerprint)) {
         return;
       }
+      reservedFingerprint = fingerprint;
 
-      final payload = <String, Object?>{
-        'ts': DateTime.now().toUtc().toIso8601String(),
-        'app': 'narlun-ui',
-        'env': _environment,
-        'release': _release.isEmpty ? null : _release,
-        'route': _truncate(_currentRoute, 512),
-        'user_id': _userId,
-        'client_session_id': _clientSessionId,
-        'fingerprint': fingerprint,
-        'kind': kind,
-        'level': level,
-        'message': resolvedMessage,
-        'stack': resolvedStack,
-        'details': _sanitizeDetails(details),
-        'user_agent': _truncate(getUserAgent(), 512),
-        'screen': getScreenInfo(),
-      };
-
-      await _client.post(
-        _endpoint,
-        headers: {
-          'Content-Type': 'application/json',
-          clientSessionHeader: _clientSessionId,
-        },
-        body: jsonEncode(payload),
+      final payload = _buildPayload(
+        kind: kind,
+        level: level,
+        message: resolvedMessage,
+        stack: resolvedStack,
+        fingerprint: fingerprint,
+        details: details,
       );
-    } catch (_) {}
+      final result = await _postPayload(payload);
+      if (!result.accepted) {
+        _releaseFingerprintReservation(fingerprint);
+        reservedFingerprint = null;
+        _recordDeliveryFailure(
+          failedKind: kind,
+          failedLevel: level,
+          failedMessage: resolvedMessage,
+          failedRoute: _currentRoute,
+          statusCode: result.statusCode,
+          error: result.error,
+        );
+        return;
+      }
+      await _flushBufferedDeliveryFailures();
+    } catch (error) {
+      if (reservedFingerprint != null) {
+        _releaseFingerprintReservation(reservedFingerprint);
+      }
+      _recordDeliveryFailure(
+        failedKind: kind,
+        failedLevel: level,
+        failedMessage: message,
+        failedRoute: _currentRoute,
+        error: error,
+      );
+    }
   }
 
   void dispose() {
@@ -235,6 +253,12 @@ class FrontendErrorReporter {
       _attachedMeModel = null;
       _meModelListener = null;
     }
+    for (final timer in _bootstrapFlushTimers) {
+      timer.cancel();
+    }
+    _bootstrapFlushTimers.clear();
+    _deliveryFailureRetryTimer?.cancel();
+    _deliveryFailureRetryTimer = null;
     _client.close();
   }
 
@@ -252,6 +276,186 @@ class FrontendErrorReporter {
 
   void _syncUser(MeModel meModel) {
     _userId = meModel.data?.id;
+  }
+
+  void _scheduleBootstrapDiagnosticFlushes() {
+    for (final timer in _bootstrapFlushTimers) {
+      timer.cancel();
+    }
+    _bootstrapFlushTimers.clear();
+    for (final delay in const [
+      Duration.zero,
+      Duration(seconds: 2),
+      Duration(seconds: 6),
+    ]) {
+      _bootstrapFlushTimers.add(Timer(delay, _flushBootstrapDiagnostics));
+    }
+  }
+
+  void _flushBootstrapDiagnostics() {
+    if (_disposed) {
+      return;
+    }
+    final diagnostics = consumeBootstrapDiagnostics();
+    if (diagnostics.isEmpty) {
+      return;
+    }
+    for (final event in diagnostics) {
+      final kind = event['kind'];
+      final message = event['message'];
+      if (kind is! String || message is! String) {
+        continue;
+      }
+      final details = <String, Object?>{
+        'source': 'html_bootstrap',
+        'bootstrap_ts': event['ts'],
+      };
+      final rawDetails = event['details'];
+      if (rawDetails is Map<Object?, Object?>) {
+        rawDetails.forEach((key, value) {
+          if (key is String) {
+            details[key] = value;
+          }
+        });
+      }
+      unawaited(logDiagnostic(kind, message, details: details));
+    }
+  }
+
+  Map<String, Object?> _buildPayload({
+    required String kind,
+    required String level,
+    required String message,
+    required String stack,
+    required String fingerprint,
+    Map<String, Object?>? details,
+  }) {
+    return <String, Object?>{
+      'ts': DateTime.now().toUtc().toIso8601String(),
+      'app': 'narlun-ui',
+      'env': _environment,
+      'release': _release.isEmpty ? null : _release,
+      'route': _truncate(_currentRoute, 512),
+      'user_id': _userId,
+      'client_session_id': _clientSessionId,
+      'fingerprint': fingerprint,
+      'kind': kind,
+      'level': level,
+      'message': message,
+      'stack': stack,
+      'details': _sanitizeDetails(details),
+      'user_agent': _truncate(getUserAgent(), 512),
+      'screen': getScreenInfo(),
+    };
+  }
+
+  Future<_DeliveryResult> _postPayload(Map<String, Object?> payload) async {
+    try {
+      final response = await _client.post(
+        _endpoint,
+        headers: {
+          'Content-Type': 'application/json',
+          clientSessionHeader: _clientSessionId,
+        },
+        body: jsonEncode(payload),
+      );
+      return _DeliveryResult(statusCode: response.statusCode);
+    } catch (error) {
+      return _DeliveryResult(error: error);
+    }
+  }
+
+  void _recordDeliveryFailure({
+    required String failedKind,
+    required String failedLevel,
+    required String failedMessage,
+    required String failedRoute,
+    int? statusCode,
+    Object? error,
+  }) {
+    _pendingDeliveryFailures.add({
+      'failed_kind': failedKind,
+      'failed_level': failedLevel,
+      'failed_message': failedMessage,
+      'failed_route': failedRoute,
+      'failed_at': DateTime.now().toUtc().toIso8601String(),
+      'delivery_status_code': statusCode,
+      'delivery_error': error?.toString(),
+    });
+    if (_pendingDeliveryFailures.length > _maxBufferedDeliveryFailures) {
+      _pendingDeliveryFailures.removeAt(0);
+    }
+    _logDeliveryFailureLocally(
+      failedKind: failedKind,
+      statusCode: statusCode,
+      error: error,
+    );
+    _scheduleDeliveryFailureRetry();
+  }
+
+  void _logDeliveryFailureLocally({
+    required String failedKind,
+    int? statusCode,
+    Object? error,
+  }) {
+    final failureDescription = statusCode != null
+        ? 'HTTP $statusCode'
+        : error?.toString() ?? 'unknown error';
+    debugPrint(
+      'narlun frontend diagnostics delivery failed for '
+      '$failedKind: $failureDescription',
+    );
+  }
+
+  void _scheduleDeliveryFailureRetry() {
+    if (_disposed || _pendingDeliveryFailures.isEmpty) {
+      return;
+    }
+    _deliveryFailureRetryTimer ??= Timer(_deliveryFailureRetryDelay, () {
+      _deliveryFailureRetryTimer = null;
+      unawaited(_flushBufferedDeliveryFailures());
+    });
+  }
+
+  Future<void> _flushBufferedDeliveryFailures() async {
+    if (_disposed || _pendingDeliveryFailures.isEmpty) {
+      return;
+    }
+    _deliveryFailureRetryTimer?.cancel();
+    _deliveryFailureRetryTimer = null;
+    final pendingFailures = List<Map<String, Object?>>.from(
+      _pendingDeliveryFailures,
+    );
+    _pendingDeliveryFailures.clear();
+    for (var index = 0; index < pendingFailures.length; index += 1) {
+      final failure = pendingFailures[index];
+      final payload = _buildPayload(
+        kind: 'diagnostics_delivery_failed',
+        level: 'error',
+        message: 'Frontend diagnostics delivery failed earlier.',
+        stack: 'Frontend diagnostics delivery failed earlier.',
+        fingerprint: _fingerprintFor(
+          'diagnostics_delivery_failed',
+          '${failure['failed_kind']}|${failure['failed_at']}',
+          '${failure['delivery_status_code']}|${failure['delivery_error']}',
+          _currentRoute,
+        ),
+        details: failure,
+      );
+      final result = await _postPayload(payload);
+      if (!result.accepted) {
+        _pendingDeliveryFailures.insertAll(0, pendingFailures.sublist(index));
+        _scheduleDeliveryFailureRetry();
+        return;
+      }
+    }
+  }
+
+  void _releaseFingerprintReservation(String fingerprint) {
+    final previousTimestamp = _lastSentAtByFingerprint.remove(fingerprint);
+    if (previousTimestamp != null && _sentEvents > 0) {
+      _sentEvents -= 1;
+    }
   }
 
   bool _shouldDrop(String fingerprint) {
@@ -306,6 +510,19 @@ class FrontendErrorReporter {
     }
     return value.substring(0, maxLength);
   }
+}
+
+class _DeliveryResult {
+  const _DeliveryResult({this.statusCode, this.error});
+
+  final int? statusCode;
+  final Object? error;
+
+  bool get accepted =>
+      error == null &&
+      statusCode != null &&
+      statusCode! >= 200 &&
+      statusCode! < 300;
 }
 
 void logFrontendDiagnostic(

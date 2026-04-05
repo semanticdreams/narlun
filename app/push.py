@@ -325,13 +325,10 @@ class PushService:
             return
 
         tasks = []
-        skipped_active_websocket = 0
+        skipped_live_view = 0
         for subscription in subscriptions:
-            if await self.store.has_active_websocket(
-                subscription['user_id'],
-                client_id=subscription.get('client_id'),
-            ):
-                skipped_active_websocket += 1
+            if await self._should_skip_for_live_view(subscription, notification):
+                skipped_live_view += 1
                 continue
             tasks.append(self._send_notification(subscription, notification))
         logger.info(
@@ -340,12 +337,41 @@ class PushService:
                 'recipient_count': len(user_ids),
                 'subscription_count': len(subscriptions),
                 'delivery_count': len(tasks),
-                'skipped_active_websocket_count': skipped_active_websocket,
+                'skipped_live_view_count': skipped_live_view,
                 'notification_tag': notification.get('tag'),
+                'notification_type': (notification.get('data') or {}).get('type'),
+                'notification_room_id': (notification.get('data') or {}).get('room_id'),
+                'candidate_live_views': _notification_live_views(notification),
             },
         )
         if tasks:
             await asyncio.gather(*tasks)
+
+    async def _should_skip_for_live_view(self, subscription, notification):
+        client_id = normalized_client_id(subscription.get('client_id'))
+        if client_id is None:
+            return False
+
+        user_id = int(subscription['user_id'])
+        for view_key in _notification_live_views(notification):
+            if await self.store.has_live_view(
+                user_id,
+                client_id=client_id,
+                view_key=view_key,
+            ):
+                logger.info(
+                    'Skipped push delivery because client already has the relevant page open',
+                    extra={
+                        'user_id': user_id,
+                        'client_id': client_id,
+                        'view_key': view_key,
+                        'notification_tag': notification.get('tag'),
+                        'notification_type': (notification.get('data') or {}).get('type'),
+                        'notification_room_id': (notification.get('data') or {}).get('room_id'),
+                    },
+                )
+                return True
+        return False
 
     def enqueue_room_created(self, actor_id, room_id, recipient_ids):
         self._enqueue(
@@ -422,6 +448,8 @@ class PushService:
                     'user_id': subscription['user_id'],
                     'endpoint': subscription['endpoint'],
                     'notification_tag': notification.get('tag'),
+                    'notification_type': (notification.get('data') or {}).get('type'),
+                    'notification_room_id': (notification.get('data') or {}).get('room_id'),
                 },
             )
         except Exception as exc:
@@ -436,6 +464,9 @@ class PushService:
                     'subscription_id': subscription['id'],
                     'user_id': subscription['user_id'],
                     'endpoint': subscription['endpoint'],
+                    'notification_tag': notification.get('tag'),
+                    'notification_type': (notification.get('data') or {}).get('type'),
+                    'notification_room_id': (notification.get('data') or {}).get('room_id'),
                 },
             )
 
@@ -452,6 +483,23 @@ def _notification_payload(notification):
     if notification.get('renotify') is True:
         payload['renotify'] = True
     return payload
+
+
+def _notification_live_views(notification):
+    data = notification.get('data') or {}
+    notification_type = data.get('type')
+    room_id = data.get('room_id')
+
+    if notification_type in {'new-message', 'room-join-request'}:
+        try:
+            return [f'room:{int(room_id)}']
+        except (TypeError, ValueError):
+            return []
+    if notification_type in {'room-created', 'room-joined'}:
+        return ['rooms']
+    if notification_type in {'room-request-approved', 'room-request-rejected'}:
+        return ['rooms', 'nearby']
+    return []
 
 
 def _send_web_push(subscription, payload):

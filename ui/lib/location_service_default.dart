@@ -24,6 +24,8 @@ class GeolocatorLocationService implements LocationService {
   }
 }
 
+final GeolocatorLocationService _locationService = GeolocatorLocationService();
+
 LocationService createLocationService() {
-  return GeolocatorLocationService();
+  return _locationService;
 }

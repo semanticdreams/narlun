@@ -6,7 +6,23 @@ Future<void> handleInstallRequest(
   BuildContext context,
   InstallPromptService installPromptService,
 ) async {
-  final outcome = await installPromptService.requestInstall();
+  late final InstallPromptOutcome outcome;
+  try {
+    outcome = await installPromptService.requestInstall();
+  } catch (_) {
+    if (!context.mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Could not start installation right now.'),
+        ),
+      );
+    return;
+  }
   if (!context.mounted) {
     return;
   }

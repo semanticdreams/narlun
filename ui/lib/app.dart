@@ -13,6 +13,7 @@ import 'frontend_error_reporter.dart';
 import 'me_model.dart';
 import 'route_utils.dart';
 import 'set_page_title.dart';
+import 'websocket.dart';
 
 import 'locator.dart';
 import 'dialog_service.dart';
@@ -39,7 +40,10 @@ class MyApp extends StatelessWidget {
         child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
       ),
       debugShowCheckedModeBanner: false,
-      navigatorObservers: [errorReporter.createNavigatorObserver()],
+      navigatorObservers: [
+        errorReporter.createNavigatorObserver(),
+        LiveViewNavigatorObserver(locator<WebsocketService>()),
+      ],
       title: 'narlun | opening',
       theme: theme,
       onGenerateRoute: (RouteSettings settings) {

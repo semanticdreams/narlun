@@ -1111,50 +1111,57 @@ class MessagesState extends State<MessagesView> {
   }
 
   Widget _buildComposer() {
+    final theme = Theme.of(context);
+    final primaryColor = theme.colorScheme.primary;
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(26),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x14000000),
-                      blurRadius: 16,
-                      offset: Offset(0, 6),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 56),
+                child: DecoratedBox(
+                  key: const Key('message-input-shell'),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(26),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x14000000),
+                        blurRadius: 16,
+                        offset: Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: TextField(
+                    key: const Key('message-input-field'),
+                    autofocus: true,
+                    focusNode: messageFocusNode,
+                    controller: messageController,
+                    minLines: 1,
+                    maxLines: 5,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (v) async {
+                      await send_message();
+                      messageFocusNode.requestFocus();
+                    },
+                    decoration: const InputDecoration(
+                      hintText: 'Type a message',
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.fromLTRB(18, 14, 18, 14),
                     ),
-                  ],
-                ),
-                child: TextField(
-                  key: const Key('message-input-field'),
-                  autofocus: true,
-                  focusNode: messageFocusNode,
-                  controller: messageController,
-                  minLines: 1,
-                  maxLines: 5,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (v) async {
-                    await send_message();
-                    messageFocusNode.requestFocus();
-                  },
-                  decoration: const InputDecoration(
-                    hintText: 'Type a message',
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.fromLTRB(18, 14, 18, 14),
                   ),
                 ),
               ),
             ),
             const SizedBox(width: 8),
             DecoratedBox(
+              key: const Key('message-send-shell'),
               decoration: BoxDecoration(
-                color: const Color(0xFF1F7A6B),
+                color: primaryColor,
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: const [
                   BoxShadow(
@@ -1167,12 +1174,16 @@ class MessagesState extends State<MessagesView> {
               child: Semantics(
                 label: 'message-send',
                 button: true,
-                child: IconButton(
-                  key: const Key('message-send-button'),
-                  icon: const Icon(Icons.send_rounded, color: Colors.white),
-                  onPressed: () async {
-                    await send_message();
-                  },
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: IconButton(
+                    key: const Key('message-send-button'),
+                    icon: const Icon(Icons.send_rounded, color: Colors.white),
+                    onPressed: () async {
+                      await send_message();
+                    },
+                  ),
                 ),
               ),
             ),

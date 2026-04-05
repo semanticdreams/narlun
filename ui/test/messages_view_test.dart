@@ -1187,6 +1187,52 @@ void main() {
     expect(httpService.markedReads.last['message_id'], 'sent-1');
   });
 
+  testWidgets('composer send button uses primary color and matches input height', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          isGroup: false,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final theme = Theme.of(
+      tester.element(find.byKey(const Key('message-send-button'))),
+    );
+    final sendShell = tester.widget<DecoratedBox>(
+      find.byKey(const Key('message-send-shell')),
+    );
+    final inputHeight =
+        tester.getSize(find.byKey(const Key('message-input-shell'))).height;
+    final sendHeight =
+        tester.getSize(find.byKey(const Key('message-send-shell'))).height;
+
+    expect(
+      (sendShell.decoration as BoxDecoration).color,
+      theme.colorScheme.primary,
+    );
+    expect(sendHeight, inputHeight);
+  });
+
   testWidgets('outgoing message uses single check until someone reads it', (
     tester,
   ) async {

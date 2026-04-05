@@ -116,6 +116,12 @@ class MyApp extends StatelessWidget {
         }
 
         if (pageView != null) {
+          if (resolvedUri != null && isPrimaryAppShellRoute(resolvedUri)) {
+            return _NoAnimationPageRoute<void>(
+              settings: resolvedSettings,
+              builder: (BuildContext context) => pageView!,
+            );
+          }
           return MaterialPageRoute(
             settings: resolvedSettings,
             builder: (BuildContext context) => pageView!,
@@ -127,4 +133,19 @@ class MyApp extends StatelessWidget {
       },
     );
   }
+}
+
+class _NoAnimationPageRoute<T> extends PageRouteBuilder<T> {
+  _NoAnimationPageRoute({required this.builder, super.settings})
+    : super(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            builder(context),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      );
+
+  final WidgetBuilder builder;
+
+  @override
+  bool get opaque => true;
 }

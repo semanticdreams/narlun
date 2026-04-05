@@ -104,7 +104,6 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     }
     final targetRoute = controller.index == 0 ? nearbyRoute() : roomsRoute();
     final alreadyShowingTarget =
-        currentUri != null &&
         currentUri.path == Uri.parse(targetRoute).path &&
         (currentUri.path != '/rooms' || roomToOpenFromContext(context) == null);
     if (!alreadyShowingTarget) {
@@ -146,6 +145,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     final tabController = _tabController ?? DefaultTabController.of(context);
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const NarlunAppBarTitle(),
         actions: const [InviteQrButton(), AppBarAvatar()],
         bottom: const TabBar(

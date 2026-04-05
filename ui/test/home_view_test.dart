@@ -237,6 +237,54 @@ void main() {
     expect(readStoredHomeTabIndex(), 0);
   });
 
+  testWidgets('home view does not show a navbar back button on shell routes', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService();
+    final locationService = FakeLocationService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          routes: {
+            '/': (_) => Builder(
+              builder: (context) => Scaffold(
+                body: FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).pushNamed('/nearby');
+                  },
+                  child: const Text('Open app'),
+                ),
+              ),
+            ),
+            '/nearby': (_) => HomeView(
+              initialTabIndex: 0,
+              nearbyLocationService: locationService,
+              roomsView: const Scaffold(body: Text('Rooms placeholder')),
+            ),
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open app'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BackButton), findsNothing);
+  });
+
   testWidgets('tapping a nearby user opens the room immediately', (
     tester,
   ) async {

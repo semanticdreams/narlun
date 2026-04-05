@@ -43,6 +43,11 @@ void main() {
     expect(nearbyRoute(), '/nearby');
     expect(roomsRoute(), '/rooms');
     expect(roomsRouteWithOpenRoom(42), '/rooms?open_room=42');
+    expect(isPrimaryAppShellRoute(Uri.parse('/home')), isTrue);
+    expect(isPrimaryAppShellRoute(Uri.parse('/nearby')), isTrue);
+    expect(isPrimaryAppShellRoute(Uri.parse('/rooms')), isTrue);
+    expect(isPrimaryAppShellRoute(Uri.parse('/rooms?open_room=42')), isTrue);
+    expect(isPrimaryAppShellRoute(Uri.parse('/profile')), isFalse);
     expect(inviteQrRoute(), '/invite');
     expect(inviteQrRoute(roomId: 7), '/invite?room_id=7');
   });

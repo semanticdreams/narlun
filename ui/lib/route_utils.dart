@@ -47,6 +47,10 @@ String roomsRouteWithOpenRoom(int roomId) {
   return roomsRoute(openRoom: roomId);
 }
 
+bool isPrimaryAppShellRoute(Uri uri) {
+  return uri.path == '/home' || uri.path == '/nearby' || uri.path == '/rooms';
+}
+
 String inviteQrRoute({int? roomId}) {
   return Uri(
     path: '/invite',

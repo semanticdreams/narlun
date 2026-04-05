@@ -7,6 +7,7 @@ import 'http.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'narlun_wordmark.dart';
 import 'route_utils.dart';
 
 class SignupView extends StatefulWidget {
@@ -75,14 +76,7 @@ class SignupViewState extends State<SignupView> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'narlun',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 50,
-                    color: Color(0xFF5F4484),
-                  ),
-                ),
+                const NarlunWordmark(size: 50, color: Color(0xFF5F4484)),
                 const Text(
                   'Talk to people nearby.\n\nChoose a username to start instantly.',
                   textAlign: TextAlign.center,
@@ -112,7 +106,8 @@ class SignupViewState extends State<SignupView> {
                               setState(() {
                                 usernameReadOnly = true;
                               });
-                              usernameController.text = UsernameGen().generate();
+                              usernameController.text = UsernameGen()
+                                  .generate();
                             },
                           ),
                         ),

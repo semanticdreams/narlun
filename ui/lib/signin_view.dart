@@ -6,6 +6,7 @@ import 'http.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'narlun_wordmark.dart';
 import 'route_utils.dart';
 
 class SigninView extends StatefulWidget {
@@ -77,14 +78,10 @@ class SigninState extends State<SigninView> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'narlun',
+              const NarlunWordmark(
+                size: 50,
+                color: Color(0xFF5F4484),
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 50,
-                  color: Color(0xFF5F4484),
-                ),
               ),
               const Text(
                 'Sign in with your username and password.',

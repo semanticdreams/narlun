@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'http.dart';
 import 'me_model.dart';
 import 'models.dart';
+import 'narlun_wordmark.dart';
 import 'route_utils.dart';
 
 class WelcomeView extends StatefulWidget {
@@ -180,14 +181,10 @@ class _WelcomeState extends State<WelcomeView> {
                                 height: 76,
                               ),
                               const SizedBox(height: 18),
-                              const Text(
-                                'narlun',
+                              const NarlunWordmark(
+                                size: 32,
+                                color: Color(0xFFF7EFFF),
                                 textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 32,
-                                  color: Color(0xFFF7EFFF),
-                                ),
                               ),
                               const SizedBox(height: 8),
                               const Text(

@@ -40,6 +40,10 @@ Current defaults are safe for initial HTTP-only bring-up, but push notifications
 
 The nginx config also raises request-size and proxy timeout limits enough for profile-picture uploads and long-lived websocket connections.
 
+Redis persistence is configured explicitly during provisioning with append-only
+logging plus periodic snapshots, so app state survives Redis restarts and VPS
+reboots.
+
 ## Requirements
 
 - Ansible installed locally

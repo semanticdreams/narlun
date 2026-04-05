@@ -55,6 +55,29 @@
         executable: pip3
         extra_args: --break-system-packages
 
+    - name: Ensure redis persistence directory exists
+      ansible.builtin.file:
+        path: "{{ redis_data_dir }}"
+        state: directory
+        owner: redis
+        group: redis
+        mode: "0750"
+
+    - name: Configure redis persistence
+      ansible.builtin.blockinfile:
+        path: /etc/redis/redis.conf
+        marker: "# {mark} ANSIBLE MANAGED NARLUN REDIS PERSISTENCE"
+        block: |
+          dir {{ redis_data_dir }}
+          appendonly {{ redis_appendonly }}
+          appendfsync {{ redis_appendfsync }}
+          save ""
+          {% for snapshot in redis_save_snapshots %}
+          save {{ snapshot }}
+          {% endfor %}
+      notify:
+        - Restart redis
+
     - name: Ensure redis is enabled
       ansible.builtin.service:
         name: redis-server
@@ -269,6 +292,11 @@
         - Reload nginx
 
   handlers:
+    - name: Restart redis
+      ansible.builtin.service:
+        name: redis-server
+        state: restarted
+
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true

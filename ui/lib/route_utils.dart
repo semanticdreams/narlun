@@ -51,6 +51,20 @@ bool isPrimaryAppShellRoute(Uri uri) {
   return uri.path == '/home' || uri.path == '/nearby' || uri.path == '/rooms';
 }
 
+String? sanitizeInviteBackToRoute(String? route) {
+  if (route == null || route.isEmpty) {
+    return null;
+  }
+  final uri = Uri.tryParse(route);
+  if (uri == null) {
+    return null;
+  }
+  if (uri.path == '/profile' || isPrimaryAppShellRoute(uri)) {
+    return uri.toString();
+  }
+  return null;
+}
+
 String inviteQrRoute({int? roomId}) {
   return inviteQrRouteWithBackTo(roomId: roomId);
 }

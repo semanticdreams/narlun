@@ -132,8 +132,8 @@ class _InviteQrViewState extends State<InviteQrView> {
   }
 
   String get _fallbackRoute {
-    final configuredBackToRoute = widget.backToRoute;
-    if (configuredBackToRoute != null && configuredBackToRoute.isNotEmpty) {
+    final configuredBackToRoute = sanitizeInviteBackToRoute(widget.backToRoute);
+    if (configuredBackToRoute != null) {
       return configuredBackToRoute;
     }
     final roomId = _targetRoomId;

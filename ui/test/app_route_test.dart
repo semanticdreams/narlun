@@ -48,6 +48,15 @@ void main() {
     expect(isPrimaryAppShellRoute(Uri.parse('/rooms')), isTrue);
     expect(isPrimaryAppShellRoute(Uri.parse('/rooms?open_room=42')), isTrue);
     expect(isPrimaryAppShellRoute(Uri.parse('/profile')), isFalse);
+    expect(
+      sanitizeInviteBackToRoute('/rooms?open_room=42'),
+      '/rooms?open_room=42',
+    );
+    expect(sanitizeInviteBackToRoute('/profile'), '/profile');
+    expect(sanitizeInviteBackToRoute('/invite?room_id=7'), isNull);
+    expect(sanitizeInviteBackToRoute('/invite/token-123'), isNull);
+    expect(sanitizeInviteBackToRoute('/'), isNull);
+    expect(sanitizeInviteBackToRoute('not a route'), isNull);
     expect(inviteQrRoute(), '/invite');
     expect(inviteQrRoute(roomId: 7), '/invite?room_id=7');
     expect(

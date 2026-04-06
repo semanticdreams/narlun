@@ -510,6 +510,63 @@ void main() {
   );
 
   testWidgets(
+    'invite QR view ignores invite-shaped fallback routes and recovers to home',
+    (tester) async {
+      final httpService = _FakeInviteHttpService()
+        ..inviteToCreate = InviteLink(
+          token: 'token-123',
+          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+        );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            initialRoute: '/invite?back_to=%2Finvite%3Froom_id%3D7',
+            onGenerateRoute: (settings) {
+              final uri = Uri.parse(settings.name ?? '/');
+              if (uri.path == '/') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => const SizedBox.shrink(),
+                );
+              }
+              if (uri.path == '/invite') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) =>
+                      InviteQrView(backToRoute: uri.queryParameters['back_to']),
+                );
+              }
+              if (uri.path == '/home') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => const Scaffold(body: Text('Home fallback')),
+                );
+              }
+              throw StateError('Unexpected route ${settings.name}');
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Home fallback'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'invite QR view falls back to the room route when opened directly for a room',
     (tester) async {
       final httpService = _FakeInviteHttpService()

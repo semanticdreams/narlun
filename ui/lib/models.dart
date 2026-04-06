@@ -1,3 +1,5 @@
+enum MessageDeliveryState { sending, sent }
+
 class SessionUser {
   final bool authenticated;
   final int? id;
@@ -68,11 +70,7 @@ class RoomParticipant {
     );
   }
 
-  RoomParticipant copyWith({
-    int? id,
-    String? username,
-    String? picture,
-  }) {
+  RoomParticipant copyWith({int? id, String? username, String? picture}) {
     return RoomParticipant(
       id: id ?? this.id,
       username: username ?? this.username,
@@ -105,8 +103,7 @@ class MessagePreview {
       body: json['body'] as String? ?? '',
       senderId: json['sender_id'] as int? ?? sender?['id'] as int?,
       senderUsername:
-          json['sender_username'] as String? ??
-          sender?['username'] as String?,
+          json['sender_username'] as String? ?? sender?['username'] as String?,
     );
   }
 }
@@ -141,12 +138,15 @@ class RoomSummary {
       name: json['name'] as String?,
       picture: json['picture'] as String?,
       updatedAt: DateTime.parse(json['updated_at'] as String),
-      participants: ((json['participants'] as List<dynamic>? ?? const [])
-              .cast<Map<String, dynamic>>())
-          .map(RoomParticipant.fromJson)
-          .toList(),
+      participants:
+          ((json['participants'] as List<dynamic>? ?? const [])
+                  .cast<Map<String, dynamic>>())
+              .map(RoomParticipant.fromJson)
+              .toList(),
       lastMessage: json['last_message'] is Map<String, dynamic>
-          ? MessagePreview.fromJson(json['last_message'] as Map<String, dynamic>)
+          ? MessagePreview.fromJson(
+              json['last_message'] as Map<String, dynamic>,
+            )
           : null,
       pushMuted: json['push_muted'] == true,
       pendingJoinRequestCount: json['pending_join_request_count'] as int? ?? 0,
@@ -208,11 +208,7 @@ class InviteLink {
   final DateTime expiresAt;
   final int? roomId;
 
-  const InviteLink({
-    required this.token,
-    required this.expiresAt,
-    this.roomId,
-  });
+  const InviteLink({required this.token, required this.expiresAt, this.roomId});
 
   factory InviteLink.fromJson(Map<String, dynamic> json) {
     return InviteLink(
@@ -231,6 +227,8 @@ class ChatMessage {
   final String? senderPicture;
   final DateTime timestamp;
   final List<RoomParticipant> readByUsers;
+  final MessageDeliveryState deliveryState;
+  final String? clientTag;
 
   const ChatMessage({
     required this.id,
@@ -240,6 +238,8 @@ class ChatMessage {
     this.senderUsername,
     this.senderPicture,
     this.readByUsers = const [],
+    this.deliveryState = MessageDeliveryState.sent,
+    this.clientTag,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -249,14 +249,14 @@ class ChatMessage {
       body: json['body'] as String? ?? '',
       senderId: json['sender_id'] as int? ?? sender?['id'] as int,
       senderUsername:
-          json['sender_username'] as String? ??
-          sender?['username'] as String?,
+          json['sender_username'] as String? ?? sender?['username'] as String?,
       senderPicture:
           json['sender_picture'] as String? ?? sender?['picture'] as String?,
       timestamp: DateTime.parse(json['timestamp'] as String),
       readByUsers: json['read_by_users'] is List<dynamic>
           ? RoomParticipant.listFromJson(json['read_by_users'] as List<dynamic>)
           : const [],
+      deliveryState: MessageDeliveryState.sent,
     );
   }
 
@@ -275,6 +275,8 @@ class ChatMessage {
     String? senderPicture,
     DateTime? timestamp,
     List<RoomParticipant>? readByUsers,
+    MessageDeliveryState? deliveryState,
+    String? clientTag,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -284,6 +286,8 @@ class ChatMessage {
       senderPicture: senderPicture ?? this.senderPicture,
       timestamp: timestamp ?? this.timestamp,
       readByUsers: readByUsers ?? this.readByUsers,
+      deliveryState: deliveryState ?? this.deliveryState,
+      clientTag: clientTag ?? this.clientTag,
     );
   }
 }
@@ -342,15 +346,12 @@ class NearbyRoom {
     return NearbyRoom(
       room: RoomSummary.fromJson(json['room'] as Map<String, dynamic>),
       distance: json['distance'] as int?,
-      joinRequested: (json['room'] as Map<String, dynamic>)['join_requested'] == true,
+      joinRequested:
+          (json['room'] as Map<String, dynamic>)['join_requested'] == true,
     );
   }
 
-  NearbyRoom copyWith({
-    RoomSummary? room,
-    int? distance,
-    bool? joinRequested,
-  }) {
+  NearbyRoom copyWith({RoomSummary? room, int? distance, bool? joinRequested}) {
     return NearbyRoom(
       room: room ?? this.room,
       distance: distance ?? this.distance,
@@ -365,12 +366,7 @@ class NearbyItem {
   final NearbyUser? user;
   final NearbyRoom? room;
 
-  const NearbyItem({
-    required this.type,
-    this.distance,
-    this.user,
-    this.room,
-  });
+  const NearbyItem({required this.type, this.distance, this.user, this.room});
 
   factory NearbyItem.fromJson(Map<String, dynamic> json) {
     final type = json['type'] as String? ?? 'user';

@@ -37,6 +37,8 @@ class MessagesState extends State<MessagesView> {
   static const _typingPresenceTimeout = Duration(seconds: 6);
   static const _messageGroupWindow = Duration(minutes: 4);
   static const _readAckDebounce = Duration(milliseconds: 180);
+  static const _pendingMessageMatchClockSkew = Duration(seconds: 5);
+  static const _pendingMessageMatchWindow = Duration(seconds: 30);
   static const List<String> _composerEmojiOptions = [
     '😀',
     '😂',
@@ -94,6 +96,7 @@ class MessagesState extends State<MessagesView> {
   Timer? _markReadTimer;
   bool _typingActive = false;
   bool _showEmojiPicker = false;
+  int _pendingMessageSequence = 0;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -279,6 +282,96 @@ class MessagesState extends State<MessagesView> {
         ..clear()
         ..addAll(updatedMessages);
     });
+  }
+
+  RoomParticipant _meParticipant() {
+    final currentUserId = widget.me.id;
+    if (currentUserId != null && _participantsById.containsKey(currentUserId)) {
+      return _participantsById[currentUserId]!;
+    }
+    return RoomParticipant(
+      id: currentUserId ?? 0,
+      username: widget.me.username ?? 'You',
+      picture: widget.me.picture,
+    );
+  }
+
+  int _compareMessages(ChatMessage left, ChatMessage right) {
+    final timestampComparison = right.timestamp.compareTo(left.timestamp);
+    if (timestampComparison != 0) {
+      return timestampComparison;
+    }
+    return right.id.compareTo(left.id);
+  }
+
+  ChatMessage _buildPendingOutgoingMessage(String body) {
+    final clientTag =
+        'pending-${DateTime.now().microsecondsSinceEpoch}-${_pendingMessageSequence++}';
+    return ChatMessage(
+      id: clientTag,
+      clientTag: clientTag,
+      body: body,
+      senderId: widget.me.id ?? 0,
+      senderUsername: widget.me.username,
+      senderPicture: widget.me.picture,
+      timestamp: DateTime.now().toUtc(),
+      readByUsers: [_meParticipant()],
+      deliveryState: MessageDeliveryState.sending,
+    );
+  }
+
+  ChatMessage? _findPendingOutgoingMatch(ChatMessage incoming) {
+    if (incoming.senderId != widget.me.id) {
+      return null;
+    }
+    final candidates =
+        messages
+            .where(
+              (message) =>
+                  message.deliveryState == MessageDeliveryState.sending &&
+                  message.senderId == incoming.senderId &&
+                  message.body == incoming.body &&
+                  !incoming.timestamp.isBefore(
+                    message.timestamp.subtract(_pendingMessageMatchClockSkew),
+                  ) &&
+                  !incoming.timestamp.isAfter(
+                    message.timestamp.add(_pendingMessageMatchWindow),
+                  ),
+            )
+            .toList()
+          ..sort((left, right) {
+            final leftDifference = incoming.timestamp
+                .difference(left.timestamp)
+                .abs();
+            final rightDifference = incoming.timestamp
+                .difference(right.timestamp)
+                .abs();
+            final comparison = leftDifference.compareTo(rightDifference);
+            if (comparison != 0) {
+              return comparison;
+            }
+            return left.timestamp.compareTo(right.timestamp);
+          });
+    return candidates.isEmpty ? null : candidates.first;
+  }
+
+  void _replacePendingOutgoingMessage(
+    String clientTag,
+    ChatMessage sentMessage,
+  ) {
+    final pendingIndex = messages.indexWhere(
+      (message) => message.clientTag == clientTag,
+    );
+    if (pendingIndex == -1) {
+      _mergeMessages([sentMessage]);
+      return;
+    }
+    messages[pendingIndex] = sentMessage;
+    messages.sort(_compareMessages);
+  }
+
+  void _removePendingOutgoingMessage(String clientTag) {
+    messages.removeWhere((message) => message.clientTag == clientTag);
   }
 
   ChatMessage _syncMessageParticipantMetadata(ChatMessage message) {
@@ -805,16 +898,14 @@ class MessagesState extends State<MessagesView> {
       mergedById[message.id] = message;
     }
     for (final message in incoming) {
+      final pendingMatch = _findPendingOutgoingMatch(message);
+      if (pendingMatch != null) {
+        mergedById.remove(pendingMatch.id);
+      }
       mergedById[message.id] = message;
     }
     final merged = mergedById.values.toList();
-    merged.sort((a, b) {
-      final timestampComparison = b.timestamp.compareTo(a.timestamp);
-      if (timestampComparison != 0) {
-        return timestampComparison;
-      }
-      return b.id.compareTo(a.id);
-    });
+    merged.sort(_compareMessages);
     messages
       ..clear()
       ..addAll(merged);
@@ -898,20 +989,32 @@ class MessagesState extends State<MessagesView> {
   Future<void> send_message() async {
     final body = messageController.text;
     if (body.isNotEmpty) {
+      final pendingMessage = _buildPendingOutgoingMessage(body);
+      final pendingClientTag = pendingMessage.clientTag!;
+      setState(() {
+        _mergeMessages([pendingMessage]);
+        _resyncMessageParticipants();
+      });
+      _scrollToBottom();
+      messageController.text = '';
+      _typingIdleTimer?.cancel();
+      await _setTypingState(false);
       try {
         final sentMessage = await httpService.send_message(room.id, body);
         if (mounted && !_roomClosed) {
           setState(() {
-            _mergeMessages([sentMessage]);
+            _replacePendingOutgoingMessage(pendingClientTag, sentMessage);
             _resyncMessageParticipants();
           });
           _scrollToBottom();
         }
-        messageController.text = '';
-        _typingIdleTimer?.cancel();
-        await _setTypingState(false);
         _scheduleMarkRoomRead(messageId: sentMessage.id);
       } on UnauthorizedResponse {
+        if (mounted) {
+          setState(() {
+            _removePendingOutgoingMessage(pendingClientTag);
+          });
+        }
         if (_roomClosed || !mounted) {
           return;
         }
@@ -922,6 +1025,11 @@ class MessagesState extends State<MessagesView> {
           description: 'Your session has ended. Please sign in again.',
         );
       } on InvalidUsage catch (e) {
+        if (mounted) {
+          setState(() {
+            _removePendingOutgoingMessage(pendingClientTag);
+          });
+        }
         if (e.code == 1000) {
           await _handleRoomDeleted();
         } else {
@@ -930,6 +1038,15 @@ class MessagesState extends State<MessagesView> {
       } catch (error) {
         if (!mounted || _roomClosed) {
           return;
+        }
+        setState(() {
+          _removePendingOutgoingMessage(pendingClientTag);
+        });
+        if (messageController.text.isEmpty) {
+          messageController.value = TextEditingValue(
+            text: body,
+            selection: TextSelection.collapsed(offset: body.length),
+          );
         }
         if (isAlreadyPresentedActionError(error)) {
           return;
@@ -1049,23 +1166,6 @@ class MessagesState extends State<MessagesView> {
       'Dec',
     ];
     return '${localDate.day} ${monthNames[localDate.month - 1]}';
-  }
-
-  List<RoomParticipant> _otherReaders(ChatMessage message) {
-    return message.readByUsers
-        .where(
-          (reader) =>
-              reader.id != widget.me.id && reader.id != message.senderId,
-        )
-        .toList()
-      ..sort((left, right) => left.username.compareTo(right.username));
-  }
-
-  String? _buildSeenByLabel(ChatMessage message) {
-    return describeSeenByParticipants(
-      _otherReaders(message),
-      isDirectRoom: _isDirectRoom,
-    );
   }
 
   Widget _buildPendingJoinRequestsCard() {
@@ -1393,7 +1493,6 @@ class MessagesState extends State<MessagesView> {
               startsCluster: startsCluster,
               endsCluster: endsCluster,
               timeLabel: _formatMessageTime(message.timestamp),
-              seenByLabel: _buildSeenByLabel(message),
               bubbleRadius: _bubbleRadius(
                 isSender: message.senderId == widget.me.id,
                 startsCluster: startsCluster,
@@ -1608,7 +1707,6 @@ class _MessageBubbleRow extends StatelessWidget {
     required this.startsCluster,
     required this.endsCluster,
     required this.timeLabel,
-    required this.seenByLabel,
     required this.bubbleRadius,
   });
 
@@ -1618,23 +1716,24 @@ class _MessageBubbleRow extends StatelessWidget {
   final bool startsCluster;
   final bool endsCluster;
   final String timeLabel;
-  final String? seenByLabel;
   final BorderRadius bubbleRadius;
 
   @override
   Widget build(BuildContext context) {
     final isSender = message.senderId == me.id;
-    final hasBeenSeen = seenByLabel != null;
+    final hasBeenRead = message.readByUsers.any(
+      (reader) => reader.id != me.id && reader.id != message.senderId,
+    );
     final bubbleColor = isSender
         ? const Color(0xFFDCF7C5)
         : Colors.white.withValues(alpha: 0.96);
-    final textColor = const Color(0xFF1F2528);
-    final statusColor = isSender && hasBeenSeen
+    const textColor = Color(0xFF1F2528);
+    final statusColor = isSender && hasBeenRead
         ? const Color(0xFF1D8F8C)
         : const Color(0xFF7A7E80);
-    final statusIcon = hasBeenSeen
-        ? Icons.done_all_rounded
-        : Icons.done_rounded;
+    final statusIcon = message.deliveryState == MessageDeliveryState.sending
+        ? Icons.done_rounded
+        : Icons.done_all_rounded;
 
     return Padding(
       padding: EdgeInsets.only(
@@ -1704,24 +1803,18 @@ class _MessageBubbleRow extends StatelessWidget {
                             ),
                             if (isSender) const SizedBox(width: 6),
                             if (isSender)
-                              Icon(statusIcon, size: 15, color: statusColor),
+                              Icon(
+                                key: const Key('message-status-icon'),
+                                statusIcon,
+                                size: 15,
+                                color: statusColor,
+                              ),
                           ],
                         ),
                       ],
                     ),
                   ),
                 ),
-                if (isSender && endsCluster && seenByLabel != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, right: 6),
-                    child: Text(
-                      seenByLabel!,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: statusColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),

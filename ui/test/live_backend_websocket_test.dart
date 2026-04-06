@@ -372,7 +372,10 @@ class BackendSession {
     return client.joinUser(jwtCookie, userId);
   }
 
-  Future<Map<String, dynamic>> updateProfile({String? username, String? status}) {
+  Future<Map<String, dynamic>> updateProfile({
+    String? username,
+    String? status,
+  }) {
     return client.updateProfile(jwtCookie, username: username, status: status);
   }
 
@@ -708,7 +711,9 @@ void main() {
 
       final aliceJwtCookie = await currentFrontendJwtCookie();
       final bob = await backendClient.signupGuest(randomUsername('bob'));
-      final charlie = await backendClient.signupGuest(randomUsername('charlie'));
+      final charlie = await backendClient.signupGuest(
+        randomUsername('charlie'),
+      );
       final room = await backendClient.createGroupRoom(
         aliceJwtCookie,
         'Coffee crew',
@@ -747,51 +752,43 @@ void main() {
       final charlie = await backendClient.getMe(charlieJwtCookie);
       final alice = await backendClient.signupGuest(randomUsername('alice'));
       final bob = await backendClient.signupGuest(randomUsername('bob'));
-      final room = await alice.createGroupRoom('Coffee crew', [bob.user['id'] as int]);
+      final room = await alice.createGroupRoom('Coffee crew', [
+        bob.user['id'] as int,
+      ]);
 
-      await backendClient.requestRoomJoin(
-        charlieJwtCookie,
-        room['id'] as int,
-      );
+      await backendClient.requestRoomJoin(charlieJwtCookie, room['id'] as int);
       expect(find.text('Coffee crew'), findsNothing);
 
-      await alice.approveRoomRequest(
-        room['id'] as int,
-        charlie['id'] as int,
-      );
+      await alice.approveRoomRequest(room['id'] as int, charlie['id'] as int);
 
       await pumpUntilFound(tester, find.text('Coffee crew'));
     },
   );
 
-  testWidgets(
-    'live backend rejection flow clears the member request badge',
-    (tester) async {
-      await launchApp(tester, harness);
-      final aliceUsername = randomUsername('alice');
-      await signUpThroughUi(tester, aliceUsername);
+  testWidgets('live backend rejection flow clears the member request badge', (
+    tester,
+  ) async {
+    await launchApp(tester, harness);
+    final aliceUsername = randomUsername('alice');
+    await signUpThroughUi(tester, aliceUsername);
 
-      final aliceJwtCookie = await currentFrontendJwtCookie();
-      final bob = await backendClient.signupGuest(randomUsername('bob'));
-      final charlie = await backendClient.signupGuest(randomUsername('charlie'));
-      final room = await backendClient.createGroupRoom(
-        aliceJwtCookie,
-        'Coffee crew',
-        [bob.user['id'] as int],
-      );
+    final aliceJwtCookie = await currentFrontendJwtCookie();
+    final bob = await backendClient.signupGuest(randomUsername('bob'));
+    final charlie = await backendClient.signupGuest(randomUsername('charlie'));
+    final room = await backendClient.createGroupRoom(
+      aliceJwtCookie,
+      'Coffee crew',
+      [bob.user['id'] as int],
+    );
 
-      await pumpUntilFound(tester, find.text('Coffee crew'));
-      await charlie.requestRoomJoin(room['id'] as int);
-      await pumpUntilFound(tester, find.text('1 request'));
+    await pumpUntilFound(tester, find.text('Coffee crew'));
+    await charlie.requestRoomJoin(room['id'] as int);
+    await pumpUntilFound(tester, find.text('1 request'));
 
-      await bob.rejectRoomRequest(
-        room['id'] as int,
-        charlie.user['id'] as int,
-      );
+    await bob.rejectRoomRequest(room['id'] as int, charlie.user['id'] as int);
 
-      await pumpUntilNotFound(tester, find.text('1 request'));
-    },
-  );
+    await pumpUntilNotFound(tester, find.text('1 request'));
+  });
 
   testWidgets(
     'live backend profile updates refresh room titles for other users',
@@ -822,7 +819,9 @@ void main() {
 
       final aliceJwtCookie = await currentFrontendJwtCookie();
       final bob = await backendClient.signupGuest(randomUsername('bob'));
-      final charlie = await backendClient.signupGuest(randomUsername('charlie'));
+      final charlie = await backendClient.signupGuest(
+        randomUsername('charlie'),
+      );
       final room = await backendClient.createGroupRoom(
         aliceJwtCookie,
         'Coffee crew',
@@ -868,10 +867,7 @@ void main() {
         'type': 'typing-state',
         'data': {'room_id': room['id'], 'is_typing': true},
       });
-      await pumpUntilFound(
-        tester,
-        find.text('${bob.username} is typing...'),
-      );
+      await pumpUntilFound(tester, find.text('${bob.username} is typing...'));
     } finally {
       await bobSocket.close();
     }
@@ -901,7 +897,25 @@ void main() {
     final bobMessages = await bob.getMessages(room['id'] as int);
     final latestMessageId = bobMessages.first['id'] as String;
     await bob.markRoomRead(room['id'] as int, messageId: latestMessageId);
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(deadline)) {
+      await tester.pump(const Duration(milliseconds: 100));
+      final iconFinder = find.byKey(const Key('message-status-icon'));
+      if (iconFinder.evaluate().isEmpty) {
+        continue;
+      }
+      final statusIcon = tester.widget<Icon>(iconFinder);
+      if (statusIcon.icon == Icons.done_all_rounded &&
+          statusIcon.color == const Color(0xFF1D8F8C)) {
+        break;
+      }
+    }
 
-    await pumpUntilFound(tester, find.text('Seen'));
+    final statusIcon = tester.widget<Icon>(
+      find.byKey(const Key('message-status-icon')),
+    );
+    expect(statusIcon.icon, Icons.done_all_rounded);
+    expect(statusIcon.color, const Color(0xFF1D8F8C));
+    expect(find.text('Seen'), findsNothing);
   });
 }

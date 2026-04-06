@@ -10,6 +10,7 @@ import 'config.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'install_prompt_service.dart';
+import 'invite_qr_cache.dart';
 import 'location_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
@@ -80,6 +81,7 @@ Widget buildNarlunApp({SessionUser? initialSessionUser}) {
         create: (_) => HttpService(),
         dispose: (_, httpService) => httpService.close(),
       ),
+      Provider<InviteQrCache>(create: (_) => InviteQrCache()),
       ChangeNotifierProvider<InstallPromptService>(
         lazy: false,
         create: (_) => createInstallPromptService(),

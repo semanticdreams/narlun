@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'http.dart';
+import 'invite_qr_cache.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'route_utils.dart';
@@ -13,8 +14,9 @@ import 'route_utils.dart';
 class InviteQrView extends StatefulWidget {
   final RoomSummary? room;
   final int? roomId;
+  final InviteQrCache? inviteQrCache;
 
-  const InviteQrView({super.key, this.room, this.roomId});
+  const InviteQrView({super.key, this.room, this.roomId, this.inviteQrCache});
 
   @override
   State<InviteQrView> createState() => _InviteQrViewState();
@@ -23,15 +25,33 @@ class InviteQrView extends StatefulWidget {
 class _InviteQrViewState extends State<InviteQrView> {
   InviteLink? _invite;
   Object? _error;
+  bool _loading = false;
   late final HttpService _httpService;
+  late final InviteQrCache _inviteQrCache;
   late final TextEditingController _linkController;
+  int? _sessionUserId;
+
+  int? get _targetRoomId => widget.room?.id ?? widget.roomId;
 
   @override
   void initState() {
     super.initState();
     _httpService = Provider.of<HttpService>(context, listen: false);
+    final providedInviteQrCache = Provider.of<InviteQrCache?>(
+      context,
+      listen: false,
+    );
+    _inviteQrCache =
+        widget.inviteQrCache ?? providedInviteQrCache ?? InviteQrCache();
     _linkController = TextEditingController();
-    unawaited(_loadInvite());
+    final session = Provider.of<MeModel?>(context, listen: false)?.data;
+    _syncInviteCacheSession(session);
+    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
+    if (cachedInvite != null) {
+      _applyInvite(cachedInvite);
+    } else {
+      unawaited(_loadInvite());
+    }
   }
 
   @override
@@ -40,33 +60,121 @@ class _InviteQrViewState extends State<InviteQrView> {
     super.dispose();
   }
 
-  Future<void> _loadInvite() async {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final session = Provider.of<MeModel?>(context)?.data;
+    if (!_syncInviteCacheSession(session)) {
+      return;
+    }
+    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
+    if (cachedInvite != null) {
+      setState(() {
+        _error = null;
+        _loading = false;
+        _applyInvite(cachedInvite);
+      });
+      return;
+    }
+    setState(() {
+      _invite = null;
+      _error = null;
+      _loading = false;
+      _linkController.clear();
+    });
+    unawaited(_loadInvite());
+  }
+
+  @override
+  void didUpdateWidget(covariant InviteQrView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final previousRoomId = oldWidget.room?.id ?? oldWidget.roomId;
+    if (previousRoomId == _targetRoomId) {
+      return;
+    }
+    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
+    if (cachedInvite != null) {
+      setState(() {
+        _error = null;
+        _loading = false;
+        _applyInvite(cachedInvite);
+      });
+      return;
+    }
+    setState(() {
+      _invite = null;
+      _error = null;
+      _loading = false;
+      _linkController.clear();
+    });
+    unawaited(_loadInvite());
+  }
+
+  bool _syncInviteCacheSession(SessionUser? session) {
+    final nextUserId = session?.authenticated == true && session?.id != null
+        ? session!.id
+        : null;
+    if (_sessionUserId == nextUserId) {
+      return false;
+    }
+    _sessionUserId = nextUserId;
+    _inviteQrCache.syncSession(session);
+    return true;
+  }
+
+  void _applyInvite(InviteLink invite) {
+    _invite = invite;
+    _linkController.text = inviteUrlForToken(invite.token);
+  }
+
+  Future<void> _loadInvite({bool forceRefresh = false}) async {
+    final hadInvite = _invite != null;
     setState(() {
       _error = null;
-      _invite = null;
+      _loading = true;
+      if (!hadInvite) {
+        _invite = null;
+      }
     });
     try {
-      final invite = await _httpService.create_invite(
-        roomId: widget.room?.id ?? widget.roomId,
+      final invite = await _inviteQrCache.loadInvite(
+        httpService: _httpService,
+        roomId: _targetRoomId,
+        forceRefresh: forceRefresh,
       );
       if (!mounted) {
         return;
       }
       setState(() {
-        _invite = invite;
-        _linkController.text = inviteUrlForToken(invite.token);
+        _loading = false;
+        _applyInvite(invite);
       });
     } catch (error) {
       if (!mounted) {
         return;
       }
+      final description = describeActionError(
+        error,
+        fallbackDescription: 'Could not create an invite right now.',
+      );
+      if (hadInvite) {
+        setState(() {
+          _loading = false;
+        });
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(description)));
+        return;
+      }
       setState(() {
-        _error = describeActionError(
-          error,
-          fallbackDescription: 'Could not create an invite right now.',
-        );
+        _loading = false;
+        _error = description;
       });
     }
+  }
+
+  Future<void> _refreshInvite() async {
+    await _loadInvite(forceRefresh: true);
   }
 
   Future<void> _copyInviteLink(String inviteUrl) async {
@@ -98,14 +206,14 @@ class _InviteQrViewState extends State<InviteQrView> {
         : 'Scan this code to open Narlun. New people can choose a username and land straight in this conversation.';
 
     Widget body;
-    if (_error != null) {
+    if (_error != null && _invite == null) {
       body = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             _error as String,
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           const Text('Try again in a moment.'),
@@ -128,6 +236,10 @@ class _InviteQrViewState extends State<InviteQrView> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (_loading) ...[
+            const LinearProgressIndicator(),
+            const SizedBox(height: 16),
+          ],
           Center(
             child: Container(
               padding: const EdgeInsets.all(20),
@@ -187,9 +299,9 @@ class _InviteQrViewState extends State<InviteQrView> {
                 label: const Text('Copy link'),
               ),
               OutlinedButton.icon(
-                onPressed: _loadInvite,
+                onPressed: _loading ? null : _refreshInvite,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Refresh code'),
+                label: Text(_loading ? 'Refreshing...' : 'Refresh code'),
               ),
             ],
           ),

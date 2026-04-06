@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
+import 'invite_qr_cache.dart';
 import 'me_model.dart';
 import 'nearby_feed_model.dart';
 import 'rooms_feed_model.dart';
@@ -16,6 +17,7 @@ class FeedSessionBridge extends StatefulWidget {
 
 class _FeedSessionBridgeState extends State<FeedSessionBridge> {
   MeModel? _meModel;
+  InviteQrCache? _inviteQrCache;
   NearbyFeedModel? _nearbyFeedModel;
   RoomsFeedModel? _roomsFeedModel;
 
@@ -23,16 +25,19 @@ class _FeedSessionBridgeState extends State<FeedSessionBridge> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final meModel = Provider.of<MeModel>(context);
+    final inviteQrCache = Provider.of<InviteQrCache>(context, listen: false);
     final nearbyFeedModel = Provider.of<NearbyFeedModel>(
       context,
       listen: false,
     );
     final roomsFeedModel = Provider.of<RoomsFeedModel>(context, listen: false);
     if (!identical(_meModel, meModel) ||
+        !identical(_inviteQrCache, inviteQrCache) ||
         !identical(_nearbyFeedModel, nearbyFeedModel) ||
         !identical(_roomsFeedModel, roomsFeedModel)) {
       _meModel?.removeListener(_handleSessionChanged);
       _meModel = meModel;
+      _inviteQrCache = inviteQrCache;
       _nearbyFeedModel = nearbyFeedModel;
       _roomsFeedModel = roomsFeedModel;
       _meModel?.addListener(_handleSessionChanged);
@@ -52,6 +57,7 @@ class _FeedSessionBridgeState extends State<FeedSessionBridge> {
 
   void _syncModels() {
     final session = _meModel?.data;
+    _inviteQrCache?.syncSession(session);
     _nearbyFeedModel?.syncSession(session);
     _roomsFeedModel?.syncSession(session);
   }

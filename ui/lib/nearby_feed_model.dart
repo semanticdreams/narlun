@@ -23,7 +23,9 @@ class NearbyFeedModel extends ChangeNotifier {
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
-  static const refreshStaleAfter = Duration(seconds: 6);
+  static const refreshStaleAfter = Duration(minutes: 1);
+  static const minLocationRefreshInterval = Duration(minutes: 1);
+  static const minAutomaticRefreshInterval = Duration(minutes: 1);
 
   final HttpService httpService;
   final LocationService locationService;
@@ -33,6 +35,10 @@ class NearbyFeedModel extends ChangeNotifier {
   bool _loading = false;
   String _statusMessage = 'Checking your location...';
   DateTime? _lastRefreshAttemptAt;
+  DateTime? _lastNearbyRequestAt;
+  DateTime? _lastLocationRequestAt;
+  Position? _lastResolvedPosition;
+  bool _hasAttemptedRefresh = false;
   int? _sessionUserId;
   int _sessionVersion = 0;
   Future<void>? _refreshTask;
@@ -56,6 +62,10 @@ class NearbyFeedModel extends ChangeNotifier {
     _loading = false;
     _statusMessage = 'Checking your location...';
     _lastRefreshAttemptAt = null;
+    _lastNearbyRequestAt = null;
+    _lastLocationRequestAt = null;
+    _lastResolvedPosition = null;
+    _hasAttemptedRefresh = false;
     notifyListeners();
   }
 
@@ -68,7 +78,7 @@ class NearbyFeedModel extends ChangeNotifier {
       return;
     }
     if (_shouldRefreshBecauseStale) {
-      unawaited(refresh());
+      unawaited(refresh(userInitiated: false));
     }
   }
 
@@ -80,7 +90,7 @@ class NearbyFeedModel extends ChangeNotifier {
     return _now().difference(lastRefreshAttemptAt) >= refreshStaleAfter;
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh({bool userInitiated = true}) async {
     if (_sessionUserId == null) {
       return;
     }
@@ -92,6 +102,7 @@ class NearbyFeedModel extends ChangeNotifier {
     final task = _runRefresh(
       refreshSessionVersion: refreshSessionVersion,
       refreshSessionUserId: refreshSessionUserId,
+      userInitiated: userInitiated,
     );
     _refreshTask = task;
     try {
@@ -106,14 +117,25 @@ class NearbyFeedModel extends ChangeNotifier {
   Future<void> _runRefresh({
     required int refreshSessionVersion,
     required int? refreshSessionUserId,
+    required bool userInitiated,
   }) async {
-    _lastRefreshAttemptAt = _now();
-    _setLoading(
-      true,
-      status: _nearbyItems.isEmpty
-          ? 'Checking your location...'
-          : 'Refreshing nearby activity...',
-    );
+    final now = _now();
+    if (!userInitiated && !_shouldRequestNearby(now)) {
+      return;
+    }
+
+    final isInitialLoad = !_hasAttemptedRefresh;
+    _hasAttemptedRefresh = true;
+    final showLoading = userInitiated || isInitialLoad;
+    _lastRefreshAttemptAt = now;
+    if (showLoading) {
+      _setLoading(
+        true,
+        status: _nearbyItems.isEmpty
+            ? 'Checking your location...'
+            : 'Refreshing nearby activity...',
+      );
+    }
 
     if (!(await locationService.isLocationServiceEnabled())) {
       _setLocationProblem('Location services are not enabled.');
@@ -133,7 +155,8 @@ class NearbyFeedModel extends ChangeNotifier {
     }
 
     try {
-      final loc = await locationService.getCurrentPosition();
+      final loc = await _resolvePosition(now: _now());
+      _lastNearbyRequestAt = _now();
       final resp = await httpService.checkin(loc.latitude, loc.longitude);
       if (!_isCurrentRefresh(
         refreshSessionVersion: refreshSessionVersion,
@@ -178,6 +201,29 @@ class NearbyFeedModel extends ChangeNotifier {
   }) {
     return _sessionVersion == refreshSessionVersion &&
         _sessionUserId == refreshSessionUserId;
+  }
+
+  bool _shouldRequestNearby(DateTime now) {
+    final lastNearbyRequestAt = _lastNearbyRequestAt;
+    if (lastNearbyRequestAt == null) {
+      return true;
+    }
+    return now.difference(lastNearbyRequestAt) >= minAutomaticRefreshInterval;
+  }
+
+  Future<Position> _resolvePosition({required DateTime now}) async {
+    final lastResolvedPosition = _lastResolvedPosition;
+    final lastLocationRequestAt = _lastLocationRequestAt;
+    if (lastResolvedPosition != null &&
+        lastLocationRequestAt != null &&
+        now.difference(lastLocationRequestAt) < minLocationRefreshInterval) {
+      return lastResolvedPosition;
+    }
+
+    final position = await locationService.getCurrentPosition();
+    _lastResolvedPosition = position;
+    _lastLocationRequestAt = _now();
+    return position;
   }
 
   void markRoomJoinRequested(int roomId) {

@@ -45,6 +45,23 @@ class _CompletingNearbyHttpService extends HttpService {
   }
 }
 
+class _CountingNearbyHttpService extends HttpService {
+  _CountingNearbyHttpService()
+    : super(
+        websocketService: _FakeWebsocketService(),
+        dialogService: DialogService(),
+        client: _DummyHttpClient(),
+      );
+
+  int checkinCalls = 0;
+
+  @override
+  Future<List<NearbyItem>> checkin(lat, lon) async {
+    checkinCalls += 1;
+    return const [];
+  }
+}
+
 class _CompletingRoomsHttpService extends HttpService {
   _CompletingRoomsHttpService(this.roomsCompleter)
     : super(
@@ -71,6 +88,44 @@ class _StaticLocationService implements LocationService {
 
   @override
   Future<Position> getCurrentPosition() async {
+    return Position(
+      longitude: 2,
+      latitude: 1,
+      timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      accuracy: 1,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
+  }
+
+  @override
+  Future<bool> isLocationServiceEnabled() async {
+    return true;
+  }
+
+  @override
+  Future<LocationPermission> requestPermission() async {
+    return LocationPermission.whileInUse;
+  }
+}
+
+class _CountingLocationService implements LocationService {
+  _CountingLocationService();
+
+  int getCurrentPositionCalls = 0;
+
+  @override
+  Future<LocationPermission> checkPermission() async {
+    return LocationPermission.whileInUse;
+  }
+
+  @override
+  Future<Position> getCurrentPosition() async {
+    getCurrentPositionCalls += 1;
     return Position(
       longitude: 2,
       latitude: 1,
@@ -168,6 +223,63 @@ void main() {
       expect(model.rooms, isEmpty);
       expect(model.isLoadingInitial, isFalse);
       expect(model.errorMessage, isNull);
+    },
+  );
+
+  test(
+    'nearby feed throttles automatic refreshes to once per minute',
+    () async {
+      final httpService = _CountingNearbyHttpService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final model = NearbyFeedModel(
+        httpService: httpService,
+        locationService: _CountingLocationService(),
+        now: () => now,
+      );
+
+      model.syncSession(
+        const SessionUser(authenticated: true, id: 1, username: 'me'),
+      );
+
+      await model.refresh(userInitiated: false);
+      await model.refresh(userInitiated: false);
+
+      expect(httpService.checkinCalls, 1);
+
+      now = now.add(const Duration(minutes: 1, seconds: 1));
+      await model.refresh(userInitiated: false);
+
+      expect(httpService.checkinCalls, 2);
+    },
+  );
+
+  test(
+    'manual nearby refresh bypasses nearby throttling but reuses location for one minute',
+    () async {
+      final httpService = _CountingNearbyHttpService();
+      final locationService = _CountingLocationService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final model = NearbyFeedModel(
+        httpService: httpService,
+        locationService: locationService,
+        now: () => now,
+      );
+
+      model.syncSession(
+        const SessionUser(authenticated: true, id: 1, username: 'me'),
+      );
+
+      await model.refresh(userInitiated: true);
+      await model.refresh(userInitiated: true);
+
+      expect(httpService.checkinCalls, 2);
+      expect(locationService.getCurrentPositionCalls, 1);
+
+      now = now.add(const Duration(minutes: 1, seconds: 1));
+      await model.refresh(userInitiated: true);
+
+      expect(httpService.checkinCalls, 3);
+      expect(locationService.getCurrentPositionCalls, 2);
     },
   );
 }

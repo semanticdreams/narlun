@@ -74,6 +74,7 @@ class FakeNearbyHttpService extends HttpService {
   int roomId = 99;
   bool clearedLocalSession = false;
   Object? checkinError;
+  Future<List<NearbyItem>> Function()? checkinHandler;
   int requestRoomJoinCalls = 0;
   int checkinCalls = 0;
 
@@ -82,6 +83,9 @@ class FakeNearbyHttpService extends HttpService {
     checkinCalls += 1;
     if (checkinError != null) {
       throw checkinError!;
+    }
+    if (checkinHandler != null) {
+      return checkinHandler!();
     }
     return nearbyItems;
   }
@@ -172,6 +176,7 @@ Widget _buildNearbyApp({
   required FakeLocationService locationService,
   required _FakeWebsocketService websocketService,
   required Future<void> Function(NearbyUser user, int roomId) onUserJoined,
+  NearbyFeedModel? nearbyFeedModel,
   bool autoCheckin = true,
   Duration backgroundRefreshInterval =
       NearbyUsersView.defaultBackgroundRefreshInterval,
@@ -193,6 +198,7 @@ Widget _buildNearbyApp({
             dialogService: DialogService(),
             locationService: locationService,
             websocketService: websocketService,
+            nearbyFeedModel: nearbyFeedModel,
             autoCheckin: autoCheckin,
             backgroundRefreshInterval: backgroundRefreshInterval,
             onUserJoined: onUserJoined,
@@ -421,8 +427,69 @@ void main() {
     expect(find.text('Requested'), findsOneWidget);
   });
 
+  testWidgets('background refresh after an empty nearby result stays silent', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService();
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
+    var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+    final nearbyFeedModel = NearbyFeedModel(
+      httpService: httpService,
+      locationService: locationService,
+      now: () => now,
+    );
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        nearbyFeedModel: nearbyFeedModel,
+        onUserJoined: (_, __) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Nobody nearby right now. Pull to refresh again soon.'),
+      findsOneWidget,
+    );
+
+    final checkinCompleter = Completer<List<NearbyItem>>();
+    httpService.checkinHandler = () => checkinCompleter.future;
+
+    now = now.add(const Duration(minutes: 1, seconds: 1));
+    websocketService.emitNearbyChanged();
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(
+      find.text('Nobody nearby right now. Pull to refresh again soon.'),
+      findsOneWidget,
+    );
+
+    checkinCompleter.complete([
+      NearbyItem(
+        type: 'user',
+        distance: 120,
+        user: NearbyUser(
+          id: 2,
+          username: 'bob',
+          distance: 120,
+          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          status: 'Nearby',
+        ),
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('bob'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets(
-    'refreshes nearby user details when another user updates profile',
+    'nearby-changed refreshes user details only after the one-minute throttle window',
     (tester) async {
       final httpService = FakeNearbyHttpService()
         ..nearbyItems = [
@@ -440,12 +507,19 @@ void main() {
         ];
       final locationService = FakeLocationService();
       final websocketService = _FakeWebsocketService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final nearbyFeedModel = NearbyFeedModel(
+        httpService: httpService,
+        locationService: locationService,
+        now: () => now,
+      );
 
       await tester.pumpWidget(
         _buildNearbyApp(
           httpService: httpService,
           locationService: locationService,
           websocketService: websocketService,
+          nearbyFeedModel: nearbyFeedModel,
           onUserJoined: (_, __) async {},
         ),
       );
@@ -470,6 +544,16 @@ void main() {
       websocketService.emitNearbyChanged();
       await tester.pumpAndSettle();
 
+      expect(httpService.checkinCalls, 1);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Refreshing nearby activity...'), findsNothing);
+      expect(find.text('bob'), findsOneWidget);
+      expect(find.text('renamed'), findsNothing);
+
+      now = now.add(const Duration(minutes: 1, seconds: 1));
+      websocketService.emitNearbyChanged();
+      await tester.pumpAndSettle();
+
       expect(httpService.checkinCalls, 2);
       expect(find.text('renamed'), findsOneWidget);
       expect(find.text('Updated status'), findsOneWidget);
@@ -477,7 +561,7 @@ void main() {
     },
   );
 
-  testWidgets('refreshes nearby room details when the room changes', (
+  testWidgets('nearby-changed refreshes room details only after one minute', (
     tester,
   ) async {
     final httpService = FakeNearbyHttpService()
@@ -504,12 +588,19 @@ void main() {
       ];
     final locationService = FakeLocationService();
     final websocketService = _FakeWebsocketService();
+    var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+    final nearbyFeedModel = NearbyFeedModel(
+      httpService: httpService,
+      locationService: locationService,
+      now: () => now,
+    );
 
     await tester.pumpWidget(
       _buildNearbyApp(
         httpService: httpService,
         locationService: locationService,
         websocketService: websocketService,
+        nearbyFeedModel: nearbyFeedModel,
         onUserJoined: (_, __) async {},
       ),
     );
@@ -540,6 +631,14 @@ void main() {
       ),
     ];
 
+    websocketService.emitNearbyChanged();
+    await tester.pumpAndSettle();
+
+    expect(httpService.checkinCalls, 1);
+    expect(find.text('Old message'), findsOneWidget);
+    expect(find.text('Updated message'), findsNothing);
+
+    now = now.add(const Duration(minutes: 1, seconds: 1));
     websocketService.emitNearbyChanged();
     await tester.pumpAndSettle();
 
@@ -622,18 +721,26 @@ void main() {
         ];
       final locationService = FakeLocationService();
       final websocketService = _FakeWebsocketService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final nearbyFeedModel = NearbyFeedModel(
+        httpService: httpService,
+        locationService: locationService,
+        now: () => now,
+      );
 
       await tester.pumpWidget(
         _buildNearbyApp(
           httpService: httpService,
           locationService: locationService,
           websocketService: websocketService,
+          nearbyFeedModel: nearbyFeedModel,
           onUserJoined: (_, __) async {},
         ),
       );
       await tester.pumpAndSettle();
 
       httpService.checkinError = StateError('offline');
+      now = now.add(const Duration(minutes: 1, seconds: 1));
       websocketService.emitNearbyChanged();
       await tester.pump();
       await tester.pumpAndSettle();
@@ -749,60 +856,77 @@ void main() {
     },
   );
 
-  testWidgets('nearby refreshes periodically in the background', (
-    tester,
-  ) async {
-    final httpService = FakeNearbyHttpService()
-      ..nearbyItems = [
+  testWidgets(
+    'nearby periodic refresh waits for the one-minute throttle window',
+    (tester) async {
+      final httpService = FakeNearbyHttpService()
+        ..nearbyItems = [
+          NearbyItem(
+            type: 'user',
+            distance: 120,
+            user: NearbyUser(
+              id: 2,
+              username: 'bob',
+              distance: 120,
+              lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
+              status: 'Nearby',
+            ),
+          ),
+        ];
+      final locationService = FakeLocationService();
+      final websocketService = _FakeWebsocketService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final nearbyFeedModel = NearbyFeedModel(
+        httpService: httpService,
+        locationService: locationService,
+        now: () => now,
+      );
+
+      await tester.pumpWidget(
+        _buildNearbyApp(
+          httpService: httpService,
+          locationService: locationService,
+          websocketService: websocketService,
+          nearbyFeedModel: nearbyFeedModel,
+          backgroundRefreshInterval: const Duration(seconds: 30),
+          onUserJoined: (_, __) async {},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(httpService.checkinCalls, 1);
+
+      httpService.nearbyItems = [
         NearbyItem(
           type: 'user',
           distance: 120,
           user: NearbyUser(
             id: 2,
-            username: 'bob',
+            username: 'robert',
             distance: 120,
             lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-            status: 'Nearby',
+            status: 'Updated nearby',
           ),
         ),
       ];
-    final locationService = FakeLocationService();
-    final websocketService = _FakeWebsocketService();
 
-    await tester.pumpWidget(
-      _buildNearbyApp(
-        httpService: httpService,
-        locationService: locationService,
-        websocketService: websocketService,
-        backgroundRefreshInterval: const Duration(seconds: 30),
-        onUserJoined: (_, __) async {},
-      ),
-    );
-    await tester.pumpAndSettle();
+      now = now.add(const Duration(seconds: 30));
+      await tester.pump(const Duration(seconds: 30));
+      await tester.pumpAndSettle();
 
-    expect(httpService.checkinCalls, 1);
+      expect(httpService.checkinCalls, 1);
+      expect(find.text('bob'), findsOneWidget);
+      expect(find.text('robert'), findsNothing);
 
-    httpService.nearbyItems = [
-      NearbyItem(
-        type: 'user',
-        distance: 120,
-        user: NearbyUser(
-          id: 2,
-          username: 'robert',
-          distance: 120,
-          lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          status: 'Updated nearby',
-        ),
-      ),
-    ];
+      now = now.add(const Duration(seconds: 31));
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pumpAndSettle();
 
-    await tester.pump(const Duration(seconds: 30));
-    await tester.pumpAndSettle();
-
-    expect(httpService.checkinCalls, 2);
-    expect(find.text('robert'), findsOneWidget);
-    expect(find.text('bob'), findsNothing);
-  });
+      expect(httpService.checkinCalls, 2);
+      expect(find.text('robert'), findsOneWidget);
+      expect(find.text('bob'), findsNothing);
+    },
+  );
 
   testWidgets('standalone nearby view clears cached data when session resets', (
     tester,

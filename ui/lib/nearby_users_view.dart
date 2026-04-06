@@ -19,7 +19,8 @@ import 'session_actions.dart';
 import 'websocket.dart';
 
 class NearbyUsersView extends StatefulWidget {
-  static const defaultBackgroundRefreshInterval = Duration(seconds: 45);
+  static const defaultBackgroundRefreshInterval =
+      NearbyFeedModel.minAutomaticRefreshInterval;
 
   final FutureOr<void> Function(NearbyUser user, int roomId) onUserJoined;
   final HttpService? httpService;
@@ -134,7 +135,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     if (!widget.autoCheckin || !mounted) {
       return;
     }
-    unawaited(checkin(showErrorFeedback: false));
+    unawaited(checkin(showErrorFeedback: false, userInitiated: false));
   }
 
   void _handleSessionChanged() {
@@ -187,7 +188,10 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     }
   }
 
-  Future<void> checkin({bool showErrorFeedback = true}) async {
+  Future<void> checkin({
+    bool showErrorFeedback = true,
+    bool userInitiated = true,
+  }) async {
     final me = Provider.of<MeModel>(context, listen: false);
     if (me.data == null || !me.data!.authenticated) {
       return;
@@ -197,12 +201,13 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       'Started nearby check-in.',
       details: {
         'show_error_feedback': showErrorFeedback,
+        'user_initiated': userInitiated,
         'user_id': me.data?.id,
       },
     );
 
     try {
-      await nearbyFeedModel.refresh();
+      await nearbyFeedModel.refresh(userInitiated: userInitiated);
       logFrontendDiagnostic(
         'nearby_checkin_completed',
         'Completed nearby check-in.',

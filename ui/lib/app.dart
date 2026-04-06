@@ -105,6 +105,8 @@ class MyApp extends StatelessWidget {
                 roomId: int.tryParse(
                   resolvedUri.queryParameters['room_id'] ?? '',
                 ),
+                backToRoute: resolvedUri.queryParameters['back_to'],
+                preferPopOnBack: settings.arguments == true,
               );
               break;
           }

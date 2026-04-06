@@ -12,6 +12,7 @@ import 'package:narlun/invite_qr_cache.dart';
 import 'package:narlun/invite_qr_view.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/models.dart';
+import 'package:narlun/route_utils.dart';
 import 'package:narlun/websocket.dart';
 
 class _DummyHttpClient extends http.BaseClient {
@@ -366,6 +367,206 @@ void main() {
     expect(_inviteLinkText(tester), contains('/invite/token-456'));
     expect(httpService.createInviteCalls, 2);
   });
+
+  testWidgets('invite QR view back button pops to the previous route', (
+    tester,
+  ) async {
+    final httpService = _FakeInviteHttpService()
+      ..inviteToCreate = InviteLink(
+        token: 'token-123',
+        expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+      );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          onGenerateRoute: (settings) {
+            final uri = Uri.parse(settings.name ?? '/');
+            if (uri.path == '/') {
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (context) => Scaffold(
+                  body: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          settings: const RouteSettings(name: '/rooms'),
+                          builder: (_) =>
+                              const Scaffold(body: Text('Rooms page')),
+                        ),
+                      );
+                    },
+                    child: const Text('Open rooms'),
+                  ),
+                ),
+              );
+            }
+            if (uri.path == '/invite') {
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => InviteQrView(
+                  backToRoute: uri.queryParameters['back_to'],
+                  preferPopOnBack: settings.arguments == true,
+                ),
+              );
+            }
+            if (uri.path == '/rooms') {
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => const Scaffold(body: Text('Rooms page')),
+              );
+            }
+            throw StateError('Unexpected route ${settings.name}');
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open rooms'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rooms page'), findsOneWidget);
+
+    final roomsContext = tester.element(find.text('Rooms page'));
+    Navigator.of(
+      roomsContext,
+    ).pushNamed(inviteQrRouteWithBackTo(backTo: '/rooms'), arguments: true);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invite someone'), findsWidgets);
+
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rooms page'), findsOneWidget);
+  });
+
+  testWidgets(
+    'invite QR view falls back to the configured route when it cannot pop',
+    (tester) async {
+      final httpService = _FakeInviteHttpService()
+        ..inviteToCreate = InviteLink(
+          token: 'token-123',
+          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+        );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            initialRoute: '/invite?back_to=%2Frooms',
+            onGenerateRoute: (settings) {
+              final uri = Uri.parse(settings.name ?? '/');
+              if (uri.path == '/') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => const SizedBox.shrink(),
+                );
+              }
+              if (uri.path == '/invite') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) =>
+                      InviteQrView(backToRoute: uri.queryParameters['back_to']),
+                );
+              }
+              if (uri.path == '/rooms') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => const Scaffold(body: Text('Rooms fallback')),
+                );
+              }
+              throw StateError('Unexpected route ${settings.name}');
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invite someone'), findsWidgets);
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rooms fallback'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'invite QR view falls back to the room route when opened directly for a room',
+    (tester) async {
+      final httpService = _FakeInviteHttpService()
+        ..inviteToCreate = InviteLink(
+          token: 'room-token',
+          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+          roomId: 7,
+        );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            initialRoute: '/invite?room_id=7',
+            onGenerateRoute: (settings) {
+              final uri = Uri.parse(settings.name ?? '/');
+              if (uri.path == '/') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => const SizedBox.shrink(),
+                );
+              }
+              if (uri.path == '/invite') {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => InviteQrView(
+                    roomId: int.tryParse(uri.queryParameters['room_id'] ?? ''),
+                  ),
+                );
+              }
+              if (settings.name == roomsRouteWithOpenRoom(7)) {
+                return MaterialPageRoute(
+                  settings: settings,
+                  builder: (_) => const Scaffold(body: Text('Opened room 7')),
+                );
+              }
+              throw StateError('Unexpected route ${settings.name}');
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Opened room 7'), findsOneWidget);
+    },
+  );
 
   testWidgets('invite accept view routes into the requested room', (
     tester,

@@ -14,9 +14,18 @@ import 'route_utils.dart';
 class InviteQrView extends StatefulWidget {
   final RoomSummary? room;
   final int? roomId;
+  final String? backToRoute;
+  final bool preferPopOnBack;
   final InviteQrCache? inviteQrCache;
 
-  const InviteQrView({super.key, this.room, this.roomId, this.inviteQrCache});
+  const InviteQrView({
+    super.key,
+    this.room,
+    this.roomId,
+    this.backToRoute,
+    this.preferPopOnBack = false,
+    this.inviteQrCache,
+  });
 
   @override
   State<InviteQrView> createState() => _InviteQrViewState();
@@ -120,6 +129,27 @@ class _InviteQrViewState extends State<InviteQrView> {
     _sessionUserId = nextUserId;
     _inviteQrCache.syncSession(session);
     return true;
+  }
+
+  String get _fallbackRoute {
+    final configuredBackToRoute = widget.backToRoute;
+    if (configuredBackToRoute != null && configuredBackToRoute.isNotEmpty) {
+      return configuredBackToRoute;
+    }
+    final roomId = _targetRoomId;
+    if (roomId != null) {
+      return roomsRouteWithOpenRoom(roomId);
+    }
+    return '/home';
+  }
+
+  Future<void> _handleBackNavigation() async {
+    final navigator = Navigator.of(context);
+    if (widget.preferPopOnBack && navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+    await navigator.pushReplacementNamed(_fallbackRoute);
   }
 
   void _applyInvite(InviteLink invite) {
@@ -309,36 +339,51 @@ class _InviteQrViewState extends State<InviteQrView> {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      backgroundColor: const Color(0xFFF5ECFF),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        title,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        description,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 24),
-                      body,
-                    ],
+    return PopScope<void>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) {
+          return;
+        }
+        await _handleBackNavigation();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(title),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _handleBackNavigation,
+          ),
+        ),
+        backgroundColor: const Color(0xFFF5ECFF),
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          title,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          description,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        body,
+                      ],
+                    ),
                   ),
                 ),
               ),

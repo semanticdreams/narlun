@@ -50,6 +50,10 @@ void main() {
     expect(isPrimaryAppShellRoute(Uri.parse('/profile')), isFalse);
     expect(inviteQrRoute(), '/invite');
     expect(inviteQrRoute(roomId: 7), '/invite?room_id=7');
+    expect(
+      inviteQrRouteWithBackTo(roomId: 7, backTo: '/rooms?open_room=7'),
+      '/invite?room_id=7&back_to=%2Frooms%3Fopen_room%3D7',
+    );
   });
 
   test('describes user-facing page titles', () {

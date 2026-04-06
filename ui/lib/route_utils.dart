@@ -52,9 +52,20 @@ bool isPrimaryAppShellRoute(Uri uri) {
 }
 
 String inviteQrRoute({int? roomId}) {
+  return inviteQrRouteWithBackTo(roomId: roomId);
+}
+
+String inviteQrRouteWithBackTo({int? roomId, String? backTo}) {
+  final queryParameters = <String, String>{};
+  if (roomId != null) {
+    queryParameters['room_id'] = '$roomId';
+  }
+  if (backTo != null && backTo.isNotEmpty) {
+    queryParameters['back_to'] = backTo;
+  }
   return Uri(
     path: '/invite',
-    queryParameters: roomId == null ? null : {'room_id': '$roomId'},
+    queryParameters: queryParameters.isEmpty ? null : queryParameters,
   ).toString();
 }
 

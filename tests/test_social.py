@@ -206,6 +206,30 @@ async def test_nearby_excludes_rooms_inactive_for_more_than_two_hours_even_with_
     assert room_items == []
 
 
+async def test_stale_rooms_cannot_receive_new_join_requests(cli, monkeypatch):
+    users = [await signup(cli) for _ in range(3)]
+
+    original_time = redis_store.time.time
+    base_time = original_time()
+    monkeypatch.setattr(
+        redis_store.time,
+        'time',
+        lambda: base_time - redis_store.NEARBY_ACTIVITY_WINDOW_SECONDS - 1,
+    )
+
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    assert room['id']
+
+    monkeypatch.setattr(redis_store.time, 'time', lambda: base_time)
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
+
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1000
+
+
 async def test_room_join_request_requires_member_approval(cli):
     users = [await signup(cli) for _ in range(4)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])

@@ -894,6 +894,8 @@ class RedisStore:
         meta = await self._load_room_meta(room_id)
         if meta is None:
             raise RoomNotFound()
+        if not self._room_meta_has_recent_nearby_activity(meta):
+            raise RoomNotFound()
         if await self.user_in_room(user_id, room_id):
             raise PermissionDenied()
 

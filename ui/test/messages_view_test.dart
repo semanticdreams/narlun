@@ -1021,16 +1021,12 @@ void main() {
 
   test('leave room notice copy becomes brief after the first explanation', () {
     expect(
-      describeLeaveRoomDialogBody(isDirectRoom: false, showNearbyHint: true),
+      describeLeaveRoomDialogBody(showNearbyHint: true),
       'You will leave this room. If another member is nearby, it may show up in Nearby again and you can request to rejoin.',
     );
     expect(
-      describeLeaveRoomDialogBody(isDirectRoom: false, showNearbyHint: false),
+      describeLeaveRoomDialogBody(showNearbyHint: false),
       'You will leave this room.',
-    );
-    expect(
-      describeLeaveRoomDialogBody(isDirectRoom: true, showNearbyHint: true),
-      'You will leave this conversation. You can start a new one later.',
     );
   });
 

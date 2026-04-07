@@ -220,20 +220,16 @@ class _InviteQrViewState extends State<InviteQrView> {
   @override
   Widget build(BuildContext context) {
     final me = Provider.of<MeModel?>(context)?.data;
-    final roomLabel = widget.room == null
-        ? null
-        : (me == null
-                  ? (widget.room!.name ?? '')
-                  : widget.room!.displayTitleFor(me))
-              .trim();
+    final displayUser = me ?? const SessionUser(authenticated: false);
+    final roomLabel = widget.room?.displayTitleFor(displayUser).trim();
     final title = widget.room == null && widget.roomId == null
         ? 'Invite someone'
         : (roomLabel?.isNotEmpty ?? false)
         ? 'Invite to $roomLabel'
-        : 'Invite to this conversation';
+        : 'Invite to this room';
     final description = widget.room == null && widget.roomId == null
         ? 'Scan this code to open Narlun. New people can choose a username and land straight in a room with you.'
-        : 'Scan this code to open Narlun. New people can choose a username and land straight in this conversation.';
+        : 'Scan this code to open Narlun. New people can choose a username and land straight in this room.';
 
     Widget body;
     if (_error != null && _invite == null) {

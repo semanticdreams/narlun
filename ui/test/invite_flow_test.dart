@@ -144,7 +144,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Invite to this conversation'), findsWidgets);
+    expect(find.text('Invite to this room'), findsWidgets);
     expect(httpService.createdInviteRoomId, 7);
   });
 

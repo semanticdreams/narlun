@@ -61,7 +61,10 @@ class _ConversationsState extends State<ConversationsView> {
     if (preview == null || preview.body.isEmpty) {
       return '';
     }
-    if (room.isGroup &&
+    final shouldShowSender = currentUser == null
+        ? room.participants.length > 2
+        : room.otherParticipantsFor(currentUser).length > 1;
+    if (shouldShowSender &&
         preview.senderUsername != null &&
         preview.senderUsername!.isNotEmpty &&
         preview.senderId != currentUser?.id) {
@@ -279,9 +282,7 @@ class _ConversationsState extends State<ConversationsView> {
     logFrontendDiagnostic(
       'conversation_prompts_eligible',
       'Conversation prompt suggestions became eligible.',
-      details: {
-        'push_eligible': _pushPromptEligible,
-      },
+      details: {'push_eligible': _pushPromptEligible},
     );
   }
 
@@ -306,6 +307,8 @@ class _ConversationsState extends State<ConversationsView> {
         return Consumer2<MeModel, PushNotificationsService>(
           builder: (context, meModel, pushService, child) {
             final currentUser = meModel.data;
+            final displayUser =
+                currentUser ?? const SessionUser(authenticated: false);
             final pushPromptVisible =
                 currentUser?.authenticated == true &&
                 _pushPromptEligible &&
@@ -429,7 +432,7 @@ class _ConversationsState extends State<ConversationsView> {
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Start from Nearby to discover people around you and open your first conversation.',
+                              'Start from Nearby to discover people around you and open your first room.',
                             ),
                             const SizedBox(height: 16),
                             FilledButton(
@@ -454,9 +457,7 @@ class _ConversationsState extends State<ConversationsView> {
                     child: ListTile(
                       key: ValueKey('room-${room.id}'),
                       leading: AvatarImage(
-                        picture: currentUser == null
-                            ? room.picture
-                            : room.displayPictureFor(currentUser),
+                        picture: room.displayPictureFor(displayUser),
                       ),
                       trailing: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -493,11 +494,7 @@ class _ConversationsState extends State<ConversationsView> {
                             ),
                         ],
                       ),
-                      title: Text(
-                        currentUser == null
-                            ? (room.name ?? '')
-                            : room.displayTitleFor(currentUser),
-                      ),
+                      title: Text(room.displayTitleFor(displayUser)),
                       subtitle: Text(_lastMessagePreview(room, currentUser)),
                       onTap: currentUser == null
                           ? null

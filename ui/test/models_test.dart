@@ -19,6 +19,40 @@ void main() {
     expect(room.displayTitleFor(me), 'alice, bob');
   });
 
+  test('unnamed two-person rooms use the other member name as the title', () {
+    const me = SessionUser(authenticated: true, id: 1, username: 'me');
+    final room = RoomSummary(
+      id: 8,
+      isGroup: false,
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 1, username: 'me'),
+        RoomParticipant(id: 2, username: 'alice'),
+      ],
+    );
+
+    expect(room.displayTitleFor(me), 'alice');
+  });
+
+  test('unnamed two-person rooms fall back to the other member picture', () {
+    const me = SessionUser(authenticated: true, id: 1, username: 'me');
+    final room = RoomSummary(
+      id: 9,
+      isGroup: false,
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 1, username: 'me'),
+        RoomParticipant(
+          id: 2,
+          username: 'alice',
+          picture: 'https://example.com/alice.png',
+        ),
+      ],
+    );
+
+    expect(room.displayPictureFor(me), 'https://example.com/alice.png');
+  });
+
   test('room summary parses push muted state', () {
     final room = RoomSummary.fromJson({
       'id': 7,

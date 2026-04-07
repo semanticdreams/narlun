@@ -117,7 +117,7 @@ class MessagesState extends State<MessagesView> {
     for (final participant in room.participants) participant.id: participant,
   };
 
-  bool get _isDirectRoom => !room.isGroup;
+  int get _otherParticipantCount => room.otherParticipantsFor(widget.me).length;
 
   bool _isAtConversationBottom() {
     if (!_scrollController.hasClients) {
@@ -707,20 +707,16 @@ class MessagesState extends State<MessagesView> {
 
   Future<void> _leaveRoom() async {
     final userId = widget.me.id;
-    final showLeaveInfo =
-        !_isDirectRoom && userId != null && !hasSeenLeaveRoomInfo(userId);
+    final showLeaveInfo = userId != null && !hasSeenLeaveRoomInfo(userId);
     if (showLeaveInfo) {
       markLeaveRoomInfoSeen(userId);
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(_isDirectRoom ? 'Leave conversation?' : 'Leave room?'),
+        title: const Text('Leave room?'),
         content: Text(
-          describeLeaveRoomDialogBody(
-            isDirectRoom: _isDirectRoom,
-            showNearbyHint: showLeaveInfo,
-          ),
+          describeLeaveRoomDialogBody(showNearbyHint: showLeaveInfo),
         ),
         actions: [
           TextButton(
@@ -747,11 +743,7 @@ class MessagesState extends State<MessagesView> {
       roomMessagesCache.clearRoom(room.id);
       _roomClosed = true;
       Navigator.pop(context, true);
-      messenger?.showSnackBar(
-        SnackBar(
-          content: Text(_isDirectRoom ? 'Conversation left.' : 'Room left.'),
-        ),
-      );
+      messenger?.showSnackBar(const SnackBar(content: Text('Room left.')));
     } on UnauthorizedResponse {
       if (_roomClosed || !mounted) {
         return;
@@ -782,9 +774,7 @@ class MessagesState extends State<MessagesView> {
             content: Text(
               describeActionError(
                 error,
-                fallbackDescription: _isDirectRoom
-                    ? 'Could not leave this conversation right now.'
-                    : 'Could not leave this room right now.',
+                fallbackDescription: 'Could not leave this room right now.',
               ),
             ),
           ),
@@ -947,23 +937,13 @@ class MessagesState extends State<MessagesView> {
   }
 
   String _roomSubtitle() {
-    if (room.isGroup) {
-      final otherCount = room.participants
-          .where((participant) => participant.id != widget.me.id)
-          .length;
-      if (otherCount <= 0) {
-        return 'Just you';
-      }
-      if (otherCount == 1) {
-        return '1 other member';
-      }
-      return '$otherCount other members';
+    if (_otherParticipantCount <= 0) {
+      return 'Just you';
     }
-    final other = room.otherParticipantFor(widget.me);
-    if (other == null) {
-      return 'Direct chat';
+    if (_otherParticipantCount == 1) {
+      return '1 other member';
     }
-    return 'Direct chat with ${other.username}';
+    return '$_otherParticipantCount other members';
   }
 
   Widget _buildAppBarTitle() {
@@ -1485,7 +1465,7 @@ class MessagesState extends State<MessagesView> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Start the conversation. New messages will appear here instantly.',
+                'Start chatting. New messages will appear here instantly.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: const Color(0xFF5F6967),
@@ -1524,7 +1504,7 @@ class MessagesState extends State<MessagesView> {
               key: ValueKey('chat-message-${message.id}'),
               message: message,
               me: widget.me,
-              isGroupRoom: room.isGroup,
+              showAuthorLabel: _otherParticipantCount > 1,
               startsCluster: startsCluster,
               endsCluster: endsCluster,
               timeLabel: _formatMessageTime(message.timestamp),
@@ -1558,11 +1538,9 @@ class MessagesState extends State<MessagesView> {
                       : 'Mute notifications',
                 ),
               ),
-              PopupMenuItem<String>(
+              const PopupMenuItem<String>(
                 value: 'leave-room',
-                child: Text(
-                  _isDirectRoom ? 'Leave conversation' : 'Leave room',
-                ),
+                child: Text('Leave room'),
               ),
             ],
             onSelected: (value) {
@@ -1738,7 +1716,7 @@ class _MessageBubbleRow extends StatelessWidget {
     super.key,
     required this.message,
     required this.me,
-    required this.isGroupRoom,
+    required this.showAuthorLabel,
     required this.startsCluster,
     required this.endsCluster,
     required this.timeLabel,
@@ -1747,7 +1725,7 @@ class _MessageBubbleRow extends StatelessWidget {
 
   final ChatMessage message;
   final SessionUser me;
-  final bool isGroupRoom;
+  final bool showAuthorLabel;
   final bool startsCluster;
   final bool endsCluster;
   final String timeLabel;
@@ -1794,7 +1772,7 @@ class _MessageBubbleRow extends StatelessWidget {
                   ? CrossAxisAlignment.end
                   : CrossAxisAlignment.start,
               children: [
-                if (!isSender && isGroupRoom && startsCluster)
+                if (!isSender && showAuthorLabel && startsCluster)
                   Padding(
                     padding: const EdgeInsets.only(left: 12, bottom: 4),
                     child: Text(

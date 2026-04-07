@@ -160,44 +160,44 @@ class RoomSummary {
         .toList();
   }
 
-  RoomParticipant? otherParticipantFor(SessionUser me) {
+  List<RoomParticipant> otherParticipantsFor(SessionUser me) {
     final currentUserId = me.id;
     if (currentUserId == null) {
-      return participants.isEmpty ? null : participants.first;
+      return List<RoomParticipant>.from(participants);
     }
-    for (final participant in participants) {
-      if (participant.id != currentUserId) {
-        return participant;
-      }
+    final others = participants
+        .where((participant) => participant.id != currentUserId)
+        .toList();
+    if (others.isNotEmpty) {
+      return others;
     }
-    return participants.isEmpty ? null : participants.first;
+    return List<RoomParticipant>.from(participants);
   }
 
   String displayTitleFor(SessionUser me) {
-    if (isGroup) {
-      if (name != null && name!.isNotEmpty) {
-        return name!;
-      }
-      final participantNames = participants
-          .where((participant) => participant.id != me.id)
-          .map((participant) => participant.username)
-          .toList();
-      if (participantNames.isNotEmpty) {
-        return participantNames.join(', ');
-      }
-      return 'Group room';
+    final trimmedName = name?.trim();
+    if (trimmedName != null && trimmedName.isNotEmpty) {
+      return trimmedName;
     }
-    if (!me.authenticated) {
-      return name ?? '';
+    final participantNames = otherParticipantsFor(me)
+        .map((participant) => participant.username.trim())
+        .where((username) => username.isNotEmpty)
+        .toList();
+    if (participantNames.isNotEmpty) {
+      return participantNames.join(', ');
     }
-    return otherParticipantFor(me)?.username ?? name ?? '';
+    return 'Room';
   }
 
   String? displayPictureFor(SessionUser me) {
-    if (isGroup || !me.authenticated) {
+    if (picture != null && picture!.isNotEmpty) {
       return picture;
     }
-    return otherParticipantFor(me)?.picture;
+    final others = otherParticipantsFor(me);
+    if (others.length == 1) {
+      return others.first.picture;
+    }
+    return null;
   }
 
   int get memberCount => participants.length;

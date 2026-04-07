@@ -351,7 +351,9 @@ void main() {
     expect(pushNotificationsService.enableCalls, 1);
   });
 
-  testWidgets('submits in-app feedback from profile', (tester) async {
+  testWidgets('profile app bar avatar menu still submits feedback', (
+    tester,
+  ) async {
     final pushNotificationsService = FakePushNotificationsService();
     final httpService = FakeProfileHttpService();
 
@@ -364,14 +366,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Send feedback'), findsOneWidget);
-
+    await tester.tap(find.byTooltip('Account menu'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Send feedback'));
     await tester.pumpAndSettle();
 
     await tester.enterText(
       find.byKey(const ValueKey('feedback-message-field')),
-      'Nearby stayed empty even though another user was close by.',
+      'Profile edits feel weird when the keyboard opens.',
     );
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Send'));
@@ -380,10 +382,10 @@ void main() {
     expect(httpService.submitFeedbackCalls, 1);
     expect(
       httpService.lastFeedbackMessage,
-      'Nearby stayed empty even though another user was close by.',
+      'Profile edits feel weird when the keyboard opens.',
     );
     expect(httpService.lastFeedbackRoute, '/profile');
-    expect(httpService.lastFeedbackSource, 'profile');
+    expect(httpService.lastFeedbackSource, 'account_menu');
     expect(httpService.lastFeedbackSilentErrors, isTrue);
     expect(find.text('Feedback sent. Thank you.'), findsOneWidget);
   });

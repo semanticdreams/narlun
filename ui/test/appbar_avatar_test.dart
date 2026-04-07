@@ -56,6 +56,11 @@ class _FakeAppBarHttpService extends HttpService {
 
   bool clearedLocalSession = false;
   Object? signoutError;
+  int submitFeedbackCalls = 0;
+  String? lastFeedbackMessage;
+  String? lastFeedbackRoute;
+  String? lastFeedbackSource;
+  bool? lastFeedbackSilentErrors;
 
   @override
   Future signout() async {
@@ -69,6 +74,23 @@ class _FakeAppBarHttpService extends HttpService {
   @override
   Future<void> clearLocalSession() async {
     clearedLocalSession = true;
+  }
+
+  @override
+  // ignore: non_constant_identifier_names
+  Future<String?> submit_feedback({
+    required String message,
+    required String source,
+    String? route,
+    Map<String, Object?>? details,
+    bool silentErrors = false,
+  }) async {
+    submitFeedbackCalls += 1;
+    lastFeedbackMessage = message;
+    lastFeedbackRoute = route;
+    lastFeedbackSource = source;
+    lastFeedbackSilentErrors = silentErrors;
+    return 'request-1';
   }
 }
 
@@ -91,11 +113,7 @@ void main() {
       ..signoutError = UnauthorizedResponse();
     final meModel = MeModel()
       ..setData(
-        const SessionUser(
-          authenticated: true,
-          id: 1,
-          username: 'alice',
-        ),
+        const SessionUser(authenticated: true, id: 1, username: 'alice'),
       );
 
     await tester.pumpWidget(
@@ -113,9 +131,9 @@ void main() {
           routes: {
             '/': (_) => const Scaffold(body: Text('Welcome landing')),
             '/home': (_) => Scaffold(
-                  appBar: AppBar(actions: const [AppBarAvatar()]),
-                  body: const Text('Home'),
-                ),
+              appBar: AppBar(actions: const [AppBarAvatar()]),
+              body: const Text('Home'),
+            ),
           },
         ),
       ),
@@ -134,5 +152,61 @@ void main() {
     expect(httpService.clearedLocalSession, isTrue);
     expect(meModel.data?.authenticated, isFalse);
     expect(find.text('Welcome landing'), findsOneWidget);
+  });
+
+  testWidgets('submits feedback from the avatar menu', (tester) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    locator<DialogService>().attachNavigator(navigatorKey);
+    final httpService = _FakeAppBarHttpService();
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(authenticated: true, id: 1, username: 'alice'),
+      );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider<MeModel>.value(value: meModel),
+        ],
+        child: MaterialApp(
+          navigatorKey: navigatorKey,
+          initialRoute: '/home',
+          routes: {
+            '/home': (_) => Scaffold(
+              appBar: AppBar(actions: const [AppBarAvatar()]),
+              body: const Text('Home'),
+            ),
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Account menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send feedback'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('feedback-message-field')),
+      'Nearby stayed empty even though another user was close by.',
+    );
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.submitFeedbackCalls, 1);
+    expect(
+      httpService.lastFeedbackMessage,
+      'Nearby stayed empty even though another user was close by.',
+    );
+    expect(httpService.lastFeedbackRoute, '/home');
+    expect(httpService.lastFeedbackSource, 'account_menu');
+    expect(httpService.lastFeedbackSilentErrors, isTrue);
+    expect(find.text('Feedback sent. Thank you.'), findsOneWidget);
   });
 }

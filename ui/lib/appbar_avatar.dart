@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'avatar_image.dart';
 import 'dialog_service.dart';
+import 'feedback_dialog.dart';
 import 'http.dart';
 import 'install_prompt_actions.dart';
 import 'install_prompt_service.dart';
@@ -10,7 +11,7 @@ import 'locator.dart';
 import 'me_model.dart';
 import 'session_actions.dart';
 
-enum _AccountMenuAction { profile, install, signOut }
+enum _AccountMenuAction { profile, feedback, install, signOut }
 
 class AppBarAvatar extends StatelessWidget {
   const AppBarAvatar({super.key});
@@ -26,6 +27,19 @@ class AppBarAvatar extends StatelessWidget {
               case _AccountMenuAction.profile:
                 Navigator.pushNamed(context, '/profile');
                 break;
+              case _AccountMenuAction.feedback:
+                final submitted = await showFeedbackDialog(
+                  context,
+                  source: 'account_menu',
+                  details: const {'surface': 'account_menu'},
+                );
+                if (!context.mounted || !submitted) {
+                  return;
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Feedback sent. Thank you.')),
+                );
+                break;
               case _AccountMenuAction.install:
                 await handleInstallRequest(context, installPromptService);
                 break;
@@ -40,10 +54,9 @@ class AppBarAvatar extends StatelessWidget {
                     return;
                   }
                   Provider.of<MeModel>(context, listen: false).reset();
-                  Navigator.of(context).pushNamedAndRemoveUntil(
-                    '/',
-                    (route) => false,
-                  );
+                  Navigator.of(
+                    context,
+                  ).pushNamedAndRemoveUntil('/', (route) => false);
                 } on UnauthorizedResponse {
                   if (!context.mounted) {
                     return;
@@ -51,7 +64,8 @@ class AppBarAvatar extends StatelessWidget {
                   await expireSession(
                     context,
                     httpService: httpService,
-                    description: 'Your session has ended. Please sign in again.',
+                    description:
+                        'Your session has ended. Please sign in again.',
                   );
                 } catch (error) {
                   await showActionErrorDialog(
@@ -69,6 +83,10 @@ class AppBarAvatar extends StatelessWidget {
             const PopupMenuItem(
               value: _AccountMenuAction.profile,
               child: Text('Profile'),
+            ),
+            const PopupMenuItem(
+              value: _AccountMenuAction.feedback,
+              child: Text('Send feedback'),
             ),
             if (installPromptService.isInstallAvailable)
               const PopupMenuItem(

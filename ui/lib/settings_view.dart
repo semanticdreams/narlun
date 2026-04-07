@@ -123,9 +123,7 @@ class SettingsView extends StatelessWidget {
     InstallPromptService installPromptService,
   ) async {
     try {
-      await installPromptService.openInstalledApp(
-        nextRoute: currentRouteUri(context)?.toString(),
-      );
+      await installPromptService.openInstalledApp(nextRoute: '/home');
       if (!context.mounted) {
         return;
       }
@@ -134,7 +132,7 @@ class SettingsView extends StatelessWidget {
         ..showSnackBar(
           const SnackBar(
             content: Text(
-              'If the app is installed, it should open there with your current session.',
+              'If the app is installed, it should open there signed into Narlun.',
             ),
           ),
         );
@@ -239,7 +237,7 @@ class SettingsView extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                         const Text(
-                          'Use this after adding Narlun to your home screen to continue there with your current session.',
+                          'Use this after adding Narlun to your home screen to sign into the installed app.',
                         ),
                       ],
                     ],

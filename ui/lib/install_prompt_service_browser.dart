@@ -115,11 +115,15 @@ class BrowserInstallPromptService extends InstallPromptService {
           'Server did not accept the installed app handoff request.',
           details: {'status_code': response.statusCode},
         );
-        return;
+        throw StateError('Installed app handoff is unavailable right now.');
       }
-      final claimUrl = jsonDecode(response.body)['claim_url'];
+      final responseBody = jsonDecode(response.body);
+      if (responseBody is! Map<String, dynamic>) {
+        throw StateError('Installed app handoff response was invalid.');
+      }
+      final claimUrl = responseBody['claim_url'];
       if (claimUrl is! String || claimUrl.isEmpty) {
-        return;
+        throw StateError('Installed app handoff link was missing.');
       }
       _log(
         'session_handoff_opened',
@@ -133,6 +137,7 @@ class BrowserInstallPromptService extends InstallPromptService {
         'Preparing the installed app handoff URL failed.',
         details: {'error': error.toString(), 'next_route': resolvedNextRoute},
       );
+      rethrow;
     }
   }
 

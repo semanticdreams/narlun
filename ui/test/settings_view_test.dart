@@ -35,10 +35,12 @@ class _FakeInstallPromptService extends InstallPromptService {
   _FakeInstallPromptService({
     this.available = false,
     this.canOpenInstalled = false,
+    this.openInstalledAppError,
   });
 
   final bool available;
   final bool canOpenInstalled;
+  final Object? openInstalledAppError;
   int requestInstallCalls = 0;
   int openInstalledAppCalls = 0;
   String? lastOpenedNextRoute;
@@ -68,6 +70,9 @@ class _FakeInstallPromptService extends InstallPromptService {
   Future<void> openInstalledApp({String? nextRoute}) async {
     openInstalledAppCalls += 1;
     lastOpenedNextRoute = nextRoute;
+    if (openInstalledAppError != null) {
+      throw openInstalledAppError!;
+    }
   }
 }
 
@@ -337,7 +342,7 @@ void main() {
     expect(find.text('Narlun is installing.'), findsOneWidget);
   });
 
-  testWidgets('settings can open installed app with current route handoff', (
+  testWidgets('settings can open installed app with home handoff', (
     tester,
   ) async {
     final installPromptService = _FakeInstallPromptService(
@@ -362,12 +367,42 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(installPromptService.openInstalledAppCalls, 1);
-    expect(installPromptService.lastOpenedNextRoute, '/settings');
+    expect(installPromptService.lastOpenedNextRoute, '/home');
     expect(
       find.text(
-        'If the app is installed, it should open there with your current session.',
+        'If the app is installed, it should open there signed into Narlun.',
       ),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('installed app handoff errors surface a dialog', (tester) async {
+    final dialogService = _RecordingDialogService();
+    await setupLocator(reset: true, dialogService: dialogService);
+    final httpService = _FakeSettingsHttpService();
+    final installPromptService = _FakeInstallPromptService(
+      available: false,
+      canOpenInstalled: true,
+      openInstalledAppError: StateError('Failed to open'),
+    );
+
+    await tester.pumpWidget(
+      buildSettingsApp(
+        httpService: httpService,
+        installPromptService: installPromptService,
+        pushNotificationsService: _FakePushNotificationsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Open installed app'));
+    await tester.pumpAndSettle();
+
+    expect(dialogService.callCount, 1);
+    expect(dialogService.lastTitle, 'Could not open installed app');
+    expect(
+      dialogService.lastDescription,
+      'The installed app could not be opened right now. Try again.',
     );
   });
 

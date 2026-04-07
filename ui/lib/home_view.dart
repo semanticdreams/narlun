@@ -168,8 +168,22 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
         currentUri.path == Uri.parse(targetRoute).path &&
         (currentUri.path != '/rooms' || roomToOpenFromContext(context) == null);
     if (!alreadyShowingTarget) {
-      Navigator.of(context).pushReplacementNamed(targetRoute);
+      Navigator.of(context).pushReplacement(_buildShellRoute(targetRoute));
     }
+  }
+
+  Route<void> _buildShellRoute(String routeName) {
+    final initialTabIndex = Uri.parse(routeName).path == '/nearby' ? 0 : 1;
+    return PageRouteBuilder<void>(
+      settings: RouteSettings(name: routeName),
+      pageBuilder: (context, animation, secondaryAnimation) => HomeView(
+        initialTabIndex: initialTabIndex,
+        nearbyLocationService: widget.nearbyLocationService,
+        roomsView: widget.roomsView,
+      ),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+    );
   }
 
   Future<void> _openNearbyRoom(NearbyUser user, int roomId) async {

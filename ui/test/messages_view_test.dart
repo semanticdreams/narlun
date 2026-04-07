@@ -14,6 +14,7 @@ import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/messages_view.dart';
 import 'package:narlun/models.dart';
+import 'package:narlun/push_notifications_service.dart';
 import 'package:narlun/room_messages_cache.dart';
 import 'package:narlun/websocket.dart';
 
@@ -353,11 +354,59 @@ class FakeWebsocketService extends WebsocketService {
   }
 }
 
+class FakePushNotificationsService extends PushNotificationsService {
+  FakePushNotificationsService({this.prompt = false});
+
+  bool prompt;
+  int enableCalls = 0;
+  int dismissCalls = 0;
+
+  @override
+  bool get isBusy => false;
+
+  @override
+  bool get isConfigured => true;
+
+  @override
+  bool get isSubscribed => false;
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  bool get shouldShowPrompt => prompt;
+
+  @override
+  PushPermissionState get permissionState => PushPermissionState.defaultState;
+
+  @override
+  String? get statusMessage => null;
+
+  @override
+  Future<void> disableNotifications() async {}
+
+  @override
+  void dismissPrompt() {
+    dismissCalls += 1;
+    prompt = false;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> enableNotifications() async {
+    enableCalls += 1;
+  }
+
+  @override
+  Future<void> syncSession(SessionUser? user) async {}
+}
+
 Widget _buildMessagesApp({
   required FakeHttpService httpService,
   required FakeWebsocketService websocketService,
   RoomSummary? room,
   RoomMessagesCache? roomMessagesCache,
+  PushNotificationsService? pushNotificationsService,
   SessionUser me = const SessionUser(
     authenticated: true,
     id: 1,
@@ -381,7 +430,10 @@ Widget _buildMessagesApp({
   );
   final provider = Provider<RoomMessagesCache>.value(
     value: roomMessagesCache ?? RoomMessagesCache(),
-    child: content,
+    child: ChangeNotifierProvider<PushNotificationsService?>.value(
+      value: pushNotificationsService,
+      child: content,
+    ),
   );
   return MaterialApp(home: provider);
 }
@@ -462,6 +514,38 @@ void main() {
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('No messages yet'), findsOneWidget);
+  });
+
+  testWidgets('shows a dismissible notification prompt when entering a room', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final pushNotificationsService = FakePushNotificationsService(prompt: true);
+    httpService.enqueueMessages((_) async => const []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        pushNotificationsService: pushNotificationsService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Turn On Notifications'), findsOneWidget);
+    expect(find.text('Turn on'), findsOneWidget);
+
+    await tester.tap(find.text('Turn on'));
+    await tester.pumpAndSettle();
+
+    expect(pushNotificationsService.enableCalls, 1);
+
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+
+    expect(pushNotificationsService.dismissCalls, 1);
+    expect(find.text('Turn On Notifications'), findsNothing);
   });
 
   testWidgets('refreshes room history when a new fetch succeeds', (

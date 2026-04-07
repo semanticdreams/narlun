@@ -319,7 +319,7 @@ void main() {
     expect(routeObserver.pushedRouteNames, contains('/rooms?open_room=42'));
   });
 
-  testWidgets('shows a dismissible notification prompt on the rooms screen', (
+  testWidgets('does not show the notification prompt on the rooms screen', (
     tester,
   ) async {
     final websocketService = FakeRoomsWebsocketService();
@@ -356,18 +356,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Turn On Notifications'), findsNothing);
-
-    await tester.pump(const Duration(seconds: 8));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Turn On Notifications'), findsOneWidget);
-    expect(find.text('Turn on'), findsOneWidget);
-
-    await tester.tap(find.text('Not now'));
-    await tester.pumpAndSettle();
-
-    expect(pushNotificationsService.dismissCalls, 1);
     expect(find.text('Turn On Notifications'), findsNothing);
   });
 

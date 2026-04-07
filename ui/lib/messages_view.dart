@@ -5,12 +5,14 @@ import 'package:provider/provider.dart';
 
 import 'avatar_image.dart';
 import 'chat_labels.dart';
+import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'invite_qr_button.dart';
 import 'leave_room_notice.dart';
 import 'leave_room_notice_storage.dart';
 import 'locator.dart';
 import 'models.dart';
+import 'push_notifications_service.dart';
 import 'room_messages_cache.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
@@ -101,6 +103,7 @@ class MessagesState extends State<MessagesView> {
   bool _typingActive = false;
   bool _showEmojiPicker = false;
   int _pendingMessageSequence = 0;
+  bool _reportedPushPromptVisible = false;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -1259,6 +1262,68 @@ class MessagesState extends State<MessagesView> {
     );
   }
 
+  Widget _buildNotificationsPrompt(PushNotificationsService? pushService) {
+    if (pushService == null || !pushService.shouldShowPrompt) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Turn On Notifications',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Get notified about new messages even when Narlun is not open.',
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    onPressed: pushService.isBusy
+                        ? null
+                        : () async {
+                            try {
+                              await pushService.enableNotifications();
+                            } catch (error) {
+                              if (!mounted) {
+                                return;
+                              }
+                              if (isAlreadyPresentedActionError(error)) {
+                                return;
+                              }
+                              _showRefreshFailure(
+                                describeActionError(
+                                  error,
+                                  fallbackDescription:
+                                      'Could not enable notifications right now.',
+                                ),
+                              );
+                            }
+                          },
+                    child: const Text('Turn on'),
+                  ),
+                  TextButton(
+                    onPressed: pushService.dismissPrompt,
+                    child: const Text('Not now'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTypingIndicator() {
     final label = _typingIndicatorLabel();
     if (label == null) {
@@ -1298,6 +1363,18 @@ class MessagesState extends State<MessagesView> {
           ),
         ],
       ),
+    );
+  }
+
+  void _reportPromptVisibility({required bool pushVisible}) {
+    if (!pushVisible || _reportedPushPromptVisible) {
+      return;
+    }
+    _reportedPushPromptVisible = true;
+    logFrontendDiagnostic(
+      'message_push_prompt_visible',
+      'Message screen displayed the push notification prompt.',
+      details: {'room_id': room.id},
     );
   }
 
@@ -1522,6 +1599,11 @@ class MessagesState extends State<MessagesView> {
 
   @override
   Widget build(BuildContext context) {
+    final pushService = Provider.of<PushNotificationsService?>(
+      context,
+      listen: true,
+    );
+    _reportPromptVisibility(pushVisible: pushService?.shouldShowPrompt == true);
     return Scaffold(
       backgroundColor: const Color(0xFFE8DED1),
       appBar: AppBar(
@@ -1563,6 +1645,7 @@ class MessagesState extends State<MessagesView> {
         ),
         child: Column(
           children: [
+            _buildNotificationsPrompt(pushService),
             _buildPendingJoinRequestsCard(),
             Expanded(child: _buildMessageList()),
             _buildTypingIndicator(),

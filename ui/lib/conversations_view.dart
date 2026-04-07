@@ -13,7 +13,6 @@ import 'locator.dart';
 import 'me_model.dart';
 import 'messages_view.dart';
 import 'models.dart';
-import 'push_notifications_service.dart';
 import 'rooms_feed_model.dart';
 import 'route_utils.dart';
 import 'session_actions.dart';
@@ -51,12 +50,8 @@ class _ConversationsState extends State<ConversationsView> {
   bool _ownsRoomsFeedModel = false;
   StreamSubscription? roomsChangedSubscription;
   StreamSubscription? connectionEventsSubscription;
-  Timer? promptEligibilityTimer;
-  bool _pushPromptEligible = false;
   bool _openedInitialRoom = false;
   bool _reportedMissingInitialRoom = false;
-  bool _reportedPromptEligibility = false;
-  bool _reportedPushPromptVisible = false;
 
   String _lastMessagePreview(RoomSummary room, SessionUser? currentUser) {
     final preview = room.lastMessage;
@@ -216,15 +211,6 @@ class _ConversationsState extends State<ConversationsView> {
     _meModel = meModel;
     _meModel?.addListener(_handleSessionChanged);
     _syncFeedSession();
-    promptEligibilityTimer = Timer(const Duration(seconds: 8), () {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _pushPromptEligible = true;
-      });
-      _reportPromptEligibility();
-    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -260,7 +246,6 @@ class _ConversationsState extends State<ConversationsView> {
 
   @override
   void dispose() {
-    promptEligibilityTimer?.cancel();
     roomsChangedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
     _meModel?.removeListener(_handleSessionChanged);
@@ -278,28 +263,6 @@ class _ConversationsState extends State<ConversationsView> {
     roomsFeedModel.syncSession(_meModel?.data);
   }
 
-  void _reportPromptEligibility() {
-    if (_reportedPromptEligibility) {
-      return;
-    }
-    _reportedPromptEligibility = true;
-    logFrontendDiagnostic(
-      'conversation_prompts_eligible',
-      'Conversation prompt suggestions became eligible.',
-      details: {'push_eligible': _pushPromptEligible},
-    );
-  }
-
-  void _reportPromptVisibility({required bool pushVisible}) {
-    if (pushVisible && !_reportedPushPromptVisible) {
-      _reportedPushPromptVisible = true;
-      logFrontendDiagnostic(
-        'conversation_push_prompt_visible',
-        'Conversation screen displayed the push notification prompt.',
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final content = ListenableBuilder(
@@ -308,81 +271,13 @@ class _ConversationsState extends State<ConversationsView> {
         final rooms = roomsFeedModel.rooms;
         final loadingInitialRooms = roomsFeedModel.isLoadingInitial;
         final roomsErrorMessage = roomsFeedModel.errorMessage;
-        return Consumer2<MeModel, PushNotificationsService>(
-          builder: (context, meModel, pushService, child) {
+        return Consumer<MeModel>(
+          builder: (context, meModel, child) {
             final currentUser = meModel.data;
             final displayUser =
                 currentUser ?? const SessionUser(authenticated: false);
-            final pushPromptVisible =
-                currentUser?.authenticated == true &&
-                _pushPromptEligible &&
-                pushService.shouldShowPrompt;
-            _reportPromptVisibility(pushVisible: pushPromptVisible);
             return ListView(
               children: [
-                if (pushPromptVisible)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Turn On Notifications',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'Get notified about new messages even when Narlun is not open.',
-                            ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                FilledButton(
-                                  onPressed: pushService.isBusy
-                                      ? null
-                                      : () async {
-                                          try {
-                                            await pushService
-                                                .enableNotifications();
-                                          } catch (error) {
-                                            if (!mounted) {
-                                              return;
-                                            }
-                                            if (isAlreadyPresentedActionError(
-                                              error,
-                                            )) {
-                                              return;
-                                            }
-                                            _showRefreshFailure(
-                                              describeActionError(
-                                                error,
-                                                fallbackDescription:
-                                                    'Could not enable notifications right now.',
-                                              ),
-                                            );
-                                          }
-                                        },
-                                  child: const Text('Turn on'),
-                                ),
-                                TextButton(
-                                  onPressed: pushService.dismissPrompt,
-                                  child: const Text('Not now'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
                 if (loadingInitialRooms)
                   const Padding(
                     padding: EdgeInsets.fromLTRB(16, 24, 16, 16),

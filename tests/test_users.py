@@ -3,11 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from app import redis_store
 from app.users import InvalidAvatarError, read_uploaded_file_bytes
 
 from tests.helpers import (
     auth_headers,
     create_avatar_bytes,
+    create_group_room,
+    get_rooms,
+    join_user,
     random_username,
     signin,
     signup,
@@ -213,6 +217,48 @@ async def test_delete_account_removes_permanent_user(cli):
 
     response = await signin(cli, username, 'permanent123')
     assert response.status == 400
+
+
+async def test_cleanup_inactive_users_deletes_stale_accounts_and_their_rooms(cli, monkeypatch):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    original_time = redis_store.time.time
+    base_time = original_time()
+    stale_now = base_time + redis_store.INACTIVE_USER_TTL_SECONDS + 1
+    monkeypatch.setattr(redis_store.time, 'time', lambda: stale_now)
+
+    await get_rooms(cli, users[0]['jwt'])
+
+    result = await cli.app['store'].cleanup_inactive_data(current_ts=stale_now)
+
+    assert result['deleted_user_ids'] == [users[1]['user']['id']]
+    assert room['id'] in result['deleted_room_ids']
+    assert await cli.app['store']._load_user_hash(users[1]['user']['id']) is None
+
+    remaining_rooms = await get_rooms(cli, users[0]['jwt'])
+    assert remaining_rooms == []
+
+
+async def test_cleanup_prunes_historical_group_rooms_with_fewer_than_two_members(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        '',
+        [users[1]['user']['id']],
+    )
+
+    await cli.app['redis'].srem(cli.app['store']._room_members_key(room['id']), users[1]['user']['id'])
+    await cli.app['redis'].zrem(cli.app['store']._user_rooms_key(users[1]['user']['id']), room['id'])
+
+    result = await cli.app['store'].cleanup_inactive_data()
+
+    assert result['deleted_user_ids'] == []
+    assert result['deleted_room_ids'] == [room['id']]
+    assert await cli.app['store'].get_room(room['id']) is None
+    remaining_rooms = await get_rooms(cli, users[0]['jwt'])
+    assert remaining_rooms == []
 
 
 async def test_push_subscription_routes_store_and_remove_browser_subscription(

@@ -17,10 +17,12 @@ from app.util import create_random_avatar
 MESSAGE_TTL_SECONDS = 7 * 24 * 60 * 60
 NEARBY_ACTIVITY_WINDOW_SECONDS = 2 * 60 * 60
 NEARBY_ACTIVITY_WINDOW_MILLISECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS * 1000
+INACTIVE_USER_TTL_SECONDS = 4 * 7 * 24 * 60 * 60
 INVITE_TTL_SECONDS = 24 * 60 * 60
 JOIN_REQUEST_TTL_SECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS
 REJECTED_JOIN_REQUEST_TTL_SECONDS = 24 * 60 * 60
 WEBSOCKET_PRESENCE_TTL_SECONDS = 45
+CLEANUP_INTERVAL_SECONDS = 60 * 60
 NEARBY_RADIUS_KM = 20000
 MAX_NEARBY_RESULTS = 10
 MAX_GEO_RESULTS = 50
@@ -177,6 +179,9 @@ class RedisStore:
     def _username_index_key(self, username):
         return f'idx:username:{normalize_username(username)}'
 
+    def _user_activity_index_backfill_key(self):
+        return 'meta:user_last_active_backfilled'
+
     def _dm_key(self, user_a, user_b):
         low, high = sorted([int(user_a), int(user_b)])
         return f'dm:{low}:{high}'
@@ -203,12 +208,93 @@ class RedisStore:
         timestamp_ms = now_ms() if current_ts_ms is None else int(current_ts_ms)
         return timestamp_ms - NEARBY_ACTIVITY_WINDOW_MILLISECONDS
 
+    def _inactive_user_cutoff_ts(self, *, current_ts=None):
+        timestamp = now_ts() if current_ts is None else int(current_ts)
+        return timestamp - INACTIVE_USER_TTL_SECONDS
+
     def _room_meta_has_recent_nearby_activity(self, meta, *, current_ts_ms=None):
         if not meta:
             return False
         return int(meta.get('updated_at', 0) or 0) >= self._nearby_activity_cutoff_ms(
             current_ts_ms=current_ts_ms,
         )
+
+    async def touch_user_activity(self, user_id, *, timestamp=None):
+        raw_user = await self._load_user_hash(user_id)
+        if raw_user is None:
+            return False
+        activity_timestamp = now_ts() if timestamp is None else int(timestamp)
+        user_id = int(user_id)
+        await self.redis.zadd('z:user:last_active', {user_id: activity_timestamp})
+        await self.redis.hset(
+            self._user_key(user_id),
+            mapping={'last_active': activity_timestamp},
+        )
+        return True
+
+    async def _iter_user_ids(self):
+        cursor = 0
+        seen = set()
+        while True:
+            cursor, keys = await self.redis.scan(
+                cursor=cursor,
+                match='user:{*}:profile',
+                count=100,
+            )
+            for key in keys:
+                try:
+                    user_id = int(key.split('{', 1)[1].split('}', 1)[0])
+                except (IndexError, ValueError, TypeError):
+                    continue
+                if user_id in seen:
+                    continue
+                seen.add(user_id)
+                yield user_id
+            if cursor == 0:
+                break
+
+    async def _iter_room_ids(self):
+        cursor = 0
+        seen = set()
+        while True:
+            cursor, keys = await self.redis.scan(
+                cursor=cursor,
+                match='room:{*}:meta',
+                count=100,
+            )
+            for key in keys:
+                try:
+                    room_id = int(key.split('{', 1)[1].split('}', 1)[0])
+                except (IndexError, ValueError, TypeError):
+                    continue
+                if room_id in seen:
+                    continue
+                seen.add(room_id)
+                yield room_id
+            if cursor == 0:
+                break
+
+    async def _ensure_user_activity_index(self):
+        if await self.redis.get(self._user_activity_index_backfill_key()) == '1':
+            return
+        for user_id in [user_id async for user_id in self._iter_user_ids()]:
+            raw_user = await self._load_user_hash(user_id)
+            if raw_user is None:
+                continue
+            last_active = int(
+                raw_user.get('last_active')
+                or raw_user.get('last_seen')
+                or raw_user.get('created_at')
+                or 0
+            )
+            if last_active <= 0:
+                continue
+            await self.redis.hset(
+                self._user_key(user_id),
+                mapping={'last_active': last_active},
+            )
+            await self.redis.zadd('z:user:last_active', {int(user_id): last_active})
+        await self.redis.set(self._user_activity_index_backfill_key(), '1')
 
     async def _resolve_username_id(self, username):
         username_key = self._username_index_key(username)
@@ -461,12 +547,14 @@ class RedisStore:
             'avatar_seed': secrets.token_hex(16),
             'avatar_version': timestamp,
             'created_at': timestamp,
+            'last_active': timestamp,
         }
 
         if not await self.redis.set(username_key, user_id, nx=True):
             raise UsernameAlreadyExists()
 
         await self.redis.hset(self._user_key(user_id), mapping=profile)
+        await self.redis.zadd('z:user:last_active', {user_id: timestamp})
         return await self.get_authenticated_user(user_id)
 
     async def authenticate(self, username, password):
@@ -482,7 +570,8 @@ class RedisStore:
         password_hash = raw_user.get('password_hash') or None
         if password_hash is None or not check_password_hash(password_hash, password):
             return False
-        return self._serialize_user(raw_user, authenticated=True)
+        await self.touch_user_activity(user_id)
+        return await self.get_authenticated_user(user_id)
 
     async def update_user(self, user_id, *, username=None, password=None, status=None):
         raw_user = await self._load_user_hash(user_id)
@@ -1360,6 +1449,92 @@ class RedisStore:
     async def get_room_members(self, room_id):
         return sorted(int(member) for member in await self.redis.smembers(self._room_members_key(room_id)))
 
+    async def _delete_room(self, room_id, *, meta, remaining_members, nearby_viewer_ids):
+        requester_ids = await self._clear_join_requests_for_room(room_id)
+        nearby_viewer_ids.update(requester_ids)
+        await self.publish_room_deleted(room_id)
+        for member in remaining_members:
+            await self.redis.zrem(self._user_rooms_key(member), room_id)
+            await self.redis.hdel(self._user_room_prefs_key(member), room_id)
+        if meta.get('dm_key'):
+            await self.redis.delete(meta['dm_key'])
+        await self.redis.delete(self._room_meta_key(room_id))
+        await self.redis.delete(self._room_members_key(room_id))
+        await self.redis.delete(self._room_messages_key(room_id))
+        await self.redis.delete(self._room_read_states_key(room_id))
+        return {
+            'room_deleted': True,
+            'remaining_member_ids': [],
+            'nearby_viewer_ids': sorted(int(viewer_id) for viewer_id in nearby_viewer_ids),
+        }
+
+    async def prune_underpopulated_rooms(self):
+        deleted_room_ids = []
+        notified_user_ids = set()
+        for room_id in [room_id async for room_id in self._iter_room_ids()]:
+            meta = await self._load_room_meta(room_id)
+            if meta is None:
+                continue
+            member_ids = await self.get_room_members(room_id)
+            valid_member_ids = []
+            stale_member_ids = []
+            for member_id in member_ids:
+                if await self._load_user_hash(member_id) is None:
+                    stale_member_ids.append(member_id)
+                else:
+                    valid_member_ids.append(member_id)
+            if stale_member_ids:
+                if valid_member_ids:
+                    await self.publish_rooms_changed(valid_member_ids)
+                await self.redis.srem(self._room_members_key(room_id), *stale_member_ids)
+            if len(valid_member_ids) >= 2:
+                continue
+            nearby_viewer_ids = set(await self.get_room_nearby_update_targets(room_id))
+            nearby_viewer_ids.update(stale_member_ids)
+            delete_result = await self._delete_room(
+                room_id,
+                meta=meta,
+                remaining_members=valid_member_ids,
+                nearby_viewer_ids=nearby_viewer_ids,
+            )
+            deleted_room_ids.append(int(room_id))
+            notified_user_ids.update(delete_result['nearby_viewer_ids'])
+        if notified_user_ids:
+            await self.publish_nearby_changed(notified_user_ids)
+        return deleted_room_ids
+
+    async def cleanup_inactive_data(self, *, current_ts=None):
+        await self._ensure_user_activity_index()
+        cutoff = self._inactive_user_cutoff_ts(current_ts=current_ts)
+        inactive_user_ids = sorted(
+            int(user_id)
+            for user_id in await self.redis.zrangebyscore(
+                'z:user:last_active',
+                '-inf',
+                cutoff,
+            )
+        )
+        deleted_user_ids = []
+        deleted_room_ids = set()
+        for user_id in inactive_user_ids:
+            if await self._load_user_hash(user_id) is None:
+                await self.redis.zrem('z:user:last_active', user_id)
+                continue
+            room_ids = [
+                int(room_id)
+                for room_id in await self.redis.zrange(self._user_rooms_key(user_id), 0, -1)
+            ]
+            if await self.delete_account(user_id):
+                deleted_user_ids.append(int(user_id))
+                for room_id in room_ids:
+                    if await self._load_room_meta(room_id) is None:
+                        deleted_room_ids.add(int(room_id))
+        deleted_room_ids.update(await self.prune_underpopulated_rooms())
+        return {
+            'deleted_user_ids': deleted_user_ids,
+            'deleted_room_ids': sorted(deleted_room_ids),
+        }
+
     async def _add_user_to_room(self, room_id, user_id, *, inviter_id):
         room_id = int(room_id)
         user_id = int(user_id)
@@ -1549,6 +1724,7 @@ class RedisStore:
         await self.redis.delete(self._user_rooms_key(user_id))
         await self.redis.delete(self._user_key(user_id))
         await self.redis.delete(self._username_index_key(raw_user['username']))
+        await self.redis.zrem('z:user:last_active', user_id)
         await self.redis.zrem('z:user:last_seen', user_id)
         await self.redis.execute_command('ZREM', 'geo:active_users', user_id)
         await self.redis_bytes.delete(self._user_avatar_key(user_id))
@@ -1595,25 +1771,16 @@ class RedisStore:
         await self.redis.hdel(self._room_read_states_key(room_id), user_id)
         remaining_members = sorted(int(member) for member in await self.redis.smembers(members_key))
 
-        should_delete_room = False
-        if room_bool(meta.get('is_group')):
-            should_delete_room = len(remaining_members) == 0
-        else:
-            should_delete_room = len(remaining_members) < 2
+        should_delete_room = len(remaining_members) < 2
 
         if should_delete_room:
-            requester_ids = await self._clear_join_requests_for_room(room_id)
-            nearby_viewer_ids.update(requester_ids)
-            await self.publish_room_deleted(room_id)
-            for member in remaining_members:
-                await self.redis.zrem(self._user_rooms_key(member), room_id)
-                await self.redis.hdel(self._user_room_prefs_key(member), room_id)
-            if meta.get('dm_key'):
-                await self.redis.delete(meta['dm_key'])
-            await self.redis.delete(meta_key)
-            await self.redis.delete(members_key)
-            await self.redis.delete(self._room_messages_key(room_id))
-            await self.redis.delete(self._room_read_states_key(room_id))
+            delete_result = await self._delete_room(
+                room_id,
+                meta=meta,
+                remaining_members=remaining_members,
+                nearby_viewer_ids=nearby_viewer_ids,
+            )
+            nearby_viewer_ids = set(delete_result['nearby_viewer_ids'])
         if nearby_viewer_ids:
             await self.publish_nearby_changed(nearby_viewer_ids)
         return {

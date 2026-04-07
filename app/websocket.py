@@ -96,6 +96,7 @@ async def websocket_handler(req):
     connection_id = secrets.token_hex(16)
     client_id = normalized_client_id(req.query.get('client_id'))
     client_session_id = req.query.get('client_session_id')
+    await req.store.touch_user_activity(user_id)
     await req.store.mark_active_websocket(user_id, connection_id, client_id=client_id)
     subscribed_rooms = set()
     current_live_view = None

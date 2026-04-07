@@ -16,7 +16,7 @@ from app.feedback import create_feedback_tools
 from app.frontend_errors import create_frontend_error_tools, frontend_error_handler
 from app.observability import request_log_context
 from app.push import PushService
-from app.redis_store import RedisStore
+from app.redis_store import CLEANUP_INTERVAL_SECONDS, RedisStore
 from app.social import create_app as create_social_app
 from app.users import create_app as create_users_app
 from app.util import InvalidJsonBody, InvalidUsage, load_user_from_token
@@ -41,6 +41,8 @@ async def request_context(req, handler):
     req.request_id = req.headers.get('X-Request-ID') or secrets.token_hex(8)
     started_at = time.perf_counter()
     req.user = await load_user_from_token(req)
+    if req.user.get('authenticated'):
+        await req.store.touch_user_activity(req.user['id'])
 
     try:
         if req.can_read_body:
@@ -146,6 +148,39 @@ async def create_app(*, redis_url=None, enable_cors=True, push_service=None):
     async def close_store(_app):
         await store.close()
 
+    async def run_periodic_store_cleanup(_app):
+        try:
+            while True:
+                result = await store.cleanup_inactive_data()
+                if result['deleted_user_ids'] or result['deleted_room_ids']:
+                    logger.info(
+                        'Periodic store cleanup removed stale data',
+                        extra={
+                            'deleted_user_ids': result['deleted_user_ids'],
+                            'deleted_room_ids': result['deleted_room_ids'],
+                        },
+                    )
+                await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Periodic store cleanup failed')
+
+    async def start_cleanup_task(_app):
+        app['store_cleanup_task'] = asyncio.create_task(run_periodic_store_cleanup(_app))
+
+    async def stop_cleanup_task(_app):
+        task = app.get('store_cleanup_task')
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    app.on_startup.append(start_cleanup_task)
+    app.on_cleanup.append(stop_cleanup_task)
     app.on_cleanup.append(close_push)
     app.on_cleanup.append(close_store)
     return app

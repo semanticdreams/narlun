@@ -8,14 +8,10 @@ import 'avatar_image.dart';
 import 'dialog_service.dart';
 import 'http.dart';
 import 'image_picker.dart';
-import 'install_prompt_actions.dart';
-import 'install_prompt_service.dart';
-import 'frontend_error_reporter.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'profile_form.dart';
-import 'push_notifications_service.dart';
 import 'session_actions.dart';
 
 enum _UnsavedProfileAction { save, discard }
@@ -35,8 +31,6 @@ class _ProfileViewState extends State<ProfileView> {
   bool _hasUnsavedChanges = false;
   bool _allowImmediatePop = false;
   bool _isResolvingPop = false;
-  bool _reportedProfileNotificationControls = false;
-  bool _reportedProfileInstallAction = false;
 
   Future<bool> _resolveUnsavedChanges() async {
     if (!_hasUnsavedChanges) {
@@ -117,59 +111,6 @@ class _ProfileViewState extends State<ProfileView> {
     setState(() {
       _allowImmediatePop = false;
     });
-  }
-
-  Future<void> _deleteAccount(BuildContext context) async {
-    final httpService = Provider.of<HttpService>(context, listen: false);
-    final resolvedDialogService =
-        widget.dialogService ?? locator<DialogService>();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete account?'),
-        content: const Text(
-          'This removes your account and avatar. Rooms that end up with no meaningful membership left may also disappear.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        await httpService.delete_account();
-        if (!context.mounted) {
-          return;
-        }
-        Provider.of<MeModel>(context, listen: false).reset();
-        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-      } on UnauthorizedResponse {
-        if (!context.mounted) {
-          return;
-        }
-        await expireSession(
-          context,
-          httpService: httpService,
-          description: 'Your session has ended. Please sign in again.',
-        );
-      } catch (error) {
-        await showActionErrorDialog(
-          resolvedDialogService,
-          title: 'Could not delete account',
-          error: error,
-          fallbackDescription:
-              'Your account could not be deleted right now. Try again.',
-        );
-      }
-    }
   }
 
   @override
@@ -278,126 +219,6 @@ class _ProfileViewState extends State<ProfileView> {
                         });
                       },
                     ),
-                  Consumer<PushNotificationsService>(
-                    builder: (context, pushService, child) {
-                      if (currentUser?.authenticated != true ||
-                          !pushService.isSupported) {
-                        return const SizedBox.shrink();
-                      }
-
-                      final statusMessage = pushService.statusMessage;
-                      final canShowAction =
-                          pushService.isConfigured || pushService.isSubscribed;
-                      if (canShowAction &&
-                          !_reportedProfileNotificationControls) {
-                        _reportedProfileNotificationControls = true;
-                        logFrontendDiagnostic(
-                          'profile_notification_controls_visible',
-                          'Profile screen displayed notification controls.',
-                          details: {
-                            'is_subscribed': pushService.isSubscribed,
-                            'is_configured': pushService.isConfigured,
-                            'permission_state':
-                                pushService.permissionState.name,
-                          },
-                        );
-                      }
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (canShowAction)
-                                OutlinedButton.icon(
-                                  onPressed: pushService.isBusy
-                                      ? null
-                                      : () async {
-                                          final resolvedDialogService =
-                                              widget.dialogService ??
-                                              locator<DialogService>();
-                                          try {
-                                            if (pushService.isSubscribed) {
-                                              await pushService
-                                                  .disableNotifications();
-                                            } else {
-                                              await pushService
-                                                  .enableNotifications();
-                                            }
-                                          } catch (error) {
-                                            await showActionErrorDialog(
-                                              resolvedDialogService,
-                                              title:
-                                                  'Could not update notifications',
-                                              error: error,
-                                              fallbackDescription:
-                                                  'Notification settings could not be updated right now.',
-                                            );
-                                          }
-                                        },
-                                  icon: Icon(
-                                    pushService.isSubscribed
-                                        ? Icons.notifications_off_outlined
-                                        : Icons.notifications_active_outlined,
-                                  ),
-                                  label: Text(
-                                    pushService.isSubscribed
-                                        ? 'Turn off notifications'
-                                        : 'Turn on notifications',
-                                  ),
-                                ),
-                              if (statusMessage != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Text(statusMessage),
-                                ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  Consumer<InstallPromptService>(
-                    builder: (context, installPromptService, child) {
-                      if (!installPromptService.isInstallAvailable) {
-                        return const SizedBox.shrink();
-                      }
-                      if (!_reportedProfileInstallAction) {
-                        _reportedProfileInstallAction = true;
-                        logFrontendDiagnostic(
-                          'profile_install_action_visible',
-                          'Profile screen displayed the install action.',
-                        );
-                      }
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              handleInstallRequest(
-                                context,
-                                installPromptService,
-                              );
-                            },
-                            icon: const Icon(
-                              Icons.download_for_offline_outlined,
-                            ),
-                            label: const Text('Install app'),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () => _deleteAccount(context),
-                      child: const Text('Delete account'),
-                    ),
-                  ),
                 ],
               ),
             );

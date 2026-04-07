@@ -23,6 +23,9 @@ String describePageTitle(Uri uri) {
     case '/profile':
       section = 'profile';
       break;
+    case '/settings':
+      section = 'settings';
+      break;
     case '/signin':
       section = 'sign in';
       break;
@@ -48,7 +51,7 @@ void setPageTitle(Uri uri, BuildContext context) {
   SystemChrome.setApplicationSwitcherDescription(
     ApplicationSwitcherDescription(
       label: title,
-      primaryColor: Theme.of(context).primaryColor.value,
+      primaryColor: Theme.of(context).primaryColor.toARGB32(),
     ),
   );
 }

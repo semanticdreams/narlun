@@ -54,27 +54,11 @@ class _FakeAppBarHttpService extends HttpService {
         client: _DummyHttpClient(),
       );
 
-  bool clearedLocalSession = false;
-  Object? signoutError;
   int submitFeedbackCalls = 0;
   String? lastFeedbackMessage;
   String? lastFeedbackRoute;
   String? lastFeedbackSource;
   bool? lastFeedbackSilentErrors;
-
-  @override
-  Future signout() async {
-    if (signoutError != null) {
-      await clearLocalSession();
-      throw signoutError!;
-    }
-    await clearLocalSession();
-  }
-
-  @override
-  Future<void> clearLocalSession() async {
-    clearedLocalSession = true;
-  }
 
   @override
   // ignore: non_constant_identifier_names
@@ -104,13 +88,8 @@ void main() {
     await locator.reset();
   });
 
-  testWidgets('expired session during sign out resets the app cleanly', (
-    tester,
-  ) async {
-    final navigatorKey = GlobalKey<NavigatorState>();
-    locator<DialogService>().attachNavigator(navigatorKey);
-    final httpService = _FakeAppBarHttpService()
-      ..signoutError = UnauthorizedResponse();
+  testWidgets('opens settings from the avatar menu', (tester) async {
+    final httpService = _FakeAppBarHttpService();
     final meModel = MeModel()
       ..setData(
         const SessionUser(authenticated: true, id: 1, username: 'alice'),
@@ -126,14 +105,13 @@ void main() {
           ChangeNotifierProvider<MeModel>.value(value: meModel),
         ],
         child: MaterialApp(
-          navigatorKey: navigatorKey,
           initialRoute: '/home',
           routes: {
-            '/': (_) => const Scaffold(body: Text('Welcome landing')),
             '/home': (_) => Scaffold(
               appBar: AppBar(actions: const [AppBarAvatar()]),
               body: const Text('Home'),
             ),
+            '/settings': (_) => const Scaffold(body: Text('Settings screen')),
           },
         ),
       ),
@@ -142,16 +120,10 @@ void main() {
 
     await tester.tap(find.byTooltip('Account menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign out'));
+    await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Session ended'), findsOneWidget);
-    await tester.tap(find.text('OK'));
-    await tester.pumpAndSettle();
-
-    expect(httpService.clearedLocalSession, isTrue);
-    expect(meModel.data?.authenticated, isFalse);
-    expect(find.text('Welcome landing'), findsOneWidget);
+    expect(find.text('Settings screen'), findsOneWidget);
   });
 
   testWidgets('submits feedback from the avatar menu', (tester) async {

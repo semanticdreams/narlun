@@ -9,6 +9,7 @@ import 'home_view.dart';
 import 'invite_accept_view.dart';
 import 'invite_qr_view.dart';
 import 'profile_view.dart';
+import 'settings_view.dart';
 import 'frontend_error_reporter.dart';
 import 'me_model.dart';
 import 'route_utils.dart';
@@ -96,6 +97,9 @@ class MyApp extends StatelessWidget {
               break;
             case '/profile':
               pageView = const ProfileView();
+              break;
+            case '/settings':
+              pageView = const SettingsView();
               break;
             case '/signin':
               pageView = const SigninView();

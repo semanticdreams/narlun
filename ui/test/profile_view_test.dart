@@ -249,7 +249,7 @@ void main() {
     );
   }
 
-  testWidgets('shows an install action in profile when install is available', (
+  testWidgets('profile keeps settings actions out of the profile form', (
     tester,
   ) async {
     final installPromptService = FakeInstallPromptService(available: true);
@@ -265,14 +265,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Install app'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Install app'));
-    await tester.tap(find.text('Install app'));
-    await tester.pumpAndSettle();
-
-    expect(installPromptService.requestInstallCalls, 1);
-    expect(find.text('Narlun is installing.'), findsOneWidget);
+    expect(find.text('Install app'), findsNothing);
+    expect(find.text('Turn on notifications'), findsNothing);
+    expect(find.text('Sign out'), findsNothing);
+    expect(find.text('Delete account'), findsNothing);
   });
 
   testWidgets('shows a generic upload error when picture preparation fails', (
@@ -324,7 +320,7 @@ void main() {
     expect(dialogService.lastDescription, 'Upload failed. Try again later.');
   });
 
-  testWidgets('shows notification controls in profile when supported', (
+  testWidgets('does not show settings actions inline in profile', (
     tester,
   ) async {
     final pushNotificationsService = FakePushNotificationsService();
@@ -339,16 +335,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Turn on notifications'), findsOneWidget);
-    expect(
-      find.text('Notifications are off for this browser.'),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.text('Turn on notifications'));
-    await tester.pumpAndSettle();
-
-    expect(pushNotificationsService.enableCalls, 1);
+    expect(find.text('Turn on notifications'), findsNothing);
+    expect(find.text('Sign out'), findsNothing);
+    expect(find.text('Delete account'), findsNothing);
   });
 
   testWidgets('profile app bar avatar menu still submits feedback', (

@@ -75,6 +75,7 @@ void main() {
       'narlun | room',
     );
     expect(describePageTitle(Uri.parse('/profile')), 'narlun | profile');
+    expect(describePageTitle(Uri.parse('/settings')), 'narlun | settings');
     expect(describePageTitle(Uri.parse('/signin')), 'narlun | sign in');
     expect(describePageTitle(Uri.parse('/signup')), 'narlun | sign up');
     expect(describePageTitle(Uri.parse('/invite')), 'narlun | invite');

@@ -110,6 +110,53 @@ async def test_guest_signout_deletes_account(cli):
     assert body['code'] == 5
 
 
+async def test_install_session_claim_sets_auth_cookie_and_is_single_use(cli):
+    created = await signup(cli)
+
+    create_response = await cli.post(
+        '/api/users/install-session',
+        json={'next_route': '/rooms?open_room=7'},
+        headers=auth_headers(created['jwt']),
+    )
+    assert create_response.status == 200
+    create_body = await create_response.json()
+    assert create_body['claim_url'].startswith('http://')
+    assert 'install_session=' in create_body['claim_url']
+    assert 'next=/rooms?open_room%3D7' in create_body['claim_url']
+
+    token = create_body['claim_url'].split('install_session=', 1)[1].split('&', 1)[0]
+    claim_response = await cli.post(
+        '/api/users/claim-install-session',
+        json={'token': token},
+    )
+    assert claim_response.status == 200
+    assert claim_response.cookies['jwt'].value
+    claim_body = await claim_response.json()
+    assert claim_body['authenticated'] is True
+    assert claim_body['id'] == created['user']['id']
+
+    second_claim_response = await cli.post(
+        '/api/users/claim-install-session',
+        json={'token': token},
+    )
+    assert second_claim_response.status == 400
+    second_claim_body = await second_claim_response.json()
+    assert second_claim_body['code'] == 14
+
+
+async def test_install_session_rejects_invalid_next_route(cli):
+    created = await signup(cli)
+
+    response = await cli.post(
+        '/api/users/install-session',
+        json={'next_route': 'https://evil.example/test'},
+        headers=auth_headers(created['jwt']),
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert 'next=' not in body['claim_url']
+
+
 async def test_avatar_upload_and_fetch(cli):
     created = await signup(cli)
     avatar = create_avatar_bytes()

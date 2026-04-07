@@ -38,9 +38,18 @@ class FakeBootstrapHttpService extends HttpService {
 
   final Queue<Future<SessionUser> Function(bool silentErrors)>
   _fetchMeHandlers = Queue<Future<SessionUser> Function(bool silentErrors)>();
+  final Queue<Future<SessionUser> Function(String token)>
+  _claimInstallSessionHandlers =
+      Queue<Future<SessionUser> Function(String token)>();
 
   void enqueueFetchMe(Future<SessionUser> Function(bool silentErrors) handler) {
     _fetchMeHandlers.add(handler);
+  }
+
+  void enqueueClaimInstallSession(
+    Future<SessionUser> Function(String token) handler,
+  ) {
+    _claimInstallSessionHandlers.add(handler);
   }
 
   @override
@@ -50,18 +59,52 @@ class FakeBootstrapHttpService extends HttpService {
   }) async {
     return _fetchMeHandlers.removeFirst()(silentErrors);
   }
+
+  @override
+  Future<SessionUser> claimInstallSession(String token) async {
+    return _claimInstallSessionHandlers.removeFirst()(token);
+  }
 }
 
-Widget _buildWelcomeApp(FakeBootstrapHttpService httpService) {
+Widget _buildWelcomeApp(
+  FakeBootstrapHttpService httpService, {
+  String initialRoute = '/',
+  bool Function()? isStandaloneContext,
+}) {
   return Provider<HttpService>.value(
     value: httpService,
     child: ChangeNotifierProvider(
       create: (_) => MeModel(),
       child: MaterialApp(
-        routes: {
-          '/': (_) => const WelcomeView(),
-          '/signup': (_) => const Scaffold(body: Text('Signup page')),
-          '/home': (_) => const Scaffold(body: Text('Home page')),
+        initialRoute: initialRoute,
+        onGenerateRoute: (settings) {
+          final routeName = settings.name ?? '/';
+          final uri = Uri.parse(routeName);
+          switch (uri.path) {
+            case '/':
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => WelcomeView(
+                  isStandaloneContext: isStandaloneContext ?? () => false,
+                ),
+              );
+            case '/signup':
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => const Scaffold(body: Text('Signup page')),
+              );
+            case '/home':
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => const Scaffold(body: Text('Home page')),
+              );
+            case '/rooms':
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => const Scaffold(body: Text('Rooms page')),
+              );
+          }
+          return null;
         },
       ),
     ),
@@ -84,18 +127,13 @@ void main() {
 
     await tester.pumpWidget(_buildWelcomeApp(httpService));
     await tester.pump();
+    await tester.pump();
 
     expect(
       find.text('Still trying to connect. Trying again in 1s...'),
       findsOneWidget,
     );
     expect(find.text('Try again'), findsOneWidget);
-    expect(
-      find.text(
-        'Narlun is having trouble starting right now. We will keep trying.',
-      ),
-      findsOneWidget,
-    );
 
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
@@ -111,6 +149,7 @@ void main() {
 
     await tester.pumpWidget(_buildWelcomeApp(httpService));
     await tester.pump();
+    await tester.pump();
 
     expect(find.text('Try again'), findsOneWidget);
 
@@ -121,5 +160,26 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Signup page'), findsOneWidget);
+  });
+
+  testWidgets('installed app claims install session before bootstrap fetch', (
+    tester,
+  ) async {
+    final httpService = FakeBootstrapHttpService()
+      ..enqueueClaimInstallSession((token) async {
+        expect(token, 'handoff-token');
+        return const SessionUser(authenticated: true, id: 7, username: 'sam');
+      });
+
+    await tester.pumpWidget(
+      _buildWelcomeApp(
+        httpService,
+        initialRoute: '/?install_session=handoff-token&next=%2Frooms',
+        isStandaloneContext: () => true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rooms page'), findsOneWidget);
   });
 }

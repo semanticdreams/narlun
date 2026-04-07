@@ -19,6 +19,6 @@ class _UnavailableInstallPromptService extends InstallPromptService {
   }
 }
 
-InstallPromptService createInstallPromptService() {
+InstallPromptService createInstallPromptService({String? apiBaseUrl}) {
   return _UnavailableInstallPromptService();
 }

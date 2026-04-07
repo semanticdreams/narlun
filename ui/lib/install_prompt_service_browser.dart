@@ -1,25 +1,24 @@
 // ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
 
+import 'package:http/http.dart' as http;
+
 import 'frontend_error_reporter.dart';
+import 'http_client_browser.dart' as session_http;
 import 'install_prompt_service.dart';
 import 'install_suggestion_rules.dart';
+import 'models.dart';
 import 'web_install_state_browser.dart';
 
 const _installSuggestionDismissedKey = 'narlun_install_suggestion_dismissed';
 
 class BrowserInstallPromptService extends InstallPromptService {
-  late final html.EventListener _beforeInstallPromptListener;
-  late final html.EventListener _appInstalledListener;
-  Timer? _availabilityProbeTimer;
-  bool _isInstalled = false;
-  bool _promptObserved = false;
-  bool _suggestionDismissed = false;
-
-  BrowserInstallPromptService() {
+  BrowserInstallPromptService({required this.apiBaseUrl})
+    : _client = session_http.createHttpClient() {
     _isInstalled = _detectInstalled();
     _promptObserved = _detectPromptObserved();
     _suggestionDismissed = _readSuggestionDismissed();
@@ -38,6 +37,7 @@ class BrowserInstallPromptService extends InstallPromptService {
       _isInstalled = true;
       _log('app_installed', 'Browser reported the app was installed.');
       notifyListeners();
+      unawaited(_maybePrepareInstallSessionHandoff());
     };
     html.window.addEventListener(
       'beforeinstallprompt',
@@ -46,6 +46,17 @@ class BrowserInstallPromptService extends InstallPromptService {
     html.window.addEventListener('appinstalled', _appInstalledListener);
     _scheduleAvailabilityProbe();
   }
+
+  final String apiBaseUrl;
+  final http.Client _client;
+  late final html.EventListener _beforeInstallPromptListener;
+  late final html.EventListener _appInstalledListener;
+  Timer? _availabilityProbeTimer;
+  bool _isInstalled = false;
+  bool _promptObserved = false;
+  bool _suggestionDismissed = false;
+  int? _currentUserId;
+  String? _installSessionHandoffUrl;
 
   @override
   bool get isInstallAvailable => false;
@@ -61,6 +72,9 @@ class BrowserInstallPromptService extends InstallPromptService {
     isSecureContext: html.window.isSecureContext == true,
     serviceWorkerSupported: html.window.navigator.serviceWorker != null,
   );
+
+  @override
+  String? get installSessionHandoffUrl => _installSessionHandoffUrl;
 
   @override
   void dismissSuggestion() {
@@ -83,6 +97,49 @@ class BrowserInstallPromptService extends InstallPromptService {
       details: _installStateDetails(),
     );
     return InstallPromptOutcome.unavailable;
+  }
+
+  @override
+  Future<void> syncSession(SessionUser? user) async {
+    final nextUserId = user?.authenticated == true && user?.id != null
+        ? user!.id
+        : null;
+    if (_currentUserId == nextUserId) {
+      return;
+    }
+    _currentUserId = nextUserId;
+    if (_currentUserId == null) {
+      _installSessionHandoffUrl = null;
+      notifyListeners();
+      return;
+    }
+    await _maybePrepareInstallSessionHandoff();
+  }
+
+  @override
+  Future<void> openInstallSessionHandoff() async {
+    final url = _installSessionHandoffUrl;
+    if (url == null || url.isEmpty) {
+      return;
+    }
+    _log(
+      'session_handoff_opened',
+      'Attempted to open the installed app handoff URL.',
+    );
+    html.window.open(url, '_blank');
+  }
+
+  @override
+  void dismissInstallSessionHandoff() {
+    if (_installSessionHandoffUrl == null) {
+      return;
+    }
+    _installSessionHandoffUrl = null;
+    _log(
+      'session_handoff_dismissed',
+      'Dismissed the installed app handoff prompt.',
+    );
+    notifyListeners();
   }
 
   bool _detectInstalled() {
@@ -136,6 +193,56 @@ class BrowserInstallPromptService extends InstallPromptService {
     notifyListeners();
   }
 
+  Future<void> _maybePrepareInstallSessionHandoff() async {
+    if (_currentUserId == null ||
+        !_isInstalled ||
+        isStandaloneWebAppContext() ||
+        _installSessionHandoffUrl != null) {
+      return;
+    }
+    final currentLocation = Uri.base;
+    final nextRoute = currentLocation.path.isEmpty
+        ? '/'
+        : Uri(
+            path: currentLocation.path,
+            queryParameters: currentLocation.queryParameters.isEmpty
+                ? null
+                : currentLocation.queryParameters,
+          ).toString();
+    try {
+      final response = await _client.post(
+        Uri.parse('$apiBaseUrl/users/install-session'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'next_route': nextRoute}),
+      );
+      if (response.statusCode != 200) {
+        _log(
+          'session_handoff_prepare_failed',
+          'Server did not accept the installed app handoff request.',
+          details: {'status_code': response.statusCode},
+        );
+        return;
+      }
+      final claimUrl = jsonDecode(response.body)['claim_url'];
+      if (claimUrl is! String || claimUrl.isEmpty) {
+        return;
+      }
+      _installSessionHandoffUrl = claimUrl;
+      _log(
+        'session_handoff_prepared',
+        'Prepared an installed app session handoff URL.',
+        details: {'next_route': nextRoute},
+      );
+      notifyListeners();
+    } catch (error) {
+      _log(
+        'session_handoff_prepare_failed',
+        'Preparing the installed app handoff URL failed.',
+        details: {'error': error.toString(), 'next_route': nextRoute},
+      );
+    }
+  }
+
   Map<String, Object?> _installStateDetails({Map<String, Object?>? extra}) {
     final standaloneMediaQuery = html.window.matchMedia(
       '(display-mode: standalone)',
@@ -167,6 +274,7 @@ class BrowserInstallPromptService extends InstallPromptService {
   @override
   void dispose() {
     _availabilityProbeTimer?.cancel();
+    _client.close();
     html.window.removeEventListener(
       'beforeinstallprompt',
       _beforeInstallPromptListener,
@@ -176,6 +284,6 @@ class BrowserInstallPromptService extends InstallPromptService {
   }
 }
 
-InstallPromptService createInstallPromptService() {
-  return BrowserInstallPromptService();
+InstallPromptService createInstallPromptService({String? apiBaseUrl}) {
+  return BrowserInstallPromptService(apiBaseUrl: apiBaseUrl ?? '');
 }

@@ -330,6 +330,21 @@ class HttpService {
     return body;
   }
 
+  Future<SessionUser> claimInstallSession(String token) async {
+    final resp = await client.post(
+      Uri.parse('$baseurl/users/claim-install-session'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'token': token}),
+    );
+    final body = SessionUser.fromJson(
+      jsonDecode(resp.body) as Map<String, dynamic>,
+    );
+    if (body.authenticated) {
+      await websocketService.reconnect();
+    }
+    return body;
+  }
+
   Future<SessionUser> update_profile(data) async {
     final resp = await client.post(
       Uri.parse(baseurl + '/users/update-profile'),

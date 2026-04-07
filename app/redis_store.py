@@ -19,6 +19,7 @@ NEARBY_ACTIVITY_WINDOW_SECONDS = 2 * 60 * 60
 NEARBY_ACTIVITY_WINDOW_MILLISECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS * 1000
 INACTIVE_USER_TTL_SECONDS = 4 * 7 * 24 * 60 * 60
 INVITE_TTL_SECONDS = 24 * 60 * 60
+INSTALL_SESSION_TTL_SECONDS = 10 * 60
 JOIN_REQUEST_TTL_SECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS
 REJECTED_JOIN_REQUEST_TTL_SECONDS = 24 * 60 * 60
 WEBSOCKET_PRESENCE_TTL_SECONDS = 45
@@ -175,6 +176,9 @@ class RedisStore:
 
     def _join_request_key(self, room_id, user_id):
         return f'join_request:{int(room_id)}:{int(user_id)}'
+
+    def _install_session_key(self, token):
+        return f'install_session:{token}'
 
     def _username_index_key(self, username):
         return f'idx:username:{normalize_username(username)}'
@@ -1041,6 +1045,49 @@ class RedisStore:
             'expires_at': ts_to_iso(payload['created_at'] + INVITE_TTL_SECONDS),
             'room_id': payload.get('room_id'),
         }
+
+    async def create_install_session(self, user_id):
+        user_id = int(user_id)
+        if await self._load_user_hash(user_id) is None:
+            raise UserNotFound()
+
+        token = secrets.token_urlsafe(18)
+        await self.redis.set(
+            self._install_session_key(token),
+            json.dumps({
+                'user_id': user_id,
+                'created_at': now_ts(),
+            }),
+            ex=INSTALL_SESSION_TTL_SECONDS,
+        )
+        return {
+            'token': token,
+            'expires_at': ts_to_iso(now_ts() + INSTALL_SESSION_TTL_SECONDS),
+        }
+
+    async def consume_install_session(self, token):
+        key = self._install_session_key(token)
+        install_session_json = await self.redis.eval(
+            """
+            local value = redis.call('GET', KEYS[1])
+            if value then
+                redis.call('DEL', KEYS[1])
+            end
+            return value
+            """,
+            1,
+            key,
+        )
+        if install_session_json is None:
+            return None
+
+        try:
+            install_session = json.loads(install_session_json)
+            user_id = int(install_session['user_id'])
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            return None
+
+        return await self.get_authenticated_user(user_id)
 
     async def accept_invite(self, user_id, token):
         invite_json = await self.redis.get(self._invite_key(token))

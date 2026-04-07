@@ -78,6 +78,11 @@ class FeedbackMessageTooLongError(InvalidUsage):
     message = f'Feedback message must be {MAX_FEEDBACK_MESSAGE_CHARS} characters or fewer'
 
 
+class InvalidInstallSessionError(InvalidUsage):
+    code = 14
+    message = 'Invalid install session'
+
+
 def _coerce_uploaded_file_bytes(payload: Any) -> bytes:
     if isinstance(payload, memoryview):
         return payload.tobytes()
@@ -109,6 +114,17 @@ def issue_auth_cookie(req, resp, user):
     )
     resp.set_cookie('jwt', token, path='/api', httponly=True, samesite='Lax', secure=is_request_secure(req))
     return resp
+
+
+def _sanitize_install_next_route(value):
+    if not isinstance(value, str):
+        return None
+    route = value.strip()
+    if not route or not route.startswith('/'):
+        return None
+    if route.startswith('//'):
+        return None
+    return route
 
 
 async def publish_public_profile_updates(req, user_id, *, include_room_nearby_viewers=False):
@@ -214,6 +230,46 @@ async def get_push_config(req):
         extra={'user_id': req.user['id'], 'push_enabled': req.push.enabled},
     )
     return jsonify(req.push.client_config())
+
+
+@routes.post('/install-session')
+@authenticated
+async def create_install_session(req):
+    install_session = await req.store.create_install_session(req.user['id'])
+    next_route = _sanitize_install_next_route(req.data.get('next_route'))
+    claim_url = req.url.with_path('/').with_query({
+        'install_session': install_session['token'],
+        **({'next': next_route} if next_route is not None else {}),
+    })
+    logger.info(
+        'Created install session handoff',
+        extra={
+            'user_id': req.user['id'],
+            'next_route': next_route,
+            'expires_at': install_session['expires_at'],
+        },
+    )
+    return jsonify({
+        'claim_url': str(claim_url),
+        'expires_at': install_session['expires_at'],
+    })
+
+
+@routes.post('/claim-install-session')
+async def claim_install_session(req):
+    token = req.data.get('token')
+    if not isinstance(token, str) or not token.strip():
+        raise InvalidInstallSessionError()
+
+    user = await req.store.consume_install_session(token.strip())
+    if user is None:
+        raise InvalidInstallSessionError()
+
+    logger.info(
+        'Claimed install session handoff',
+        extra={'user_id': user['id']},
+    )
+    return issue_auth_cookie(req, jsonify(user), user)
 
 
 @routes.post('/push-subscriptions')

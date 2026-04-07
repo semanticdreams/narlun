@@ -4,11 +4,6 @@ import 'dart:html' as html;
 import 'dart:js_util' as js_util;
 
 bool detectInstalledWebApp() {
-  final standaloneMediaQuery = html.window.matchMedia(
-    '(display-mode: standalone)',
-  );
-  final navigatorStandalone =
-      js_util.getProperty<bool?>(html.window.navigator, 'standalone') == true;
   final bootstrapInstalled =
       js_util.getProperty<Object?>(
             html.window,
@@ -20,7 +15,14 @@ bool detectInstalledWebApp() {
         '__narlunInstalledFromBootstrap',
         const [],
       );
-  return standaloneMediaQuery.matches ||
-      navigatorStandalone ||
-      bootstrapInstalled;
+  return isStandaloneWebAppContext() || bootstrapInstalled;
+}
+
+bool isStandaloneWebAppContext() {
+  final standaloneMediaQuery = html.window.matchMedia(
+    '(display-mode: standalone)',
+  );
+  final navigatorStandalone =
+      js_util.getProperty<bool?>(html.window.navigator, 'standalone') == true;
+  return standaloneMediaQuery.matches || navigatorStandalone;
 }

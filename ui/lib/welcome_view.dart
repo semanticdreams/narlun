@@ -9,9 +9,15 @@ import 'me_model.dart';
 import 'models.dart';
 import 'narlun_wordmark.dart';
 import 'route_utils.dart';
+import 'web_install_state.dart';
 
 class WelcomeView extends StatefulWidget {
-  const WelcomeView({super.key});
+  const WelcomeView({
+    super.key,
+    this.isStandaloneContext = isStandaloneWebAppContext,
+  });
+
+  final bool Function() isStandaloneContext;
 
   @override
   State<WelcomeView> createState() => _WelcomeState();
@@ -22,6 +28,7 @@ class _WelcomeState extends State<WelcomeView> {
   Timer? _retryTimer;
   bool _loading = true;
   int _attempt = 0;
+  String? _attemptedInstallSessionToken;
   String _statusMessage = 'Getting Narlun ready...';
   String? _detailMessage;
 
@@ -87,6 +94,26 @@ class _WelcomeState extends State<WelcomeView> {
     });
 
     try {
+      final routeName = ModalRoute.of(context)?.settings.name;
+      final routeUri = routeName == null ? null : Uri.parse(routeName);
+      final installSessionToken = routeUri?.queryParameters['install_session'];
+      if (widget.isStandaloneContext() &&
+          installSessionToken != null &&
+          installSessionToken.isNotEmpty &&
+          _attemptedInstallSessionToken != installSessionToken) {
+        _attemptedInstallSessionToken = installSessionToken;
+        final claimedUser = await httpService.claimInstallSession(
+          installSessionToken,
+        );
+        if (!mounted) {
+          return;
+        }
+        if (claimedUser.authenticated) {
+          await _navigateAfterBootstrap(claimedUser);
+          return;
+        }
+      }
+
       final me = await httpService.fetch_me(
         silentErrors: true,
         reconnectWebsocket: false,

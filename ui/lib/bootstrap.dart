@@ -10,6 +10,7 @@ import 'config.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'install_prompt_service.dart';
+import 'install_prompt_session_bridge.dart';
 import 'invite_qr_cache.dart';
 import 'location_service.dart';
 import 'locator.dart';
@@ -86,7 +87,8 @@ Widget buildNarlunApp({SessionUser? initialSessionUser}) {
       Provider<RoomMessagesCache>(create: (_) => RoomMessagesCache()),
       ChangeNotifierProvider<InstallPromptService>(
         lazy: false,
-        create: (_) => createInstallPromptService(),
+        create: (_) =>
+            createInstallPromptService(apiBaseUrl: Environment().config.apiUrl),
       ),
       ChangeNotifierProvider<AppUpdateService>(
         lazy: false,
@@ -111,10 +113,12 @@ Widget buildNarlunApp({SessionUser? initialSessionUser}) {
       ChangeNotifierProvider<MeModel>.value(value: meModel),
     ],
     child: FeedSessionBridge(
-      child: PushNotificationsSessionBridge(
-        child: MyApp(
-          errorReporter: errorReporter,
-          theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+      child: InstallPromptSessionBridge(
+        child: PushNotificationsSessionBridge(
+          child: MyApp(
+            errorReporter: errorReporter,
+            theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+          ),
         ),
       ),
     ),

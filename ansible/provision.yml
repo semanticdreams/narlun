@@ -111,6 +111,7 @@
         - { path: "{{ config_dir }}", mode: "0755" }
         - { path: "{{ log_dir }}", mode: "0755" }
         - { path: "{{ web_root_dir }}", mode: "0755" }
+        - { path: "{{ nginx_app_log_dir }}", owner: root, group: "{{ nginx_log_group }}", mode: "0755" }
         - { path: "{{ nginx_acme_webroot }}", owner: root, group: root, mode: "0755" }
 
     - name: Ensure application log files exist
@@ -199,6 +200,35 @@
         owner: "{{ app_user }}"
         group: "{{ app_group }}"
         mode: "0640"
+
+    - name: Ensure journald drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install journald retention policy
+      ansible.builtin.template:
+        src: templates/narlun-journald.conf.j2
+        dest: /etc/systemd/journald.conf.d/90-{{ app_name }}-retention.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Restart journald
+        - Vacuum journald
+
+    - name: Install application logrotate policy
+      ansible.builtin.template:
+        src: templates/narlun-logrotate.conf.j2
+        dest: /etc/logrotate.d/{{ app_name }}
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Rotate retained logs
 
     - name: Install systemd service
       ansible.builtin.template:
@@ -299,6 +329,21 @@
       ansible.builtin.service:
         name: redis-server
         state: restarted
+
+    - name: Restart journald
+      ansible.builtin.service:
+        name: systemd-journald
+        state: restarted
+
+    - name: Vacuum journald
+      ansible.builtin.command:
+        cmd: journalctl --vacuum-time={{ journal_max_retention }}
+      changed_when: false
+
+    - name: Rotate retained logs
+      ansible.builtin.command:
+        cmd: logrotate -f /etc/logrotate.d/{{ app_name }}
+      changed_when: false
 
     - name: Reload systemd
       ansible.builtin.systemd:

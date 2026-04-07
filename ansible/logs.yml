@@ -5,11 +5,23 @@
   vars:
     local_log_root: "{{ lookup('ansible.builtin.env', 'NARLUN_LOG_DOWNLOAD_DIR') | default((playbook_dir, '..', 'data', 'logs') | path_join, true) }}"
     log_since_effective: "{{ log_since | default('24 hours ago', true) }}"
-    file_logs_to_download:
-      - "{{ frontend_error_log_path }}"
-      - "{{ feedback_log_path }}"
-      - "{{ nginx_access_log_path }}"
-      - "{{ nginx_error_log_path }}"
+    file_log_sets:
+      - dir: "{{ frontend_error_log_path | dirname }}"
+        patterns:
+          - "{{ frontend_error_log_path | basename }}"
+          - "{{ frontend_error_log_path | basename }}-*"
+          - "{{ frontend_error_log_path | basename }}.*"
+          - "{{ feedback_log_path | basename }}"
+          - "{{ feedback_log_path | basename }}-*"
+          - "{{ feedback_log_path | basename }}.*"
+      - dir: "{{ nginx_access_log_path | dirname }}"
+        patterns:
+          - "{{ nginx_access_log_path | basename }}"
+          - "{{ nginx_access_log_path | basename }}-*"
+          - "{{ nginx_access_log_path | basename }}.*"
+          - "{{ nginx_error_log_path | basename }}"
+          - "{{ nginx_error_log_path | basename }}-*"
+          - "{{ nginx_error_log_path | basename }}.*"
 
   pre_tasks:
     - name: Set log download paths for this run
@@ -54,25 +66,27 @@
             dest: "{{ local_log_dir }}/"
             flat: true
 
-        - name: Check which file-backed logs exist
-          ansible.builtin.stat:
-            path: "{{ item }}"
-          loop: "{{ file_logs_to_download }}"
-          register: file_log_stats
+        - name: Find retained file-backed logs
+          ansible.builtin.find:
+            paths: "{{ item.dir }}"
+            patterns: "{{ item.patterns }}"
+            file_type: file
+            recurse: false
+          loop: "{{ file_log_sets }}"
+          register: file_log_finds
 
         - name: Download file-backed logs
           ansible.builtin.fetch:
-            src: "{{ item.item }}"
+            src: "{{ item.path }}"
             dest: "{{ local_log_dir }}/"
             flat: true
-          loop: "{{ file_log_stats.results }}"
-          when: item.stat.exists
+          loop: "{{ file_log_finds.results | map(attribute='files') | flatten | sort(attribute='path') }}"
 
         - name: Report missing file-backed logs
           ansible.builtin.debug:
-            msg: "Skipping missing log file: {{ item.item }}"
-          loop: "{{ file_log_stats.results }}"
-          when: not item.stat.exists
+            msg: "No file-backed logs matched in {{ item.item.dir }}"
+          loop: "{{ file_log_finds.results }}"
+          when: item.matched | default(0) == 0
 
         - name: Report local download path
           ansible.builtin.debug:

@@ -6,8 +6,8 @@ server {
     server_name {{ nginx_server_name }};
     client_max_body_size {{ nginx_client_max_body_size }};
 
-    access_log {{ nginx_log_dir }}/{{ app_name }}.access.log;
-    error_log {{ nginx_log_dir }}/{{ app_name }}.error.log;
+    access_log {{ nginx_access_log_path }};
+    error_log {{ nginx_error_log_path }};
 
     location /.well-known/acme-challenge/ {
         root {{ nginx_acme_webroot }};
@@ -76,8 +76,8 @@ server {
     root {{ web_root_dir }};
     index index.html;
 
-    access_log {{ nginx_log_dir }}/{{ app_name }}.access.log;
-    error_log {{ nginx_log_dir }}/{{ app_name }}.error.log;
+    access_log {{ nginx_access_log_path }};
+    error_log {{ nginx_error_log_path }};
 
     location /.well-known/acme-challenge/ {
         root {{ nginx_acme_webroot }};
@@ -131,8 +131,8 @@ server {
     root {{ web_root_dir }};
     index index.html;
 
-    access_log {{ nginx_log_dir }}/{{ app_name }}.access.log;
-    error_log {{ nginx_log_dir }}/{{ app_name }}.error.log;
+    access_log {{ nginx_access_log_path }};
+    error_log {{ nginx_error_log_path }};
 
     location /.well-known/acme-challenge/ {
         root {{ nginx_acme_webroot }};

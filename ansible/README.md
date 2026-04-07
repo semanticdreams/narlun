@@ -94,18 +94,23 @@ the `systemd` journal for `narlun-backend`. Frontend client errors are written
 to `/home/narlun/log/frontend-errors.jsonl`, user feedback is written to
 `/home/narlun/log/feedback.jsonl`, and nginx writes to:
 
-- `/var/log/nginx/narlun.access.log`
-- `/var/log/nginx/narlun.error.log`
+- `/var/log/nginx/narlun/access.log`
+- `/var/log/nginx/narlun/error.log`
 
-To download a local bundle of current logs from the VPS into `data/logs/`:
+Provisioning installs a 7-day retention policy for all of the above. Backend
+journal logs are capped through a `journald` drop-in, frontend error and
+feedback files rotate daily with `logrotate`, and nginx log rotation is
+narrowed to the same 7-day window.
+
+To download a local bundle of retained logs from the VPS into `data/logs/`:
 
 ```bash
 make logs
 ```
 
 That exports the backend journal from the last 24 hours into a file and also
-downloads the frontend error log, user feedback log, and the active nginx
-access/error logs.
+downloads the retained frontend error, feedback, and nginx access/error log
+files that are still on disk.
 
 To change the journal window:
 

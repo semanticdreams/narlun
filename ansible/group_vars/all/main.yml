@@ -10,6 +10,11 @@ web_root_dir: "/var/www/{{ app_name }}"
 backend_service_name: "{{ app_name }}-backend"
 backend_bind_host: 127.0.0.1
 backend_bind_port: 3000
+log_retention_days: 7
+logrotate_maxsize: 100M
+journal_max_retention: "{{ log_retention_days }}day"
+journal_max_use: 512M
+journal_keep_free: 1G
 
 nginx_server_name: narlun.com
 nginx_listen_port: 80
@@ -34,8 +39,11 @@ nginx_ssl_certificate: "{{ letsencrypt_fullchain_path if nginx_use_letsencrypt e
 nginx_ssl_certificate_key: "{{ letsencrypt_privkey_path if nginx_use_letsencrypt else nginx_fallback_certificate_key }}"
 nginx_selfsigned_subject: "/CN={{ nginx_server_name }}"
 nginx_log_dir: /var/log/nginx
-nginx_access_log_path: "{{ nginx_log_dir }}/{{ app_name }}.access.log"
-nginx_error_log_path: "{{ nginx_log_dir }}/{{ app_name }}.error.log"
+nginx_app_log_dir: "{{ nginx_log_dir }}/{{ app_name }}"
+nginx_access_log_path: "{{ nginx_app_log_dir }}/access.log"
+nginx_error_log_path: "{{ nginx_app_log_dir }}/error.log"
+nginx_runtime_user: www-data
+nginx_log_group: adm
 public_scheme: "{{ 'https' if nginx_enable_https else 'http' }}"
 public_host: "{{ ansible_host | default(inventory_hostname) }}"
 domain: "{{ public_scheme }}://{{ nginx_server_name if nginx_server_name not in ['_', '', 'localhost'] else public_host }}"
@@ -72,6 +80,7 @@ provision_apt_packages:
   - ca-certificates
   - cargo
   - curl
+  - logrotate
   - libcairo2
   - libcairo2-dev
   - libffi-dev

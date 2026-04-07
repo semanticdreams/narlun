@@ -1,0 +1,32 @@
+# Managed by Ansible
+{{ frontend_error_log_path }} {{ feedback_log_path }} {
+    daily
+    rotate 30
+    maxage {{ log_retention_days }}
+    maxsize {{ logrotate_maxsize }}
+    dateext
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 {{ app_user }} {{ app_group }}
+}
+
+{{ nginx_access_log_path }} {{ nginx_error_log_path }} {
+    daily
+    rotate 30
+    maxage {{ log_retention_days }}
+    maxsize {{ logrotate_maxsize }}
+    dateext
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 {{ nginx_runtime_user }} {{ nginx_log_group }}
+    sharedscripts
+    postrotate
+        if [ -f /run/nginx.pid ]; then
+            kill -USR1 "$(cat /run/nginx.pid)"
+        fi
+    endscript
+}

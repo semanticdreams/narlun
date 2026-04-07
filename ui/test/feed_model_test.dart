@@ -209,7 +209,6 @@ void main() {
       roomsCompleter.complete([
         RoomSummary(
           id: 5,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),

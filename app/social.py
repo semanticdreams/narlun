@@ -144,7 +144,7 @@ async def create_room(req):
         req.data.get('user_ids', []),
     )
     logger.info(
-        'Created group room',
+        'Created room',
         extra=request_log_context(
             req,
             room_id=room['id'],

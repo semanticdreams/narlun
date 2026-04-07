@@ -110,7 +110,6 @@ class MessagePreview {
 
 class RoomSummary {
   final int id;
-  final bool isGroup;
   final String? name;
   final String? picture;
   final DateTime updatedAt;
@@ -121,7 +120,6 @@ class RoomSummary {
 
   const RoomSummary({
     required this.id,
-    required this.isGroup,
     required this.updatedAt,
     required this.participants,
     this.name,
@@ -134,7 +132,6 @@ class RoomSummary {
   factory RoomSummary.fromJson(Map<String, dynamic> json) {
     return RoomSummary(
       id: json['id'] as int,
-      isGroup: json['is_group'] == true,
       name: json['name'] as String?,
       picture: json['picture'] as String?,
       updatedAt: DateTime.parse(json['updated_at'] as String),

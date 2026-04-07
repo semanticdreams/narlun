@@ -121,16 +121,12 @@ class PushService:
 
         actor_username = actor.get('username') or 'Someone'
         room_name = (room.get('name') or '').strip()
-        if room.get('is_group'):
-            title = f'Added to {room_name}' if room_name else 'Added to a group room'
-            body = (
-                f'{actor_username} added you to {room_name}.'
-                if room_name
-                else f'{actor_username} added you to a group room.'
-            )
-        else:
-            title = 'New conversation'
-            body = f'{actor_username} started a conversation with you.'
+        title = f'Added to {room_name}' if room_name else 'New room'
+        body = (
+            f'{actor_username} added you to {room_name}.'
+            if room_name
+            else f'{actor_username} added you to a room.'
+        )
 
         await self._notify_users(
             recipient_ids,
@@ -172,7 +168,7 @@ class PushService:
             filtered_recipient_ids,
             {
                 'title': title,
-                'body': 'Open the room to continue the conversation.',
+                'body': 'Open the room to continue.',
                 'tag': f'room-{int(room_id)}',
                 'data': {
                     'url': f'/rooms?open_room={int(room_id)}',
@@ -236,7 +232,7 @@ class PushService:
                     if room_name
                     else 'Your room request was approved'
                 ),
-                'body': 'Open the room to join the conversation.',
+                'body': 'Open the room to join.',
                 'tag': f'room-request-{int(room_id)}',
                 'data': {
                     'url': f'/rooms?open_room={int(room_id)}',
@@ -281,10 +277,7 @@ class PushService:
 
         sender_username = sender.get('username') or 'Someone'
         room_name = (room.get('name') or '').strip()
-        if room.get('is_group') and room_name:
-            title = f'{sender_username} in {room_name}'
-        else:
-            title = sender_username
+        title = f'{sender_username} in {room_name}' if room_name else sender_username
 
         recipient_ids = [
             member_id

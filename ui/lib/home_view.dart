@@ -180,7 +180,6 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
 
     final room = RoomSummary(
       id: roomId,
-      isGroup: false,
       updatedAt: DateTime.now(),
       participants: [
         RoomParticipant(id: me.id!, username: me.username ?? ''),

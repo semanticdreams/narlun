@@ -270,7 +270,6 @@ void main() {
     final websocketService = FakeRoomsWebsocketService();
     final room = RoomSummary(
       id: 42,
-      isGroup: false,
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
         RoomParticipant(id: 1, username: 'me'),
@@ -434,7 +433,6 @@ void main() {
       ..queueRoomsResponse([
         RoomSummary(
           id: 7,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -489,7 +487,6 @@ void main() {
       ..queueRoomsResponse([
         RoomSummary(
           id: 9,
-          isGroup: true,
           name: 'Coffee crew',
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           pendingJoinRequestCount: 2,
@@ -544,7 +541,6 @@ void main() {
         ..queueRoomsResponse([
           RoomSummary(
             id: 5,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -555,7 +551,6 @@ void main() {
         ..queueRoomsResponse([
           RoomSummary(
             id: 5,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -613,7 +608,6 @@ void main() {
           [
             RoomSummary(
               id: 5,
-              isGroup: false,
               updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
               participants: const [
                 RoomParticipant(id: 1, username: 'me'),
@@ -624,7 +618,6 @@ void main() {
           [
             RoomSummary(
               id: 5,
-              isGroup: false,
               updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
               participants: const [
                 RoomParticipant(id: 1, username: 'me'),
@@ -716,7 +709,6 @@ void main() {
         [
           RoomSummary(
             id: 5,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),

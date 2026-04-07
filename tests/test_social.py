@@ -519,7 +519,7 @@ async def test_join_request_requires_membership_for_approval_and_rejection(cli):
     assert reject_body['code'] == 1000
 
 
-async def test_dm_rooms_messages_and_group_rooms(cli):
+async def test_rooms_messages_and_multi_member_rooms(cli):
     users = [await signup(cli) for _ in range(3)]
 
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
@@ -546,7 +546,7 @@ async def test_dm_rooms_messages_and_group_rooms(cli):
         [users[1]['user']['id'], users[2]['user']['id']],
     )
     rooms = await get_rooms(cli, users[2]['jwt'])
-    assert any(room['id'] == group_room['id'] and room['is_group'] for room in rooms)
+    assert any(room['id'] == group_room['id'] for room in rooms)
 
 
 async def test_mark_room_read_adds_read_receipts_to_messages(cli):
@@ -602,7 +602,7 @@ async def test_message_ordering_within_one_second(cli, monkeypatch):
     assert [message['body'] for message in messages[:2]] == ['second', 'first']
 
 
-async def test_user_invite_accept_creates_direct_room(cli):
+async def test_user_invite_accept_creates_room_with_inviter(cli):
     users = [await signup(cli) for _ in range(2)]
 
     invite = await create_invite(cli, users[0]['jwt'])
@@ -610,27 +610,25 @@ async def test_user_invite_accept_creates_direct_room(cli):
     assert response.status == 200
     room = await response.json()
 
-    assert room['is_group'] is False
     participant_ids = sorted(participant['id'] for participant in room['participants'])
     assert participant_ids == sorted([users[0]['user']['id'], users[1]['user']['id']])
 
 
-async def test_room_invite_adds_user_and_converts_dm_to_group(cli):
+async def test_room_invite_adds_user_to_existing_room(cli):
     users = [await signup(cli) for _ in range(3)]
-    dm_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
-    invite = await create_invite(cli, users[0]['jwt'], room_id=dm_room['id'])
+    pair_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    invite = await create_invite(cli, users[0]['jwt'], room_id=pair_room['id'])
 
     response = await accept_invite(cli, users[2]['jwt'], invite['token'])
     assert response.status == 200
     room = await response.json()
 
-    assert room['id'] == dm_room['id']
-    assert room['is_group'] is True
+    assert room['id'] == pair_room['id']
     participant_ids = sorted(participant['id'] for participant in room['participants'])
     assert participant_ids == sorted(user['user']['id'] for user in users)
 
     recreated = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
-    assert recreated['id'] != dm_room['id']
+    assert recreated['id'] != pair_room['id']
 
 
 async def test_invite_requires_valid_token(cli):
@@ -679,9 +677,9 @@ async def test_room_creation_and_invite_accept_request_push_delivery(cli_factory
     cli = await cli_factory(push_service=fake_push)
     users = [await signup(cli) for _ in range(4)]
 
-    dm_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    pair_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
     assert fake_push.room_created_calls == [
-        (users[0]['user']['id'], dm_room['id'], [users[1]['user']['id']]),
+        (users[0]['user']['id'], pair_room['id'], [users[1]['user']['id']]),
     ]
 
     group_room = await create_group_room(
@@ -771,7 +769,7 @@ async def test_duplicate_join_request_does_not_request_duplicate_push_delivery(c
     ]
 
 
-async def test_reopening_existing_dm_does_not_request_push_delivery(cli_factory):
+async def test_reopening_existing_pair_room_does_not_request_push_delivery(cli_factory):
     fake_push = FakePushService()
     cli = await cli_factory(push_service=fake_push)
     users = [await signup(cli) for _ in range(2)]

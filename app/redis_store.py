@@ -182,9 +182,14 @@ class RedisStore:
     def _user_activity_index_backfill_key(self):
         return 'meta:user_last_active_backfilled'
 
-    def _dm_key(self, user_a, user_b):
+    def _legacy_dm_key(self, user_a, user_b):
+        # Backward compatibility for deployed pair-room mappings.
         low, high = sorted([int(user_a), int(user_b)])
         return f'dm:{low}:{high}'
+
+    def _room_pair_key(self, user_a, user_b):
+        low, high = sorted([int(user_a), int(user_b)])
+        return f'room_pair:{low}:{high}'
 
     async def _next_user_id(self):
         return int(await self.redis.incr('seq:users'))
@@ -898,38 +903,42 @@ class RedisStore:
             raise UserNotFound()
         owner = await self._load_user_hash(user_id)
 
-        dm_key = self._dm_key(user_id, other_user_id)
-        existing_room_id = await self.redis.get(dm_key)
+        pair_key = self._room_pair_key(user_id, other_user_id)
+        legacy_dm_key = self._legacy_dm_key(user_id, other_user_id)
+        existing_room_id = await self.redis.get(pair_key)
+        if existing_room_id is None:
+            existing_room_id = await self.redis.get(legacy_dm_key)
+            if existing_room_id is not None:
+                await self.redis.set(pair_key, existing_room_id)
         if existing_room_id is not None:
             return {'id': int(existing_room_id), 'created': False}
 
         room_id = await self._next_room_id()
         members = sorted([int(user_id), other_user_id])
         created = True
-        if not await self.redis.set(dm_key, room_id, nx=True):
-            existing_room_id = await self.redis.get(dm_key)
+        if not await self.redis.set(pair_key, room_id, nx=True):
+            existing_room_id = await self.redis.get(pair_key)
             room_id = int(existing_room_id)
             created = False
 
-        await self._ensure_dm_room(
+        await self._ensure_pair_room(
             room_id,
-            dm_key,
+            pair_key,
             members,
             name=self._default_room_name(owner, seed=room_id),
         )
         return {'id': int(room_id), 'created': created}
 
-    async def _ensure_dm_room(self, room_id, dm_key, members, *, name):
+    async def _ensure_pair_room(self, room_id, pair_key, members, *, name):
         timestamp_ms = now_ms()
         room_meta_key = self._room_meta_key(room_id)
         await self.redis.hsetnx(room_meta_key, 'id', room_id)
         await self.redis.hsetnx(room_meta_key, 'name', name)
         await self.redis.hsetnx(room_meta_key, 'picture', '')
-        await self.redis.hsetnx(room_meta_key, 'is_group', '0')
         await self.redis.hsetnx(room_meta_key, 'is_public', '0')
         await self.redis.hsetnx(room_meta_key, 'updated_at', timestamp_ms)
         await self.redis.hsetnx(room_meta_key, 'last_message', '')
-        await self.redis.hsetnx(room_meta_key, 'dm_key', dm_key)
+        await self.redis.hsetnx(room_meta_key, 'pair_key', pair_key)
         for member in members:
             await self.redis.sadd(self._room_members_key(room_id), member)
             await self.redis.zadd(self._user_rooms_key(member), {room_id: timestamp_ms})
@@ -952,11 +961,9 @@ class RedisStore:
             'id': room_id,
             'name': resolved_name,
             'picture': '',
-            'is_group': '1',
             'is_public': '0',
             'updated_at': timestamp_ms,
             'last_message': '',
-            'dm_key': '',
         })
         for member_id in member_ids:
             await self.redis.sadd(self._room_members_key(room_id), member_id)
@@ -1456,8 +1463,9 @@ class RedisStore:
         for member in remaining_members:
             await self.redis.zrem(self._user_rooms_key(member), room_id)
             await self.redis.hdel(self._user_room_prefs_key(member), room_id)
-        if meta.get('dm_key'):
-            await self.redis.delete(meta['dm_key'])
+        pair_key = meta.get('pair_key') or meta.get('dm_key')
+        if pair_key:
+            await self.redis.delete(pair_key)
         await self.redis.delete(self._room_meta_key(room_id))
         await self.redis.delete(self._room_members_key(room_id))
         await self.redis.delete(self._room_messages_key(room_id))
@@ -1564,14 +1572,10 @@ class RedisStore:
             int(member)
             for member in await self.redis.smembers(members_key)
         )
-        if not room_bool(meta.get('is_group')) and len(existing_members) >= 2:
-            dm_key = meta.get('dm_key') or ''
-            if dm_key:
-                await self.redis.delete(dm_key)
-            await self.redis.hset(meta_key, mapping={
-                'is_group': '1',
-                'dm_key': '',
-            })
+        pair_key = meta.get('pair_key') or meta.get('dm_key') or ''
+        if pair_key:
+            await self.redis.delete(pair_key)
+            await self.redis.hdel(meta_key, 'pair_key', 'dm_key', 'is_group')
 
         all_members = sorted({*existing_members, user_id})
         await self._delete_join_request(room_id, user_id)
@@ -1628,7 +1632,6 @@ class RedisStore:
             'last_message': json.loads(last_message) if last_message else None,
             'updated_at': ts_ms_to_iso(meta.get('updated_at', 0) or 0),
             'picture': meta.get('picture') or None,
-            'is_group': room_bool(meta.get('is_group')),
             'is_public': room_bool(meta.get('is_public')),
             'pending_join_request_count': await self.get_room_join_request_count(room_id),
             'push_muted': await self.get_room_push_muted(viewer_user_id, room_id)

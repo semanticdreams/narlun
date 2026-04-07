@@ -98,7 +98,6 @@ class FakeHttpService extends HttpService {
       return [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -126,7 +125,6 @@ class FakeHttpService extends HttpService {
     }
     return RoomSummary(
       id: room_id as int,
-      isGroup: false,
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
         RoomParticipant(id: 1, username: 'me'),
@@ -153,7 +151,6 @@ class FakeHttpService extends HttpService {
     approvedRoomRequests.add({'room_id': room_id, 'user_id': user_id});
     return RoomSummary(
       id: room_id as int,
-      isGroup: true,
       name: 'Updated room',
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: [
@@ -369,7 +366,6 @@ Widget _buildMessagesApp({
 }) {
   room ??= RoomSummary(
     id: 1,
-    isGroup: false,
     updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
     participants: const [
       RoomParticipant(id: 1, username: 'me'),
@@ -477,7 +473,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -490,7 +485,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -556,7 +550,6 @@ void main() {
                         builder: (_) => MessagesView(
                           room: RoomSummary(
                             id: 1,
-                            isGroup: false,
                             updatedAt: DateTime.parse(
                               '2026-04-04T10:00:00.000Z',
                             ),
@@ -633,7 +626,6 @@ void main() {
                         builder: (_) => MessagesView(
                           room: RoomSummary(
                             id: 1,
-                            isGroup: false,
                             updatedAt: DateTime.parse(
                               '2026-04-04T10:00:00.000Z',
                             ),
@@ -687,7 +679,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -701,7 +692,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: true,
           updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -745,7 +735,6 @@ void main() {
                       builder: (_) => MessagesView(
                         room: RoomSummary(
                           id: 1,
-                          isGroup: false,
                           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
                           participants: const [
                             RoomParticipant(id: 1, username: 'me'),
@@ -802,7 +791,6 @@ void main() {
                         builder: (_) => MessagesView(
                           room: RoomSummary(
                             id: 1,
-                            isGroup: false,
                             updatedAt: DateTime.parse(
                               '2026-04-04T10:00:00.000Z',
                             ),
@@ -863,7 +851,6 @@ void main() {
               '/room': (_) => MessagesView(
                 room: RoomSummary(
                   id: 1,
-                  isGroup: false,
                   updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
                   participants: const [
                     RoomParticipant(id: 1, username: 'me'),
@@ -902,7 +889,6 @@ void main() {
     httpService.enqueueRoomSettings((roomId, pushMuted) async {
       return RoomSummary(
         id: roomId,
-        isGroup: false,
         updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
         participants: const [
           RoomParticipant(id: 1, username: 'me'),
@@ -940,7 +926,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: true,
           name: 'Coffee crew',
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
@@ -964,7 +949,6 @@ void main() {
                       builder: (_) => MessagesView(
                         room: RoomSummary(
                           id: 1,
-                          isGroup: true,
                           name: 'Coffee crew',
                           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
                           participants: const [
@@ -1082,7 +1066,6 @@ void main() {
         () async => [
           RoomSummary(
             id: 1,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -1095,7 +1078,6 @@ void main() {
         () async => [
           RoomSummary(
             id: 1,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:01.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -1189,7 +1171,6 @@ void main() {
     final httpService = FakeHttpService(websocketService: websocketService);
     final groupRoom = RoomSummary(
       id: 1,
-      isGroup: true,
       name: 'Coffee crew',
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
@@ -1248,7 +1229,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: true,
           name: 'Coffee crew',
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
@@ -1297,7 +1277,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -1341,7 +1320,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -1383,7 +1361,6 @@ void main() {
         () async => [
           RoomSummary(
             id: 1,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -1448,7 +1425,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),
@@ -1518,7 +1494,6 @@ void main() {
         () async => [
           RoomSummary(
             id: 1,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -1574,7 +1549,6 @@ void main() {
         () async => [
           RoomSummary(
             id: 1,
-            isGroup: false,
             updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
             participants: const [
               RoomParticipant(id: 1, username: 'me'),
@@ -1623,7 +1597,6 @@ void main() {
       () async => [
         RoomSummary(
           id: 1,
-          isGroup: false,
           updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
           participants: const [
             RoomParticipant(id: 1, username: 'me'),

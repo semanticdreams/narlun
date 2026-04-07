@@ -3,11 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:narlun/models.dart';
 
 void main() {
-  test('unnamed group rooms fall back to participant names', () {
+  test('unnamed multi-member rooms fall back to participant names', () {
     const me = SessionUser(authenticated: true, id: 1, username: 'me');
     final room = RoomSummary(
       id: 7,
-      isGroup: true,
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
         RoomParticipant(id: 1, username: 'me'),
@@ -23,7 +22,6 @@ void main() {
     const me = SessionUser(authenticated: true, id: 1, username: 'me');
     final room = RoomSummary(
       id: 8,
-      isGroup: false,
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
         RoomParticipant(id: 1, username: 'me'),
@@ -38,7 +36,6 @@ void main() {
     const me = SessionUser(authenticated: true, id: 1, username: 'me');
     final room = RoomSummary(
       id: 9,
-      isGroup: false,
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
         RoomParticipant(id: 1, username: 'me'),
@@ -56,7 +53,6 @@ void main() {
   test('room summary parses push muted state', () {
     final room = RoomSummary.fromJson({
       'id': 7,
-      'is_group': false,
       'updated_at': '2026-04-04T10:00:00.000Z',
       'participants': const [],
       'push_muted': true,

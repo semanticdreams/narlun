@@ -100,7 +100,6 @@ class FakeNearbyHttpService extends HttpService {
     requestRoomJoinCalls += 1;
     return RoomSummary(
       id: room_id as int,
-      isGroup: true,
       name: 'Nearby room',
       updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
       participants: const [
@@ -390,7 +389,6 @@ void main() {
             joinRequested: false,
             room: RoomSummary(
               id: 33,
-              isGroup: true,
               name: 'Coffee crew',
               updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
               lastMessage: const MessagePreview(body: 'Meet us by the window'),
@@ -574,7 +572,6 @@ void main() {
             joinRequested: false,
             room: RoomSummary(
               id: 33,
-              isGroup: true,
               name: 'Coffee crew',
               updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
               lastMessage: const MessagePreview(body: 'Old message'),
@@ -617,7 +614,6 @@ void main() {
           joinRequested: false,
           room: RoomSummary(
             id: 33,
-            isGroup: true,
             name: 'Coffee crew',
             updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
             lastMessage: const MessagePreview(body: 'Updated message'),

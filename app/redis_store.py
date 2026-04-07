@@ -906,12 +906,25 @@ class RedisStore:
         pair_key = self._room_pair_key(user_id, other_user_id)
         legacy_dm_key = self._legacy_dm_key(user_id, other_user_id)
         existing_room_id = await self.redis.get(pair_key)
-        if existing_room_id is None:
-            existing_room_id = await self.redis.get(legacy_dm_key)
-            if existing_room_id is not None:
-                await self.redis.set(pair_key, existing_room_id)
         if existing_room_id is not None:
-            return {'id': int(existing_room_id), 'created': False}
+            existing_room_id = int(existing_room_id)
+            if await self._load_room_meta(existing_room_id) is not None:
+                return {'id': existing_room_id, 'created': False}
+            await self.redis.delete(pair_key)
+
+        existing_room_id = await self.redis.get(legacy_dm_key)
+        if existing_room_id is not None:
+            existing_room_id = int(existing_room_id)
+            meta = await self._load_room_meta(existing_room_id)
+            if meta is None:
+                await self.redis.delete(legacy_dm_key)
+            else:
+                room_meta_key = self._room_meta_key(existing_room_id)
+                await self.redis.set(pair_key, existing_room_id)
+                await self.redis.hset(room_meta_key, mapping={'pair_key': pair_key})
+                await self.redis.hdel(room_meta_key, 'dm_key', 'is_group')
+                await self.redis.delete(legacy_dm_key)
+                return {'id': existing_room_id, 'created': False}
 
         room_id = await self._next_room_id()
         members = sorted([int(user_id), other_user_id])

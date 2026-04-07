@@ -631,6 +631,40 @@ async def test_room_invite_adds_user_to_existing_room(cli):
     assert recreated['id'] != pair_room['id']
 
 
+async def test_join_user_migrates_legacy_pair_mapping_and_clears_stale_ids(cli):
+    users = [await signup(cli) for _ in range(2)]
+    pair_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    store = cli.app['store']
+    redis = cli.app['redis']
+    pair_key = store._room_pair_key(users[0]['user']['id'], users[1]['user']['id'])
+    legacy_dm_key = store._legacy_dm_key(users[0]['user']['id'], users[1]['user']['id'])
+    room_meta_key = store._room_meta_key(pair_room['id'])
+
+    await redis.delete(pair_key)
+    await redis.hdel(room_meta_key, 'pair_key')
+    await redis.hset(room_meta_key, mapping={
+        'dm_key': legacy_dm_key,
+        'is_group': '0',
+    })
+    await redis.set(legacy_dm_key, pair_room['id'])
+
+    migrated = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    assert migrated['id'] == pair_room['id']
+    assert await redis.get(pair_key) == str(pair_room['id'])
+    meta = await redis.hgetall(room_meta_key)
+    assert meta.get('pair_key') == pair_key
+    assert meta.get('dm_key') is None
+    assert meta.get('is_group') is None
+    assert await redis.get(legacy_dm_key) is None
+
+    response = await leave_room(cli, users[0]['jwt'], pair_room['id'])
+    assert response.status == 204
+    assert await redis.get(pair_key) is None
+
+    recreated = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    assert recreated['id'] != pair_room['id']
+
+
 async def test_invite_requires_valid_token(cli):
     created = await signup(cli)
 

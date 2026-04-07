@@ -7,6 +7,7 @@ import 'dart:js_util' as js_util;
 import 'frontend_error_reporter.dart';
 import 'install_prompt_service.dart';
 import 'install_suggestion_rules.dart';
+import 'web_install_state_browser.dart';
 
 const _installSuggestionDismissedKey = 'narlun_install_suggestion_dismissed';
 
@@ -70,10 +71,7 @@ class BrowserInstallPromptService extends InstallPromptService {
     try {
       html.window.localStorage[_installSuggestionDismissedKey] = '1';
     } catch (_) {}
-    _log(
-      'suggestion_dismissed',
-      'Dismissed the manual install suggestion.',
-    );
+    _log('suggestion_dismissed', 'Dismissed the manual install suggestion.');
     notifyListeners();
   }
 
@@ -88,25 +86,7 @@ class BrowserInstallPromptService extends InstallPromptService {
   }
 
   bool _detectInstalled() {
-    final standaloneMediaQuery = html.window.matchMedia(
-      '(display-mode: standalone)',
-    );
-    final navigatorStandalone =
-        js_util.getProperty<bool?>(html.window.navigator, 'standalone') == true;
-    final bootstrapInstalled =
-        js_util.getProperty<Object?>(
-              html.window,
-              '__narlunInstalledFromBootstrap',
-            ) !=
-            null &&
-        js_util.callMethod<bool>(
-          html.window,
-          '__narlunInstalledFromBootstrap',
-          const [],
-        );
-    return standaloneMediaQuery.matches ||
-        navigatorStandalone ||
-        bootstrapInstalled;
+    return detectInstalledWebApp();
   }
 
   bool _detectPromptObserved() {

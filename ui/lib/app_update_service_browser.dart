@@ -1,9 +1,10 @@
-// ignore_for_file: avoid_web_libraries_in_flutter
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
 
 import 'dart:async';
 import 'dart:html' as html;
 
 import 'app_update_service.dart';
+import 'web_install_state_browser.dart';
 
 const _updateCheckInterval = Duration(minutes: 20);
 
@@ -110,12 +111,6 @@ class BrowserAppUpdateService extends AppUpdateService {
       return null;
     }
     final registration = await _serviceWorkerContainer!.getRegistration();
-    if (registration == null) {
-      _detachRegistrationListeners();
-      _registration = null;
-      _setUpdateAvailable(false);
-      return null;
-    }
     if (!identical(_registration, registration)) {
       _detachRegistrationListeners();
       _registration = registration;
@@ -125,7 +120,9 @@ class BrowserAppUpdateService extends AppUpdateService {
     return registration;
   }
 
-  void _attachRegistrationListeners(html.ServiceWorkerRegistration registration) {
+  void _attachRegistrationListeners(
+    html.ServiceWorkerRegistration registration,
+  ) {
     _updateFoundListener = (_) {
       _watchInstallingWorker(registration.installing);
       _syncWaitingState(registration);
@@ -158,7 +155,8 @@ class BrowserAppUpdateService extends AppUpdateService {
     if (_registration != null && _updateFoundListener != null) {
       _registration!.removeEventListener('updatefound', _updateFoundListener);
     }
-    if (_watchedInstallingWorker != null && _installingStateChangeListener != null) {
+    if (_watchedInstallingWorker != null &&
+        _installingStateChangeListener != null) {
       _watchedInstallingWorker!.removeEventListener(
         'statechange',
         _installingStateChangeListener,
@@ -175,7 +173,11 @@ class BrowserAppUpdateService extends AppUpdateService {
       return;
     }
     final hasController = _serviceWorkerContainer?.controller != null;
-    _setUpdateAvailable(hasController && registration.waiting != null);
+    final hasWaitingUpdate = hasController && registration.waiting != null;
+    _setUpdateAvailable(hasWaitingUpdate);
+    if (hasWaitingUpdate && detectInstalledWebApp() && !_isApplyingUpdate) {
+      unawaited(applyUpdate());
+    }
   }
 
   void _setUpdateAvailable(bool value) {

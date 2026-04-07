@@ -5,9 +5,6 @@ class AppRouteState extends ChangeNotifier {
 
   String? get routeName => _routeNames.isEmpty ? null : _routeNames.last;
 
-  String? get previousRouteName =>
-      _routeNames.length < 2 ? null : _routeNames[_routeNames.length - 2];
-
   Uri? get routeUri {
     final name = routeName;
     if (name == null || name.isEmpty) {
@@ -16,12 +13,8 @@ class AppRouteState extends ChangeNotifier {
     return Uri.tryParse(name);
   }
 
-  Uri? get previousRouteUri {
-    final name = previousRouteName;
-    if (name == null || name.isEmpty) {
-      return null;
-    }
-    return Uri.tryParse(name);
+  void updateRouteName(String? routeName) {
+    updateRouteStack(routeName == null ? const [] : <String?>[routeName]);
   }
 
   void updateRouteStack(List<String?> routeNames) {

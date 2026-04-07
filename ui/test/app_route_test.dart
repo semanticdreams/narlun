@@ -71,57 +71,11 @@ void main() {
     expect(sanitizeInviteBackToRoute('/invite/token-123'), isNull);
     expect(sanitizeInviteBackToRoute('/'), isNull);
     expect(sanitizeInviteBackToRoute('not a route'), isNull);
-    expect(sanitizeStandaloneBackRoute('/'), '/');
-    expect(sanitizeStandaloneBackRoute('/settings'), '/settings');
-    expect(
-      sanitizeStandaloneBackRoute('/invite/token-123'),
-      '/invite/token-123',
-    );
-    expect(sanitizeStandaloneBackRoute('not a route'), isNull);
     expect(inviteQrRoute(), '/invite');
     expect(inviteQrRoute(roomId: 7), '/invite?room_id=7');
     expect(
       inviteQrRouteWithBackTo(roomId: 7, backTo: '/rooms?open_room=7'),
       '/invite?room_id=7&back_to=%2Frooms%3Fopen_room%3D7',
-    );
-  });
-
-  test('resolves standalone back fallback routes', () {
-    expect(
-      standaloneBackFallbackRoute(
-        currentRouteName: '/profile',
-        previousRouteName: '/rooms',
-      ),
-      '/rooms',
-    );
-    expect(
-      standaloneBackFallbackRoute(currentRouteName: '/settings'),
-      '/profile',
-    );
-    expect(
-      standaloneBackFallbackRoute(
-        currentRouteName: '/invite?room_id=42&back_to=%2Frooms',
-      ),
-      '/rooms',
-    );
-    expect(
-      standaloneBackFallbackRoute(currentRouteName: '/rooms?open_room=42'),
-      '/rooms',
-    );
-    expect(standaloneBackFallbackRoute(currentRouteName: '/nearby'), '/home');
-    expect(
-      standaloneBackFallbackRoute(
-        currentRouteName: '/invite/token-123',
-        me: const SessionUser(authenticated: true, id: 7, username: 'sam'),
-      ),
-      '/home',
-    );
-    expect(
-      standaloneBackFallbackRoute(
-        currentRouteName: '/invite/token-123',
-        me: SessionUser.unauthenticated(),
-      ),
-      '/signup',
     );
   });
 

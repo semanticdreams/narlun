@@ -15,9 +15,10 @@ from app.util import create_random_avatar
 
 
 MESSAGE_TTL_SECONDS = 7 * 24 * 60 * 60
-ACTIVE_WINDOW_SECONDS = 3 * 24 * 60 * 60
+NEARBY_ACTIVITY_WINDOW_SECONDS = 2 * 60 * 60
+NEARBY_ACTIVITY_WINDOW_MILLISECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS * 1000
 INVITE_TTL_SECONDS = 24 * 60 * 60
-JOIN_REQUEST_TTL_SECONDS = 7 * 24 * 60 * 60
+JOIN_REQUEST_TTL_SECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS
 REJECTED_JOIN_REQUEST_TTL_SECONDS = 24 * 60 * 60
 WEBSOCKET_PRESENCE_TTL_SECONDS = 45
 NEARBY_RADIUS_KM = 20000
@@ -193,6 +194,21 @@ class RedisStore:
     async def _load_room_meta(self, room_id):
         data = await self.redis.hgetall(self._room_meta_key(room_id))
         return data or None
+
+    def _nearby_activity_cutoff_ts(self, *, current_ts=None):
+        timestamp = now_ts() if current_ts is None else int(current_ts)
+        return timestamp - NEARBY_ACTIVITY_WINDOW_SECONDS
+
+    def _nearby_activity_cutoff_ms(self, *, current_ts_ms=None):
+        timestamp_ms = now_ms() if current_ts_ms is None else int(current_ts_ms)
+        return timestamp_ms - NEARBY_ACTIVITY_WINDOW_MILLISECONDS
+
+    def _room_meta_has_recent_nearby_activity(self, meta, *, current_ts_ms=None):
+        if not meta:
+            return False
+        return int(meta.get('updated_at', 0) or 0) >= self._nearby_activity_cutoff_ms(
+            current_ts_ms=current_ts_ms,
+        )
 
     async def _resolve_username_id(self, username):
         username_key = self._username_index_key(username)
@@ -371,7 +387,19 @@ class RedisStore:
             'expires_at': ts_to_iso(raw_request.get('expires_at', 0) or 0),
         }
 
-    async def _serialize_nearby_room(self, room_id, *, distance_meters=None, join_requested=False):
+    async def _serialize_nearby_room(
+        self,
+        room_id,
+        *,
+        distance_meters=None,
+        join_requested=False,
+        require_recent_activity=True,
+    ):
+        meta = await self._load_room_meta(room_id)
+        if meta is None:
+            return None
+        if require_recent_activity and not self._room_meta_has_recent_nearby_activity(meta):
+            return None
         room = await self._serialize_room(room_id)
         if room is None:
             return None
@@ -559,7 +587,7 @@ class RedisStore:
         joined_room_ids = await self._shared_room_ids(user_id)
         requested_room_ids = set(await self.get_requested_room_ids(user_id))
         rejected_room_ids = set(await self.get_rejected_room_ids(user_id))
-        cutoff = timestamp - ACTIVE_WINDOW_SECONDS
+        cutoff = self._nearby_activity_cutoff_ts(current_ts=timestamp)
         result = await self.redis.georadius(
             'geo:active_users',
             lon,
@@ -712,7 +740,7 @@ class RedisStore:
         if raw_user is None:
             return set()
 
-        cutoff = now_ts() - ACTIVE_WINDOW_SECONDS
+        cutoff = self._nearby_activity_cutoff_ts()
         last_seen = int(raw_user.get('last_seen', 0) or 0)
         if last_seen < cutoff:
             return set()
@@ -877,6 +905,7 @@ class RedisStore:
             room = await self._serialize_nearby_room(
                 room_id,
                 join_requested=True,
+                require_recent_activity=False,
             )
             if room is None:
                 raise RoomNotFound()
@@ -895,6 +924,7 @@ class RedisStore:
         room = await self._serialize_nearby_room(
             room_id,
             join_requested=True,
+            require_recent_activity=False,
         )
         if room is None:
             raise RoomNotFound()

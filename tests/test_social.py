@@ -160,6 +160,52 @@ async def test_nearby_users_legacy_list_is_not_truncated_by_room_items(cli, monk
     }
 
 
+async def test_nearby_excludes_users_inactive_for_more_than_two_hours(cli, monkeypatch):
+    users = [await signup(cli) for _ in range(2)]
+
+    original_time = redis_store.time.time
+    base_time = original_time()
+    monkeypatch.setattr(
+        redis_store.time,
+        'time',
+        lambda: base_time - redis_store.NEARBY_ACTIVITY_WINDOW_SECONDS - 1,
+    )
+
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+
+    monkeypatch.setattr(redis_store.time, 'time', lambda: base_time)
+
+    nearby = await checkin(cli, users[1]['jwt'], HAMBURG)
+    assert nearby['nearby_users'] == []
+
+
+async def test_nearby_excludes_rooms_inactive_for_more_than_two_hours_even_with_active_members(
+    cli,
+    monkeypatch,
+):
+    users = [await signup(cli) for _ in range(3)]
+
+    original_time = redis_store.time.time
+    base_time = original_time()
+    monkeypatch.setattr(
+        redis_store.time,
+        'time',
+        lambda: base_time - redis_store.NEARBY_ACTIVITY_WINDOW_SECONDS - 1,
+    )
+
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    assert room['id']
+
+    monkeypatch.setattr(redis_store.time, 'time', lambda: base_time)
+
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
+    nearby = await checkin(cli, users[2]['jwt'], HAMBURG)
+
+    room_items = [item for item in nearby['nearby'] if item['type'] == 'room']
+    assert room_items == []
+
+
 async def test_room_join_request_requires_member_approval(cli):
     users = [await signup(cli) for _ in range(4)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
@@ -332,6 +378,38 @@ async def test_expired_join_request_clears_member_count_and_requester_pinned_roo
     assert room_items == []
 
 
+async def test_expired_join_request_is_not_listed_or_approvable(cli, monkeypatch):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    original_time = redis_store.time.time
+    base_time = original_time()
+    monkeypatch.setattr(redis_store.time, 'time', lambda: base_time)
+
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 200
+
+    monkeypatch.setattr(
+        redis_store.time,
+        'time',
+        lambda: base_time + redis_store.JOIN_REQUEST_TTL_SECONDS + 1,
+    )
+
+    requests_response = await get_room_requests(cli, users[0]['jwt'], room['id'])
+    assert requests_response.status == 200
+    assert await requests_response.json() == []
+
+    approve_response = await approve_room_request(
+        cli,
+        users[0]['jwt'],
+        room['id'],
+        users[2]['user']['id'],
+    )
+    assert approve_response.status == 400
+    approve_body = await approve_response.json()
+    assert approve_body['code'] == 1006
+
+
 async def test_rejected_room_reappears_after_rejection_cooldown_expires(cli, monkeypatch):
     users = [await signup(cli) for _ in range(3)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
@@ -362,6 +440,10 @@ async def test_rejected_room_reappears_after_rejection_cooldown_expires(cli, mon
         'time',
         lambda: base_time + redis_store.REJECTED_JOIN_REQUEST_TTL_SECONDS + 1,
     )
+
+    await send_message(cli, users[0]['jwt'], room['id'], 'room is active again')
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+    await checkin(cli, users[1]['jwt'], HAMBURG)
 
     visible = await checkin(cli, users[2]['jwt'], HAMBURG)
     visible_room_items = [item for item in visible['nearby'] if item['type'] == 'room']

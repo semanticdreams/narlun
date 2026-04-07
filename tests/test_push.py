@@ -108,7 +108,7 @@ async def test_join_request_push_respects_room_mute_and_request_approval_notifie
     assert [user_id for user_id, _payload in delivered] == [users[2]['user']['id']]
 
 
-async def test_push_delivery_skips_only_when_client_has_matching_live_view(
+async def test_push_delivery_skips_when_client_is_in_room_or_rooms_view(
     cli,
     monkeypatch,
 ):
@@ -164,6 +164,23 @@ async def test_push_delivery_skips_only_when_client_has_matching_live_view(
         'socket-1',
         client_id='client-2',
         view_key='rooms',
+    )
+    delivered.clear()
+    await push_service.notify_new_message(users[0]['user']['id'], room['id'], message)
+
+    assert delivered == []
+
+    await cli.app['store'].clear_live_view(
+        users[1]['user']['id'],
+        'socket-1',
+        client_id='client-2',
+        view_key='rooms',
+    )
+    await cli.app['store'].mark_live_view(
+        users[1]['user']['id'],
+        'socket-1',
+        client_id='client-2',
+        view_key='nearby',
     )
     await push_service.notify_new_message(users[0]['user']['id'], room['id'], message)
 

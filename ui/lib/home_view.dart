@@ -241,6 +241,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
               ConversationsView(
                 initialRoomIdToOpen: widget.initialRoomIdToOpen,
                 roomsFeedModel: _roomsFeedModel,
+                enableRealtimeRoomSummarySync: false,
                 showChrome: false,
                 onOpenNearby: () {
                   tabController.animateTo(0);

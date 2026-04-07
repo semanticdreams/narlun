@@ -20,6 +20,7 @@ import 'push_notifications_service.dart';
 import 'push_notifications_session_bridge.dart';
 import 'room_messages_cache.dart';
 import 'rooms_feed_model.dart';
+import 'rooms_feed_refresh_bridge.dart';
 import 'feed_session_bridge.dart';
 
 Object? _e2eSemanticsHandle;
@@ -112,10 +113,12 @@ Widget buildNarlunApp({SessionUser? initialSessionUser}) {
       ChangeNotifierProvider<MeModel>.value(value: meModel),
     ],
     child: FeedSessionBridge(
-      child: PushNotificationsSessionBridge(
-        child: MyApp(
-          errorReporter: errorReporter,
-          theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+      child: RoomsFeedRefreshBridge(
+        child: PushNotificationsSessionBridge(
+          child: MyApp(
+            errorReporter: errorReporter,
+            theme: ThemeData(colorScheme: colorScheme, useMaterial3: true),
+          ),
         ),
       ),
     ),

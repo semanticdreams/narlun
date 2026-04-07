@@ -26,6 +26,7 @@ class ConversationsView extends StatefulWidget {
   final VoidCallback? onOpenNearby;
   final int? initialRoomIdToOpen;
   final RoomsFeedModel? roomsFeedModel;
+  final bool enableRealtimeRoomSummarySync;
 
   const ConversationsView({
     super.key,
@@ -35,6 +36,7 @@ class ConversationsView extends StatefulWidget {
     this.onOpenNearby,
     this.initialRoomIdToOpen,
     this.roomsFeedModel,
+    this.enableRealtimeRoomSummarySync = true,
   });
 
   @override
@@ -230,16 +232,18 @@ class _ConversationsState extends State<ConversationsView> {
       unawaited(_ensureWarmRooms());
     });
     unawaited(websocketService.ensureConnected());
-    roomsChangedSubscription = websocketService.roomsChangedStream().listen(
-      (_) => unawaited(updateRooms(silentErrors: true)),
-    );
-    connectionEventsSubscription = websocketService.connectionEvents.listen((
-      event,
-    ) {
-      if (event == 'reconnected') {
-        unawaited(updateRooms(silentErrors: true));
-      }
-    });
+    if (widget.enableRealtimeRoomSummarySync) {
+      roomsChangedSubscription = websocketService.roomsChangedStream().listen(
+        (_) => unawaited(updateRooms(silentErrors: true)),
+      );
+      connectionEventsSubscription = websocketService.connectionEvents.listen((
+        event,
+      ) {
+        if (event == 'reconnected') {
+          unawaited(updateRooms(silentErrors: true));
+        }
+      });
+    }
   }
 
   @override

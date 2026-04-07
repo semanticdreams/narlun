@@ -483,7 +483,12 @@ def _notification_live_views(notification):
     notification_type = data.get('type')
     room_id = data.get('room_id')
 
-    if notification_type in {'new-message', 'room-join-request'}:
+    if notification_type == 'new-message':
+        try:
+            return [f'room:{int(room_id)}', 'rooms']
+        except (TypeError, ValueError):
+            return []
+    if notification_type == 'room-join-request':
         try:
             return [f'room:{int(room_id)}']
         except (TypeError, ValueError):

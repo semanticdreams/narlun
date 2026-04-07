@@ -1,5 +1,6 @@
 import datetime
 import logging
+from typing import Any
 
 import jwt
 from aiohttp import web
@@ -75,6 +76,27 @@ class MissingFeedbackMessageError(InvalidUsage):
 class FeedbackMessageTooLongError(InvalidUsage):
     code = 13
     message = f'Feedback message must be {MAX_FEEDBACK_MESSAGE_CHARS} characters or fewer'
+
+
+def _coerce_uploaded_file_bytes(payload: Any) -> bytes:
+    if isinstance(payload, memoryview):
+        return payload.tobytes()
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    raise InvalidAvatarError('Invalid file upload')
+
+
+def read_uploaded_file_bytes(uploaded: Any) -> bytes:
+    if isinstance(uploaded, web.FileField):
+        return _coerce_uploaded_file_bytes(uploaded.file.read())
+    if isinstance(uploaded, (bytes, bytearray, memoryview)):
+        return _coerce_uploaded_file_bytes(uploaded)
+
+    fileobj = getattr(uploaded, 'file', None)
+    if fileobj is not None:
+        return _coerce_uploaded_file_bytes(fileobj.read())
+
+    raise InvalidAvatarError('Invalid file upload')
 
 
 def issue_auth_cookie(req, resp, user):
@@ -168,7 +190,7 @@ async def upload_profile_picture(req):
     if uploaded is None:
         raise InvalidAvatarError('Missing file')
 
-    raw_bytes = uploaded.file.read()
+    raw_bytes = read_uploaded_file_bytes(uploaded)
     try:
         picture = await req.store.normalize_and_store_avatar(req.user['id'], raw_bytes)
     except UserNotFound:

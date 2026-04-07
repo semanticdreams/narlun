@@ -1,4 +1,9 @@
 import io
+from types import SimpleNamespace
+
+import pytest
+
+from app.users import InvalidAvatarError, read_uploaded_file_bytes
 
 from tests.helpers import (
     auth_headers,
@@ -8,6 +13,27 @@ from tests.helpers import (
     signup,
     update_profile,
 )
+
+
+def test_read_uploaded_file_bytes_accepts_file_field_like_uploads():
+    uploaded = SimpleNamespace(file=io.BytesIO(b'avatar-bytes'))
+
+    assert read_uploaded_file_bytes(uploaded) == b'avatar-bytes'
+
+
+def test_read_uploaded_file_bytes_normalizes_file_like_bytearrays():
+    uploaded = SimpleNamespace(file=SimpleNamespace(read=lambda: bytearray(b'avatar-bytes')))
+
+    assert read_uploaded_file_bytes(uploaded) == b'avatar-bytes'
+
+
+def test_read_uploaded_file_bytes_accepts_bytearray_uploads():
+    assert read_uploaded_file_bytes(bytearray(b'avatar-bytes')) == b'avatar-bytes'
+
+
+def test_read_uploaded_file_bytes_rejects_unknown_upload_shapes():
+    with pytest.raises(InvalidAvatarError, match='Invalid file upload'):
+        read_uploaded_file_bytes(object())
 
 
 async def test_guest_signup_password_upgrade_and_signin(cli):
@@ -98,6 +124,33 @@ async def test_avatar_upload_and_fetch(cli):
     assert avatar_response.content_type == 'image/png'
     payload = await avatar_response.read()
     assert payload.startswith(b'\x89PNG')
+
+
+async def test_avatar_upload_accepts_multipart_without_filename(cli):
+    created = await signup(cli)
+    avatar = create_avatar_bytes()
+    boundary = 'avatar-upload-boundary'
+    body = b''.join([
+        f'--{boundary}\r\n'.encode(),
+        b'Content-Disposition: form-data; name="file"\r\n',
+        b'Content-Type: application/octet-stream\r\n\r\n',
+        avatar,
+        b'\r\n',
+        f'--{boundary}--\r\n'.encode(),
+    ])
+
+    response = await cli.post(
+        '/api/users/upload-profile-picture',
+        data=body,
+        headers={
+            **auth_headers(created['jwt']),
+            'Content-Type': f'multipart/form-data; boundary={boundary}',
+        },
+    )
+
+    assert response.status == 200
+    body = await response.json()
+    assert body['picture'].startswith('/api/users/avatar/')
 
 
 async def test_invalid_avatar_upload_returns_usage_error(cli):

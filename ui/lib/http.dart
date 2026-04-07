@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:http/http.dart' as http;
 import 'package:http_interceptor/http_interceptor.dart';
 
@@ -339,12 +338,16 @@ class HttpService {
     return SessionUser.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future<String> upload_profile_picture(data) async {
+  Future<String> upload_profile_picture(List<int> data) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse(baseurl + '/users/upload-profile-picture'),
     );
-    final multipart_file = http.MultipartFile.fromBytes('file', data);
+    final multipart_file = http.MultipartFile.fromBytes(
+      'file',
+      data,
+      filename: 'avatar-upload',
+    );
     request.files.add(multipart_file);
     final resp = await client.send(request);
     final bodyfunc = (x) async {

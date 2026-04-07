@@ -296,16 +296,25 @@ void main() {
     final passwordField = tester.widget<TextFormField>(
       find.byType(TextFormField).at(1),
     );
-    expect(passwordField.controller!.text.split(' '), hasLength(8));
+    final generatedPassword = passwordField.controller!.text;
+    expect(generatedPassword.split(' '), hasLength(8));
     final editablePasswordField = tester.widget<EditableText>(
-      find.byType(EditableText).at(0),
+      find.byType(EditableText).at(1),
     );
     expect(editablePasswordField.obscureText, isFalse);
 
     await tester.pump(ProfileFormState.autosaveDelay);
     await tester.pumpAndSettle();
 
-    expect(httpService.lastPayload?['password'], isA<String>());
+    final savedPasswordField = tester.widget<TextFormField>(
+      find.byType(TextFormField).at(1),
+    );
+    expect(savedPasswordField.controller!.text, generatedPassword);
+    final savedEditablePasswordField = tester.widget<EditableText>(
+      find.byType(EditableText).at(1),
+    );
+    expect(savedEditablePasswordField.obscureText, isFalse);
+    expect(httpService.lastPayload?['password'], generatedPassword);
     expect(
       (httpService.lastPayload?['password'] as String).split(' '),
       hasLength(8),
@@ -317,6 +326,61 @@ void main() {
       hasLength(1),
     );
   });
+
+  testWidgets(
+    'manual password changes stay visible after autosave and are not resent on later status saves',
+    (tester) async {
+      final httpService = FakeProfileHttpService();
+      final meModel = MeModel()
+        ..setData(
+          const SessionUser(
+            authenticated: true,
+            id: 1,
+            username: 'alice',
+            status: 'busy',
+            hasPassword: true,
+          ),
+        );
+
+      await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+      const password = 'correct horse battery staple';
+      await tester.enterText(find.byType(TextFormField).at(1), password);
+      await tester.pump();
+
+      var editablePasswordField = tester.widget<EditableText>(
+        find.byType(EditableText).at(1),
+      );
+      expect(editablePasswordField.obscureText, isFalse);
+
+      await tester.pump(ProfileFormState.autosaveDelay);
+      await tester.pumpAndSettle();
+
+      final savedPasswordField = tester.widget<TextFormField>(
+        find.byType(TextFormField).at(1),
+      );
+      expect(savedPasswordField.controller!.text, password);
+      editablePasswordField = tester.widget<EditableText>(
+        find.byType(EditableText).at(1),
+      );
+      expect(editablePasswordField.obscureText, isFalse);
+      expect(httpService.lastPayload?['password'], password);
+      expect(httpService.updateProfileCalls, 1);
+
+      await tester.enterText(find.byType(TextFormField).at(1), '');
+      await tester.pump(ProfileFormState.autosaveDelay);
+      await tester.pumpAndSettle();
+
+      expect(httpService.updateProfileCalls, 1);
+
+      await tester.enterText(find.byType(TextFormField).at(2), 'still busy');
+      await tester.pump(ProfileFormState.autosaveDelay);
+      await tester.pumpAndSettle();
+
+      expect(httpService.lastPayload?['status'], 'still busy');
+      expect(httpService.lastPayload?.containsKey('password'), isFalse);
+    },
+  );
 
   testWidgets('late autosave completion does not overwrite newer typing', (
     tester,

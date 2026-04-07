@@ -37,9 +37,11 @@ class ProfileFormState extends State<ProfileForm> {
   final statusController = TextEditingController();
 
   late String _savedUsername;
+  String _savedPassword = '';
   late String _savedStatus;
   bool _hasUnsavedChanges = false;
   bool obscurePassword = true;
+  bool _passwordVisibilityInitialized = false;
   bool _suppressFieldChange = false;
   Timer? _autosaveTimer;
   Future<bool>? _saveOperation;
@@ -68,10 +70,7 @@ class ProfileFormState extends State<ProfileForm> {
     }
     _savedUsername = widget.data.username ?? '';
     _savedStatus = widget.data.status ?? '';
-    _replaceFormValues(clearPassword: true);
-    setState(() {
-      obscurePassword = true;
-    });
+    _replaceFormValues(clearPassword: false);
     _updateDirtyState();
   }
 
@@ -96,15 +95,26 @@ class ProfileFormState extends State<ProfileForm> {
     if (_suppressFieldChange) {
       return;
     }
+    if (!_passwordVisibilityInitialized && passwordController.text.isNotEmpty) {
+      _passwordVisibilityInitialized = true;
+      if (obscurePassword) {
+        setState(() {
+          obscurePassword = false;
+        });
+      }
+    }
     _updateDirtyState();
     _scheduleAutosave();
   }
 
   void _updateDirtyState() {
+    final passwordNeedsSave =
+        passwordController.text.trim().isNotEmpty &&
+        passwordController.text != _savedPassword;
     final nextHasUnsavedChanges =
         usernameController.text != _savedUsername ||
         statusController.text != _savedStatus ||
-        passwordController.text.isNotEmpty;
+        passwordNeedsSave;
     if (nextHasUnsavedChanges == _hasUnsavedChanges) {
       return;
     }
@@ -122,9 +132,12 @@ class ProfileFormState extends State<ProfileForm> {
   }) {
     _savedUsername = me.username ?? '';
     _savedStatus = me.status ?? '';
+    if (submittedPassword.trim().isNotEmpty &&
+        passwordController.text == submittedPassword) {
+      _savedPassword = submittedPassword;
+    }
     final preserveUsername = usernameController.text != submittedUsername;
     final preserveStatus = statusController.text != submittedStatusInput;
-    final preservePassword = passwordController.text != submittedPassword;
 
     _suppressFieldChange = true;
     if (!preserveUsername) {
@@ -133,15 +146,7 @@ class ProfileFormState extends State<ProfileForm> {
     if (!preserveStatus) {
       statusController.text = _savedStatus;
     }
-    if (!preservePassword) {
-      passwordController.clear();
-    }
     _suppressFieldChange = false;
-    setState(() {
-      if (!preservePassword) {
-        obscurePassword = true;
-      }
-    });
     _updateDirtyState();
   }
 
@@ -150,6 +155,7 @@ class ProfileFormState extends State<ProfileForm> {
     usernameController.text = _savedUsername;
     statusController.text = _savedStatus;
     if (clearPassword) {
+      _savedPassword = '';
       passwordController.clear();
     }
     _suppressFieldChange = false;
@@ -196,6 +202,7 @@ class ProfileFormState extends State<ProfileForm> {
   void _fillGeneratedPassphrase() {
     final passphrase = generatePassphrase();
     final messenger = ScaffoldMessenger.of(context);
+    _passwordVisibilityInitialized = true;
     setState(() {
       passwordController.text = passphrase;
       obscurePassword = false;
@@ -281,11 +288,14 @@ class ProfileFormState extends State<ProfileForm> {
     final statusInput = statusController.text;
     final status = statusInput.trim();
     final password = passwordController.text;
+    final passwordChanged =
+        password.trim().isNotEmpty && password != _savedPassword;
     final shouldSaveCredentials =
-        username != _savedUsername || password.trim().isNotEmpty;
+        username != _savedUsername ||
+        (passwordChanged && password.trim().isNotEmpty);
 
     final data = <String, String?>{'username': username, 'status': status};
-    if (password.trim().isNotEmpty) {
+    if (passwordChanged && password.trim().isNotEmpty) {
       data['password'] = password;
     }
 

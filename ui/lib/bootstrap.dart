@@ -18,6 +18,7 @@ import 'models.dart';
 import 'nearby_feed_model.dart';
 import 'push_notifications_service.dart';
 import 'push_notifications_session_bridge.dart';
+import 'room_messages_cache.dart';
 import 'rooms_feed_model.dart';
 import 'feed_session_bridge.dart';
 
@@ -82,6 +83,7 @@ Widget buildNarlunApp({SessionUser? initialSessionUser}) {
         dispose: (_, httpService) => httpService.close(),
       ),
       Provider<InviteQrCache>(create: (_) => InviteQrCache()),
+      Provider<RoomMessagesCache>(create: (_) => RoomMessagesCache()),
       ChangeNotifierProvider<InstallPromptService>(
         lazy: false,
         create: (_) => createInstallPromptService(),

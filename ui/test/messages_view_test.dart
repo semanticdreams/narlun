@@ -14,6 +14,7 @@ import 'package:narlun/locator.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/messages_view.dart';
 import 'package:narlun/models.dart';
+import 'package:narlun/room_messages_cache.dart';
 import 'package:narlun/websocket.dart';
 
 class _DummyHttpClient extends http.BaseClient {
@@ -359,6 +360,7 @@ Widget _buildMessagesApp({
   required FakeHttpService httpService,
   required FakeWebsocketService websocketService,
   RoomSummary? room,
+  RoomMessagesCache? roomMessagesCache,
   SessionUser me = const SessionUser(
     authenticated: true,
     id: 1,
@@ -374,14 +376,18 @@ Widget _buildMessagesApp({
       RoomParticipant(id: 2, username: 'other'),
     ],
   );
-  return MaterialApp(
-    home: MessagesView(
-      room: room,
-      me: me,
-      httpService: httpService,
-      websocketService: websocketService,
-    ),
+  final content = MessagesView(
+    room: room,
+    me: me,
+    httpService: httpService,
+    roomMessagesCache: roomMessagesCache,
+    websocketService: websocketService,
   );
+  final provider = Provider<RoomMessagesCache>.value(
+    value: roomMessagesCache ?? RoomMessagesCache(),
+    child: content,
+  );
+  return MaterialApp(home: provider);
 }
 
 void main() {
@@ -514,11 +520,163 @@ void main() {
     await tester.pumpAndSettle();
 
     final state = tester.state(find.byType(MessagesView)) as dynamic;
-    await state.update_messages(silentErrors: true);
+    await state.updateMessages(silentErrors: true);
     await tester.pumpAndSettle();
 
     expect(find.text('Recovered message'), findsOneWidget);
   });
+
+  testWidgets(
+    'revisiting messages keeps cached history visible without refreshing again',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      final roomMessagesCache = RoomMessagesCache();
+      httpService.enqueueMessages(
+        (_) async => [
+          ChatMessage(
+            id: 'history-1',
+            body: 'First history',
+            senderId: 2,
+            timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        Provider<RoomMessagesCache>.value(
+          value: roomMessagesCache,
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MessagesView(
+                          room: RoomSummary(
+                            id: 1,
+                            isGroup: false,
+                            updatedAt: DateTime.parse(
+                              '2026-04-04T10:00:00.000Z',
+                            ),
+                            participants: const [
+                              RoomParticipant(id: 1, username: 'me'),
+                              RoomParticipant(id: 2, username: 'other'),
+                            ],
+                          ),
+                          me: const SessionUser(
+                            authenticated: true,
+                            id: 1,
+                            username: 'me',
+                          ),
+                          httpService: httpService,
+                          roomMessagesCache: roomMessagesCache,
+                          websocketService: websocketService,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open room'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open room'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('First history'), findsOneWidget);
+      expect(httpService.getMessagesCalls, 1);
+
+      Navigator.of(tester.element(find.byType(MessagesView))).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open room'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('First history'), findsOneWidget);
+      expect(find.text('New history'), findsNothing);
+      expect(httpService.getMessagesCalls, 1);
+
+      Navigator.of(tester.element(find.byType(MessagesView))).pop();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open room'));
+      await tester.pumpAndSettle();
+
+      expect(httpService.getMessagesCalls, 1);
+      expect(find.text('First history'), findsOneWidget);
+      expect(find.text('New history'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'revisiting an empty room keeps the empty state visible without reloading',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      final roomMessagesCache = RoomMessagesCache();
+      httpService.enqueueMessages((_) async => const []);
+
+      await tester.pumpWidget(
+        Provider<RoomMessagesCache>.value(
+          value: roomMessagesCache,
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MessagesView(
+                          room: RoomSummary(
+                            id: 1,
+                            isGroup: false,
+                            updatedAt: DateTime.parse(
+                              '2026-04-04T10:00:00.000Z',
+                            ),
+                            participants: const [
+                              RoomParticipant(id: 1, username: 'me'),
+                              RoomParticipant(id: 2, username: 'other'),
+                            ],
+                          ),
+                          me: const SessionUser(
+                            authenticated: true,
+                            id: 1,
+                            username: 'me',
+                          ),
+                          httpService: httpService,
+                          roomMessagesCache: roomMessagesCache,
+                          websocketService: websocketService,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open room'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open room'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No messages yet'), findsOneWidget);
+      expect(httpService.getMessagesCalls, 1);
+
+      Navigator.of(tester.element(find.byType(MessagesView))).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open room'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No messages yet'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(httpService.getMessagesCalls, 1);
+    },
+  );
 
   testWidgets('refreshes the room title when membership changes', (
     tester,
@@ -728,7 +886,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final state = tester.state(find.byType(MessagesView)) as dynamic;
-    await state.update_messages(silentErrors: true);
+    await state.updateMessages(silentErrors: true);
     await tester.pumpAndSettle();
 
     expect(httpService.clearedLocalSession, isTrue);

@@ -11,6 +11,7 @@ import 'leave_room_notice.dart';
 import 'leave_room_notice_storage.dart';
 import 'locator.dart';
 import 'models.dart';
+import 'room_messages_cache.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
 
@@ -18,6 +19,7 @@ class MessagesView extends StatefulWidget {
   final RoomSummary room;
   final SessionUser me;
   final HttpService? httpService;
+  final RoomMessagesCache? roomMessagesCache;
   final WebsocketService? websocketService;
 
   const MessagesView({
@@ -25,6 +27,7 @@ class MessagesView extends StatefulWidget {
     required this.room,
     required this.me,
     this.httpService,
+    this.roomMessagesCache,
     this.websocketService,
   });
 
@@ -67,6 +70,7 @@ class MessagesState extends State<MessagesView> {
   ];
 
   late final HttpService httpService;
+  late final RoomMessagesCache roomMessagesCache;
   late final WebsocketService websocketService;
   late RoomSummary room;
 
@@ -103,6 +107,10 @@ class MessagesState extends State<MessagesView> {
     messenger
       ?..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _persistMessagesCache() {
+    roomMessagesCache.storeMessages(room.id, messages);
   }
 
   Map<int, RoomParticipant> get _participantsById => {
@@ -281,6 +289,7 @@ class MessagesState extends State<MessagesView> {
       messages
         ..clear()
         ..addAll(updatedMessages);
+      _persistMessagesCache();
     });
   }
 
@@ -368,10 +377,12 @@ class MessagesState extends State<MessagesView> {
     }
     messages[pendingIndex] = sentMessage;
     messages.sort(_compareMessages);
+    _persistMessagesCache();
   }
 
   void _removePendingOutgoingMessage(String clientTag) {
     messages.removeWhere((message) => message.clientTag == clientTag);
+    _persistMessagesCache();
   }
 
   ChatMessage _syncMessageParticipantMetadata(ChatMessage message) {
@@ -406,6 +417,7 @@ class MessagesState extends State<MessagesView> {
     messages
       ..clear()
       ..addAll(existingMessages.map(_syncMessageParticipantMetadata));
+    _persistMessagesCache();
   }
 
   String? _typingIndicatorLabel() {
@@ -414,7 +426,7 @@ class MessagesState extends State<MessagesView> {
     );
   }
 
-  Future<void> update_messages({bool silentErrors = false}) async {
+  Future<void> updateMessages({bool silentErrors = false}) async {
     try {
       final resp = await httpService.get_messages(
         room.id,
@@ -428,6 +440,7 @@ class MessagesState extends State<MessagesView> {
         _mergeMessages(resp);
         _resyncMessageParticipants();
         _scrollToBottom();
+        _persistMessagesCache();
       });
       _scheduleMarkRoomRead();
     } on UnauthorizedResponse {
@@ -538,6 +551,7 @@ class MessagesState extends State<MessagesView> {
     if (_roomClosed || !mounted) {
       return;
     }
+    roomMessagesCache.clearRoom(room.id);
     _roomClosed = true;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('This room is no longer available.')),
@@ -730,6 +744,7 @@ class MessagesState extends State<MessagesView> {
       if (!mounted) {
         return;
       }
+      roomMessagesCache.clearRoom(room.id);
       _roomClosed = true;
       Navigator.pop(context, true);
       messenger?.showSnackBar(
@@ -783,7 +798,20 @@ class MessagesState extends State<MessagesView> {
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     httpService =
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
+    final providedRoomMessagesCache = Provider.of<RoomMessagesCache?>(
+      context,
+      listen: false,
+    );
+    roomMessagesCache =
+        widget.roomMessagesCache ??
+        providedRoomMessagesCache ??
+        RoomMessagesCache();
     room = widget.room;
+    final cachedMessages = roomMessagesCache.cachedMessagesFor(room.id);
+    if (cachedMessages != null) {
+      messages.addAll(cachedMessages);
+      _initialHistoryLoaded = roomMessagesCache.hasLoadedRoom(room.id);
+    }
 
     _scrollController.addListener(_scrollListener);
     messageFocusNode = FocusNode();
@@ -817,6 +845,7 @@ class MessagesState extends State<MessagesView> {
             );
             _resyncMessageParticipants();
             _scrollToBottom();
+            _persistMessagesCache();
           });
           _scheduleMarkRoomRead();
         });
@@ -860,7 +889,7 @@ class MessagesState extends State<MessagesView> {
       if (event == 'reconnected') {
         await _refreshRoomSummary(silentErrors: true);
         await _refreshJoinRequests(silentErrors: true);
-        await update_messages(silentErrors: true);
+        await updateMessages(silentErrors: true);
       } else if (event == 'signed-out') {
         await _handleSessionEnded();
       }
@@ -875,7 +904,7 @@ class MessagesState extends State<MessagesView> {
       await websocketService.subscribeRoom(room.id);
       await _refreshRoomSummary(silentErrors: true);
       await _refreshJoinRequests(silentErrors: true);
-      await update_messages(silentErrors: true);
+      await _ensureWarmMessages();
     } on RoomUnavailable {
       await _handleRoomDeleted();
     } catch (error) {
@@ -889,6 +918,12 @@ class MessagesState extends State<MessagesView> {
               'Could not connect to this room right now. Trying again soon.',
         ),
       );
+    }
+  }
+
+  Future<void> _ensureWarmMessages() async {
+    if (!roomMessagesCache.hasLoadedRoom(room.id)) {
+      await updateMessages(silentErrors: true);
     }
   }
 
@@ -986,7 +1021,7 @@ class MessagesState extends State<MessagesView> {
     super.dispose();
   }
 
-  Future<void> send_message() async {
+  Future<void> sendMessage() async {
     final body = messageController.text;
     if (body.isNotEmpty) {
       final pendingMessage = _buildPendingOutgoingMessage(body);
@@ -1348,7 +1383,7 @@ class MessagesState extends State<MessagesView> {
                                 }
                               },
                               onSubmitted: (v) async {
-                                await send_message();
+                                await sendMessage();
                                 messageFocusNode.requestFocus();
                               },
                               decoration: const InputDecoration(
@@ -1395,7 +1430,7 @@ class MessagesState extends State<MessagesView> {
                           color: Colors.white,
                         ),
                         onPressed: () async {
-                          await send_message();
+                          await sendMessage();
                         },
                       ),
                     ),

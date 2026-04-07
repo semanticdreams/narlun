@@ -245,7 +245,12 @@ void main() {
             ),
         ),
       ],
-      child: const MaterialApp(home: _ProfileRouteHost()),
+      child: MaterialApp(
+        routes: {
+          '/settings': (_) => const Scaffold(body: Text('Settings screen')),
+        },
+        home: const _ProfileRouteHost(),
+      ),
     );
   }
 
@@ -377,6 +382,37 @@ void main() {
     expect(httpService.lastFeedbackSource, 'account_menu');
     expect(httpService.lastFeedbackSilentErrors, isTrue);
     expect(find.text('Feedback sent. Thank you.'), findsOneWidget);
+  });
+
+  testWidgets('opening settings from profile respects unsaved changes', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+
+    await tester.pumpWidget(
+      buildProfileApp(
+        httpService: httpService,
+        installPromptService: FakeInstallPromptService(available: false),
+        pushNotificationsService: FakePushNotificationsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Status'),
+      'editing',
+    );
+    await tester.tap(find.byTooltip('Account menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save changes?'), findsOneWidget);
+
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Settings screen'), findsOneWidget);
   });
 
   testWidgets('discarding edited profile changes pops back without saving', (

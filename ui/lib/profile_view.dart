@@ -113,6 +113,17 @@ class _ProfileViewState extends State<ProfileView> {
     });
   }
 
+  Future<void> _openSettings() async {
+    if (_isResolvingPop) {
+      return;
+    }
+    final shouldLeave = await _resolveUnsavedChanges();
+    if (!mounted || !shouldLeave) {
+      return;
+    }
+    Navigator.of(context).pushReplacementNamed('/settings');
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope<void>(
@@ -126,7 +137,7 @@ class _ProfileViewState extends State<ProfileView> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Profile'),
-          actions: const [AppBarAvatar()],
+          actions: [AppBarAvatar(onOpenSettings: _openSettings)],
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: _attemptPop,

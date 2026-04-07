@@ -9,7 +9,9 @@ import 'route_utils.dart';
 enum _AccountMenuAction { profile, settings, feedback }
 
 class AppBarAvatar extends StatelessWidget {
-  const AppBarAvatar({super.key});
+  const AppBarAvatar({super.key, this.onOpenSettings});
+
+  final Future<void> Function()? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +26,11 @@ class AppBarAvatar extends StatelessWidget {
                 Navigator.pushNamed(context, '/profile');
                 break;
               case _AccountMenuAction.settings:
-                Navigator.pushNamed(context, '/settings');
+                if (onOpenSettings != null) {
+                  await onOpenSettings!();
+                } else {
+                  Navigator.pushNamed(context, '/settings');
+                }
                 break;
               case _AccountMenuAction.feedback:
                 final submitted = await showFeedbackDialog(

@@ -168,7 +168,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
         currentUri.path == Uri.parse(targetRoute).path &&
         (currentUri.path != '/rooms' || roomToOpenFromContext(context) == null);
     if (!alreadyShowingTarget) {
-      Navigator.of(context).pushNamed(targetRoute);
+      Navigator.of(context).pushReplacementNamed(targetRoute);
     }
   }
 

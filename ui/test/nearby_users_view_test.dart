@@ -754,7 +754,7 @@ void main() {
   );
 
   testWidgets(
-    'revisiting nearby keeps cached results visible and refreshes stale data in the background',
+    'revisiting nearby keeps cached results visible without refreshing on entry',
     (tester) async {
       final httpService = FakeNearbyHttpService()
         ..nearbyItems = [
@@ -843,16 +843,80 @@ void main() {
       );
 
       await tester.tap(find.text('Show screen'));
-      await tester.pump();
-
-      expect(find.text('bob'), findsOneWidget);
-      expect(find.text('robert'), findsNothing);
-
       await tester.pumpAndSettle();
 
-      expect(httpService.checkinCalls, 2);
-      expect(find.text('robert'), findsOneWidget);
-      expect(find.text('bob'), findsNothing);
+      expect(httpService.checkinCalls, 1);
+      expect(find.text('bob'), findsOneWidget);
+      expect(find.text('robert'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'revisiting nearby after an empty result does not refresh on entry',
+    (tester) async {
+      final httpService = FakeNearbyHttpService();
+      final locationService = FakeLocationService();
+      final websocketService = _FakeWebsocketService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final nearbyFeedModel =
+          NearbyFeedModel(
+            httpService: httpService,
+            locationService: locationService,
+            now: () => now,
+          )..syncSession(
+            const SessionUser(authenticated: true, id: 1, username: 'me'),
+          );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            home: _NearbyRemountHarness(
+              child: NearbyUsersView(
+                httpService: httpService,
+                dialogService: DialogService(),
+                locationService: locationService,
+                websocketService: websocketService,
+                nearbyFeedModel: nearbyFeedModel,
+                onUserJoined: (_, __) async {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Nobody nearby right now. Pull to refresh again soon.'),
+        findsOneWidget,
+      );
+      expect(httpService.checkinCalls, 1);
+
+      await tester.tap(find.text('Hide screen'));
+      await tester.pumpAndSettle();
+
+      now = now.add(
+        NearbyFeedModel.refreshStaleAfter + const Duration(seconds: 1),
+      );
+
+      await tester.tap(find.text('Show screen'));
+      await tester.pumpAndSettle();
+
+      expect(httpService.checkinCalls, 1);
+      expect(
+        find.text('Nobody nearby right now. Pull to refresh again soon.'),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );
 

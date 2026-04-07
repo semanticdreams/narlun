@@ -34,7 +34,6 @@ class NearbyFeedModel extends ChangeNotifier {
   final List<NearbyItem> _nearbyItems = [];
   bool _loading = false;
   String _statusMessage = 'Checking your location...';
-  DateTime? _lastRefreshAttemptAt;
   DateTime? _lastNearbyRequestAt;
   DateTime? _lastLocationRequestAt;
   Position? _lastResolvedPosition;
@@ -61,7 +60,6 @@ class NearbyFeedModel extends ChangeNotifier {
     _nearbyItems.clear();
     _loading = false;
     _statusMessage = 'Checking your location...';
-    _lastRefreshAttemptAt = null;
     _lastNearbyRequestAt = null;
     _lastLocationRequestAt = null;
     _lastResolvedPosition = null;
@@ -73,21 +71,10 @@ class NearbyFeedModel extends ChangeNotifier {
     if (_sessionUserId == null) {
       return;
     }
-    if (_nearbyItems.isEmpty) {
-      await refresh();
+    if (_hasAttemptedRefresh) {
       return;
     }
-    if (_shouldRefreshBecauseStale) {
-      unawaited(refresh(userInitiated: false));
-    }
-  }
-
-  bool get _shouldRefreshBecauseStale {
-    final lastRefreshAttemptAt = _lastRefreshAttemptAt;
-    if (lastRefreshAttemptAt == null) {
-      return true;
-    }
-    return _now().difference(lastRefreshAttemptAt) >= refreshStaleAfter;
+    await refresh();
   }
 
   Future<void> refresh({bool userInitiated = true}) async {
@@ -127,7 +114,6 @@ class NearbyFeedModel extends ChangeNotifier {
     final isInitialLoad = !_hasAttemptedRefresh;
     _hasAttemptedRefresh = true;
     final showLoading = userInitiated || isInitialLoad;
-    _lastRefreshAttemptAt = now;
     if (showLoading) {
       _setLoading(
         true,

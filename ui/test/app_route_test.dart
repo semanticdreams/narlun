@@ -49,6 +49,12 @@ void main() {
     expect(isPrimaryAppShellRoute(Uri.parse('/rooms?open_room=42')), isTrue);
     expect(shouldShowPersistentInstallSuggestionForRoute(Uri.parse('/')), isFalse);
     expect(
+      shouldShowPersistentInstallSuggestionForRoute(
+        Uri.parse('/invite/token-123'),
+      ),
+      isFalse,
+    );
+    expect(
       shouldShowPersistentInstallSuggestionForRoute(Uri.parse('/rooms')),
       isTrue,
     );

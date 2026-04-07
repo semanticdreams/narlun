@@ -52,7 +52,13 @@ bool isPrimaryAppShellRoute(Uri uri) {
 }
 
 bool shouldShowPersistentInstallSuggestionForRoute(Uri uri) {
-  return uri.path != '/';
+  if (uri.path == '/') {
+    return false;
+  }
+  if (uri.pathSegments.length == 2 && uri.pathSegments.first == 'invite') {
+    return false;
+  }
+  return true;
 }
 
 String? sanitizeInviteBackToRoute(String? route) {

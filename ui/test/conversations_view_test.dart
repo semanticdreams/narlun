@@ -421,6 +421,89 @@ void main() {
     expect(openNearbyCalls, 1);
   });
 
+  testWidgets(
+    'revisiting empty rooms keeps the empty state visible without reloading',
+    (tester) async {
+      final websocketService = FakeRoomsWebsocketService();
+      final httpService = FakeRoomsHttpService(
+        websocketService: websocketService,
+        initialResponses: [
+          <RoomSummary>[],
+          <RoomSummary>[
+            RoomSummary(
+              id: 5,
+              updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
+              participants: const [
+                RoomParticipant(id: 1, username: 'me'),
+                RoomParticipant(id: 2, username: 'bob'),
+              ],
+            ),
+          ],
+        ],
+      );
+      final installPromptService = FakeInstallPromptService();
+      final pushNotificationsService = FakePushNotificationsService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final roomsFeedModel =
+          RoomsFeedModel(httpService: httpService, now: () => now)..syncSession(
+            const SessionUser(authenticated: true, id: 1, username: 'me'),
+          );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider<InstallPromptService>.value(
+              value: installPromptService,
+            ),
+            ChangeNotifierProvider<PushNotificationsService>.value(
+              value: pushNotificationsService,
+            ),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            home: _RoomsRemountHarness(
+              child: ConversationsView(
+                httpService: httpService,
+                websocketService: websocketService,
+                showChrome: false,
+                roomsFeedModel: roomsFeedModel,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('No rooms yet'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(httpService.getRoomsCalls, 1);
+
+      await tester.tap(find.text('Hide screen'));
+      await tester.pumpAndSettle();
+      now = now.add(
+        RoomsFeedModel.refreshStaleAfter + const Duration(seconds: 1),
+      );
+
+      await tester.tap(find.text('Show screen'));
+      await tester.pump();
+
+      expect(find.text('No rooms yet'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      await tester.pumpAndSettle();
+
+      expect(httpService.getRoomsCalls, 2);
+      expect(find.text('bob'), findsOneWidget);
+      expect(find.text('No rooms yet'), findsNothing);
+    },
+  );
+
   testWidgets('opens a requested room after the rooms list loads', (
     tester,
   ) async {

@@ -78,6 +78,23 @@ class _CompletingRoomsHttpService extends HttpService {
   }
 }
 
+class _CountingRoomsHttpService extends HttpService {
+  _CountingRoomsHttpService()
+    : super(
+        websocketService: _FakeWebsocketService(),
+        dialogService: DialogService(),
+        client: _DummyHttpClient(),
+      );
+
+  int getRoomsCalls = 0;
+
+  @override
+  Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
+    getRoomsCalls += 1;
+    return const [];
+  }
+}
+
 class _StaticLocationService implements LocationService {
   const _StaticLocationService();
 
@@ -222,6 +239,41 @@ void main() {
       expect(model.rooms, isEmpty);
       expect(model.isLoadingInitial, isFalse);
       expect(model.errorMessage, isNull);
+    },
+  );
+
+  test(
+    'rooms feed treats an empty successful refresh as cached data',
+    () async {
+      final httpService = _CountingRoomsHttpService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final model = RoomsFeedModel(httpService: httpService, now: () => now);
+
+      model.syncSession(
+        const SessionUser(authenticated: true, id: 1, username: 'me'),
+      );
+
+      await model.refresh();
+
+      expect(model.rooms, isEmpty);
+      expect(model.hasCachedData, isTrue);
+      expect(model.isLoadingInitial, isFalse);
+      expect(model.errorMessage, isNull);
+
+      await model.ensureWarm();
+
+      expect(httpService.getRoomsCalls, 1);
+      expect(model.hasCachedData, isTrue);
+      expect(model.isLoadingInitial, isFalse);
+
+      now = now.add(
+        RoomsFeedModel.refreshStaleAfter + const Duration(seconds: 1),
+      );
+      await model.ensureWarm();
+
+      expect(httpService.getRoomsCalls, 2);
+      expect(model.hasCachedData, isTrue);
+      expect(model.isLoadingInitial, isFalse);
     },
   );
 

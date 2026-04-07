@@ -16,6 +16,7 @@ class RoomsFeedModel extends ChangeNotifier {
 
   final List<RoomSummary> _rooms = [];
   bool _refreshing = false;
+  bool _hasLoadedOnce = false;
   String? _errorMessage;
   DateTime? _lastRefreshAttemptAt;
   int? _sessionUserId;
@@ -23,9 +24,9 @@ class RoomsFeedModel extends ChangeNotifier {
   Future<void>? _refreshTask;
 
   List<RoomSummary> get rooms => List.unmodifiable(_rooms);
-  bool get isLoadingInitial => _refreshing && _rooms.isEmpty;
-  bool get hasCachedData => _rooms.isNotEmpty;
-  String? get errorMessage => _rooms.isEmpty ? _errorMessage : null;
+  bool get isLoadingInitial => _refreshing && !_hasLoadedOnce;
+  bool get hasCachedData => _hasLoadedOnce;
+  String? get errorMessage => _hasLoadedOnce ? null : _errorMessage;
 
   void syncSession(SessionUser? user) {
     final nextUserId = user?.authenticated == true && user?.id != null
@@ -38,6 +39,7 @@ class RoomsFeedModel extends ChangeNotifier {
     _sessionVersion += 1;
     _refreshTask = null;
     _rooms.clear();
+    _hasLoadedOnce = false;
     _refreshing = false;
     _errorMessage = null;
     _lastRefreshAttemptAt = null;
@@ -48,7 +50,7 @@ class RoomsFeedModel extends ChangeNotifier {
     if (_sessionUserId == null) {
       return;
     }
-    if (_rooms.isEmpty) {
+    if (!hasCachedData) {
       await refresh(silentErrors: silentErrors);
       return;
     }
@@ -109,6 +111,7 @@ class RoomsFeedModel extends ChangeNotifier {
       _rooms
         ..clear()
         ..addAll(resp);
+      _hasLoadedOnce = true;
       _errorMessage = null;
     } catch (_) {
       if (!_isCurrentRefresh(

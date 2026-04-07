@@ -9,8 +9,6 @@ import 'avatar_image.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'invite_qr_button.dart';
-import 'install_prompt_actions.dart';
-import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'messages_view.dart';
@@ -44,8 +42,6 @@ class ConversationsView extends StatefulWidget {
 }
 
 class _ConversationsState extends State<ConversationsView> {
-  static const _installSuggestionDelay = Duration(seconds: 8);
-
   MeModel? _meModel;
   late final WebsocketService websocketService;
   late final HttpService httpService;
@@ -53,14 +49,12 @@ class _ConversationsState extends State<ConversationsView> {
   bool _ownsRoomsFeedModel = false;
   StreamSubscription? roomsChangedSubscription;
   StreamSubscription? connectionEventsSubscription;
-  Timer? installSuggestionTimer;
-  bool _installSuggestionEligible = false;
+  Timer? promptEligibilityTimer;
   bool _pushPromptEligible = false;
   bool _openedInitialRoom = false;
   bool _reportedMissingInitialRoom = false;
   bool _reportedPromptEligibility = false;
   bool _reportedPushPromptVisible = false;
-  bool _reportedInstallPromptVisible = false;
 
   String _lastMessagePreview(RoomSummary room, SessionUser? currentUser) {
     final preview = room.lastMessage;
@@ -217,12 +211,11 @@ class _ConversationsState extends State<ConversationsView> {
     _meModel = meModel;
     _meModel?.addListener(_handleSessionChanged);
     _syncFeedSession();
-    installSuggestionTimer = Timer(_installSuggestionDelay, () {
+    promptEligibilityTimer = Timer(const Duration(seconds: 8), () {
       if (!mounted) {
         return;
       }
       setState(() {
-        _installSuggestionEligible = true;
         _pushPromptEligible = true;
       });
       _reportPromptEligibility();
@@ -260,7 +253,7 @@ class _ConversationsState extends State<ConversationsView> {
 
   @override
   void dispose() {
-    installSuggestionTimer?.cancel();
+    promptEligibilityTimer?.cancel();
     roomsChangedSubscription?.cancel();
     connectionEventsSubscription?.cancel();
     _meModel?.removeListener(_handleSessionChanged);
@@ -287,28 +280,17 @@ class _ConversationsState extends State<ConversationsView> {
       'conversation_prompts_eligible',
       'Conversation prompt suggestions became eligible.',
       details: {
-        'install_eligible': _installSuggestionEligible,
         'push_eligible': _pushPromptEligible,
       },
     );
   }
 
-  void _reportPromptVisibility({
-    required bool pushVisible,
-    required bool installVisible,
-  }) {
+  void _reportPromptVisibility({required bool pushVisible}) {
     if (pushVisible && !_reportedPushPromptVisible) {
       _reportedPushPromptVisible = true;
       logFrontendDiagnostic(
         'conversation_push_prompt_visible',
         'Conversation screen displayed the push notification prompt.',
-      );
-    }
-    if (installVisible && !_reportedInstallPromptVisible) {
-      _reportedInstallPromptVisible = true;
-      logFrontendDiagnostic(
-        'conversation_install_prompt_visible',
-        'Conversation screen displayed the install prompt.',
       );
     }
   }
@@ -321,25 +303,14 @@ class _ConversationsState extends State<ConversationsView> {
         final rooms = roomsFeedModel.rooms;
         final loadingInitialRooms = roomsFeedModel.isLoadingInitial;
         final roomsErrorMessage = roomsFeedModel.errorMessage;
-        return Consumer3<
-          MeModel,
-          InstallPromptService,
-          PushNotificationsService
-        >(
-          builder: (context, meModel, installPromptService, pushService, child) {
+        return Consumer2<MeModel, PushNotificationsService>(
+          builder: (context, meModel, pushService, child) {
             final currentUser = meModel.data;
             final pushPromptVisible =
                 currentUser?.authenticated == true &&
                 _pushPromptEligible &&
                 pushService.shouldShowPrompt;
-            final installPromptVisible =
-                currentUser?.authenticated == true &&
-                _installSuggestionEligible &&
-                installPromptService.shouldShowSuggestion;
-            _reportPromptVisibility(
-              pushVisible: pushPromptVisible,
-              installVisible: installPromptVisible,
-            );
+            _reportPromptVisibility(pushVisible: pushPromptVisible);
             return ListView(
               children: [
                 if (pushPromptVisible)
@@ -396,54 +367,6 @@ class _ConversationsState extends State<ConversationsView> {
                                 ),
                                 TextButton(
                                   onPressed: pushService.dismissPrompt,
-                                  child: const Text('Not now'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                if (installPromptVisible)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Install Narlun',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'Add Narlun to your home screen for faster launch and a more app-like chat experience.',
-                            ),
-                            const SizedBox(height: 12),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                FilledButton(
-                                  onPressed: () {
-                                    unawaited(
-                                      handleInstallRequest(
-                                        context,
-                                        installPromptService,
-                                      ),
-                                    );
-                                  },
-                                  child: const Text('Install app'),
-                                ),
-                                TextButton(
-                                  onPressed:
-                                      installPromptService.dismissSuggestion,
                                   child: const Text('Not now'),
                                 ),
                               ],

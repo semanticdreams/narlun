@@ -6,6 +6,9 @@ import 'dart:js_util' as js_util;
 
 import 'frontend_error_reporter.dart';
 import 'install_prompt_service.dart';
+import 'install_suggestion_rules.dart';
+
+const _installSuggestionDismissedKey = 'narlun_install_suggestion_dismissed';
 
 class BrowserInstallPromptService extends InstallPromptService {
   late final html.EventListener _beforeInstallPromptListener;
@@ -13,10 +16,12 @@ class BrowserInstallPromptService extends InstallPromptService {
   Timer? _availabilityProbeTimer;
   bool _isInstalled = false;
   bool _promptObserved = false;
+  bool _suggestionDismissed = false;
 
   BrowserInstallPromptService() {
     _isInstalled = _detectInstalled();
     _promptObserved = _detectPromptObserved();
+    _suggestionDismissed = _readSuggestionDismissed();
     _log(
       'service_initialized',
       'Initialized browser install prompt service.',
@@ -48,10 +53,29 @@ class BrowserInstallPromptService extends InstallPromptService {
   bool get isInstalled => _isInstalled;
 
   @override
-  bool get shouldShowSuggestion => false;
+  InstallSuggestion? get suggestion => resolveInstallSuggestion(
+    userAgent: html.window.navigator.userAgent,
+    isInstalled: _isInstalled,
+    dismissed: _suggestionDismissed,
+    isSecureContext: html.window.isSecureContext == true,
+    serviceWorkerSupported: html.window.navigator.serviceWorker != null,
+  );
 
   @override
-  void dismissSuggestion() {}
+  void dismissSuggestion() {
+    if (_suggestionDismissed) {
+      return;
+    }
+    _suggestionDismissed = true;
+    try {
+      html.window.localStorage[_installSuggestionDismissedKey] = '1';
+    } catch (_) {}
+    _log(
+      'suggestion_dismissed',
+      'Dismissed the manual install suggestion.',
+    );
+    notifyListeners();
+  }
 
   @override
   Future<InstallPromptOutcome> requestInstall() async {
@@ -98,6 +122,14 @@ class BrowserInstallPromptService extends InstallPromptService {
       '__narlunObservedBeforeInstallPrompt',
       const [],
     );
+  }
+
+  bool _readSuggestionDismissed() {
+    try {
+      return html.window.localStorage[_installSuggestionDismissedKey] == '1';
+    } catch (_) {
+      return false;
+    }
   }
 
   void _scheduleAvailabilityProbe() {

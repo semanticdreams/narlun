@@ -51,6 +51,10 @@ bool isPrimaryAppShellRoute(Uri uri) {
   return uri.path == '/home' || uri.path == '/nearby' || uri.path == '/rooms';
 }
 
+bool shouldShowPersistentInstallSuggestionForRoute(Uri uri) {
+  return uri.path != '/';
+}
+
 String? sanitizeInviteBackToRoute(String? route) {
   if (route == null || route.isEmpty) {
     return null;

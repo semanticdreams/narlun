@@ -47,6 +47,11 @@ void main() {
     expect(isPrimaryAppShellRoute(Uri.parse('/nearby')), isTrue);
     expect(isPrimaryAppShellRoute(Uri.parse('/rooms')), isTrue);
     expect(isPrimaryAppShellRoute(Uri.parse('/rooms?open_room=42')), isTrue);
+    expect(shouldShowPersistentInstallSuggestionForRoute(Uri.parse('/')), isFalse);
+    expect(
+      shouldShowPersistentInstallSuggestionForRoute(Uri.parse('/rooms')),
+      isTrue,
+    );
     expect(isPrimaryAppShellRoute(Uri.parse('/profile')), isFalse);
     expect(
       sanitizeInviteBackToRoute('/rooms?open_room=42'),

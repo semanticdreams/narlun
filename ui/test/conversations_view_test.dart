@@ -264,61 +264,6 @@ void main() {
     expect(find.text('Welcome landing'), findsOneWidget);
   });
 
-  testWidgets('shows a dismissible install suggestion on the rooms screen', (
-    tester,
-  ) async {
-    final websocketService = FakeRoomsWebsocketService();
-    final httpService = FakeRoomsHttpService(
-      websocketService: websocketService,
-    );
-    final installPromptService = FakeInstallPromptService(
-      available: true,
-      suggest: true,
-    );
-    final pushNotificationsService = FakePushNotificationsService();
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          ChangeNotifierProvider<InstallPromptService>.value(
-            value: installPromptService,
-          ),
-          ChangeNotifierProvider<PushNotificationsService>.value(
-            value: pushNotificationsService,
-          ),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: MaterialApp(
-          home: ConversationsView(
-            httpService: httpService,
-            websocketService: websocketService,
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Install Narlun'), findsNothing);
-
-    await tester.pump(const Duration(seconds: 8));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Install Narlun'), findsOneWidget);
-    expect(find.text('Install app'), findsOneWidget);
-
-    await tester.tap(find.text('Not now'));
-    await tester.pumpAndSettle();
-
-    expect(installPromptService.dismissCalls, 1);
-    expect(find.text('Install Narlun'), findsNothing);
-  });
-
   testWidgets('deep-linked rooms keep the room route name when opened', (
     tester,
   ) async {

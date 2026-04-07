@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'app_route_state.dart';
 import 'app_update_banner.dart';
+import 'install_suggestion_banner.dart';
 import 'signin_view.dart';
 import 'signup_view.dart';
 import 'welcome_view.dart';
@@ -24,6 +26,7 @@ class MyApp extends StatelessWidget {
   final ThemeData theme;
   final FrontendErrorReporter errorReporter;
   final GlobalKey<NavigatorState> navigatorKey;
+  final AppRouteState routeState = AppRouteState();
 
   MyApp({
     super.key,
@@ -37,11 +40,17 @@ class MyApp extends StatelessWidget {
     locator<DialogService>().attachNavigator(navigatorKey);
     return MaterialApp(
       navigatorKey: navigatorKey,
-      builder: (context, widget) => AppUpdateBanner(
-        child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
+      builder: (context, widget) => ChangeNotifierProvider<AppRouteState>.value(
+        value: routeState,
+        child: AppUpdateBanner(
+          child: InstallSuggestionBannerFrame(
+            child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
+          ),
+        ),
       ),
       debugShowCheckedModeBanner: false,
       navigatorObservers: [
+        AppRouteObserver(routeState),
         errorReporter.createNavigatorObserver(),
         LiveViewNavigatorObserver(locator<WebsocketService>()),
       ],

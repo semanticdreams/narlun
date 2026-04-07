@@ -384,7 +384,7 @@ void main() {
     expect(find.text('Feedback sent. Thank you.'), findsOneWidget);
   });
 
-  testWidgets('opening settings from profile respects unsaved changes', (
+  testWidgets('opening settings from profile saves latest edits first', (
     tester,
   ) async {
     final httpService = FakeProfileHttpService();
@@ -407,15 +407,12 @@ void main() {
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Save changes?'), findsOneWidget);
-
-    await tester.tap(find.text('Discard'));
-    await tester.pumpAndSettle();
-
+    expect(httpService.updateProfileCalls, 1);
+    expect(httpService.lastProfilePayload?['status'], 'editing');
     expect(find.text('Settings screen'), findsOneWidget);
   });
 
-  testWidgets('discarding edited profile changes pops back without saving', (
+  testWidgets('leaving profile saves latest edits before popping', (
     tester,
   ) async {
     final httpService = FakeProfileHttpService();
@@ -435,54 +432,14 @@ void main() {
     );
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
-
-    expect(find.text('Save changes?'), findsOneWidget);
-
-    await tester.tap(find.text('Discard'));
-    await tester.pumpAndSettle();
-
-    expect(httpService.updateProfileCalls, 0);
-    expect(find.text('Root screen'), findsOneWidget);
-  });
-
-  testWidgets('saving edited profile changes pops back after save', (
-    tester,
-  ) async {
-    final httpService = FakeProfileHttpService();
-
-    await tester.pumpWidget(
-      buildProfileApp(
-        httpService: httpService,
-        installPromptService: FakeInstallPromptService(available: false),
-        pushNotificationsService: FakePushNotificationsService(),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Status'),
-      'away',
-    );
-    await tester.tap(find.byIcon(Icons.arrow_back));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Save changes?'), findsOneWidget);
-
-    await tester.tap(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.text('Save'),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
 
     expect(httpService.updateProfileCalls, 1);
-    expect(httpService.lastProfilePayload?['status'], 'away');
+    expect(httpService.lastProfilePayload?['username'], 'bob');
     expect(find.text('Root screen'), findsOneWidget);
+    expect(find.text('Profile changes saved'), findsOneWidget);
   });
 
-  testWidgets('canceling the unsaved changes prompt keeps profile open', (
+  testWidgets('invalid profile edits prevent leaving until fixed', (
     tester,
   ) async {
     final httpService = FakeProfileHttpService();
@@ -496,24 +453,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Username'),
-      'bob',
-    );
+    await tester.enterText(find.byType(TextFormField).at(1), 'short');
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
 
-    expect(find.text('Save changes?'), findsOneWidget);
-
-    await tester.tap(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.text('Cancel'),
-      ),
-    );
-    await tester.pumpAndSettle();
-
     expect(httpService.updateProfileCalls, 0);
+    expect(find.text('Password must be at least 8 characters'), findsOneWidget);
     expect(find.text('Profile'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, 'Username'), findsOneWidget);
   });

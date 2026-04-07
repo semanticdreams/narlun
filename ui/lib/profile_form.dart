@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +28,8 @@ class ProfileForm extends StatefulWidget {
 }
 
 class ProfileFormState extends State<ProfileForm> {
+  static const autosaveDelay = Duration(milliseconds: 2200);
+
   late final HttpService httpService;
   final _formKey = GlobalKey<FormState>();
   final usernameController = TextEditingController();
@@ -36,6 +40,9 @@ class ProfileFormState extends State<ProfileForm> {
   late String _savedStatus;
   bool _hasUnsavedChanges = false;
   bool obscurePassword = true;
+  bool _suppressFieldChange = false;
+  Timer? _autosaveTimer;
+  Future<bool>? _saveOperation;
 
   @override
   void initState() {
@@ -53,7 +60,7 @@ class ProfileFormState extends State<ProfileForm> {
   @override
   void didUpdateWidget(covariant ProfileForm oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_hasUnsavedChanges) {
+    if (_hasUnsavedChanges || _saveOperation != null) {
       return;
     }
     if (oldWidget.data == widget.data) {
@@ -61,15 +68,16 @@ class ProfileFormState extends State<ProfileForm> {
     }
     _savedUsername = widget.data.username ?? '';
     _savedStatus = widget.data.status ?? '';
-    usernameController.text = _savedUsername;
-    statusController.text = _savedStatus;
-    passwordController.clear();
-    obscurePassword = true;
+    _replaceFormValues(clearPassword: true);
+    setState(() {
+      obscurePassword = true;
+    });
     _updateDirtyState();
   }
 
   @override
   void dispose() {
+    _autosaveTimer?.cancel();
     usernameController
       ..removeListener(_handleFieldChange)
       ..dispose();
@@ -85,7 +93,11 @@ class ProfileFormState extends State<ProfileForm> {
   bool get hasUnsavedChanges => _hasUnsavedChanges;
 
   void _handleFieldChange() {
+    if (_suppressFieldChange) {
+      return;
+    }
     _updateDirtyState();
+    _scheduleAutosave();
   }
 
   void _updateDirtyState() {
@@ -102,16 +114,83 @@ class ProfileFormState extends State<ProfileForm> {
     widget.onDirtyChanged?.call(_hasUnsavedChanges);
   }
 
-  void _applySavedProfile(SessionUser me) {
+  void _applySavedProfile(
+    SessionUser me, {
+    required String submittedUsername,
+    required String submittedStatusInput,
+    required String submittedPassword,
+  }) {
     _savedUsername = me.username ?? '';
     _savedStatus = me.status ?? '';
-    usernameController.text = _savedUsername;
-    statusController.text = _savedStatus;
-    passwordController.clear();
+    final preserveUsername = usernameController.text != submittedUsername;
+    final preserveStatus = statusController.text != submittedStatusInput;
+    final preservePassword = passwordController.text != submittedPassword;
+
+    _suppressFieldChange = true;
+    if (!preserveUsername) {
+      usernameController.text = _savedUsername;
+    }
+    if (!preserveStatus) {
+      statusController.text = _savedStatus;
+    }
+    if (!preservePassword) {
+      passwordController.clear();
+    }
+    _suppressFieldChange = false;
     setState(() {
-      obscurePassword = true;
+      if (!preservePassword) {
+        obscurePassword = true;
+      }
     });
     _updateDirtyState();
+  }
+
+  void _replaceFormValues({required bool clearPassword}) {
+    _suppressFieldChange = true;
+    usernameController.text = _savedUsername;
+    statusController.text = _savedStatus;
+    if (clearPassword) {
+      passwordController.clear();
+    }
+    _suppressFieldChange = false;
+  }
+
+  void _scheduleAutosave() {
+    _autosaveTimer?.cancel();
+    if (!_hasUnsavedChanges) {
+      return;
+    }
+    _autosaveTimer = Timer(autosaveDelay, () {
+      unawaited(
+        saveProfile(showSuccessMessage: true, showValidationErrors: false),
+      );
+    });
+  }
+
+  String? _validateUsername(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Username can\'t be empty';
+    }
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    final password = value ?? '';
+    if (password.trim().isEmpty) {
+      return null;
+    }
+    if (password.length < 8) {
+      return 'Password must be at least 8 characters';
+    }
+    return null;
+  }
+
+  bool _canSaveCurrentValues({required bool showValidationErrors}) {
+    if (showValidationErrors) {
+      return _formKey.currentState!.validate();
+    }
+    return _validateUsername(usernameController.text) == null &&
+        _validatePassword(passwordController.text) == null;
   }
 
   void _fillGeneratedPassphrase() {
@@ -144,15 +223,63 @@ class ProfileFormState extends State<ProfileForm> {
     );
   }
 
-  Future<bool> saveProfile({bool showSuccessMessage = true}) async {
-    if (!_formKey.currentState!.validate()) {
+  Future<bool> flushPendingChanges({bool showSuccessMessage = true}) async {
+    _autosaveTimer?.cancel();
+    final ongoingSave = _saveOperation;
+    if (ongoingSave != null) {
+      final result = await ongoingSave;
+      if (!_hasUnsavedChanges || !mounted) {
+        return result;
+      }
+    }
+    if (!_hasUnsavedChanges) {
+      return true;
+    }
+    return saveProfile(
+      showSuccessMessage: showSuccessMessage,
+      showValidationErrors: true,
+    );
+  }
+
+  Future<bool> saveProfile({
+    bool showSuccessMessage = true,
+    bool showValidationErrors = true,
+  }) async {
+    _autosaveTimer?.cancel();
+    final ongoingSave = _saveOperation;
+    if (ongoingSave != null) {
+      final result = await ongoingSave;
+      if (!_hasUnsavedChanges || !mounted) {
+        return result;
+      }
+    }
+    if (!_hasUnsavedChanges) {
+      return true;
+    }
+    if (!_canSaveCurrentValues(showValidationErrors: showValidationErrors)) {
       return false;
     }
 
+    final saveFuture = _saveCurrentProfile(
+      showSuccessMessage: showSuccessMessage,
+    );
+    _saveOperation = saveFuture;
+    final result = await saveFuture;
+    if (identical(_saveOperation, saveFuture)) {
+      _saveOperation = null;
+    }
+    if (_hasUnsavedChanges) {
+      _scheduleAutosave();
+    }
+    return result;
+  }
+
+  Future<bool> _saveCurrentProfile({required bool showSuccessMessage}) async {
     final meModel = Provider.of<MeModel>(context, listen: false);
     final messenger = ScaffoldMessenger.of(context);
     final username = usernameController.text;
-    final status = statusController.text.trim();
+    final statusInput = statusController.text;
+    final status = statusInput.trim();
     final password = passwordController.text;
     final shouldSaveCredentials =
         username != _savedUsername || password.trim().isNotEmpty;
@@ -171,10 +298,19 @@ class ProfileFormState extends State<ProfileForm> {
       if (shouldSaveCredentials) {
         TextInput.finishAutofillContext();
       }
-      _applySavedProfile(me);
+      _applySavedProfile(
+        me,
+        submittedUsername: username,
+        submittedStatusInput: statusInput,
+        submittedPassword: password,
+      );
 
       if (showSuccessMessage) {
-        messenger.showSnackBar(const SnackBar(content: Text('Profile saved')));
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(content: Text('Profile changes saved')),
+          );
       }
       return true;
     } on UnauthorizedResponse {
@@ -215,10 +351,7 @@ class ProfileFormState extends State<ProfileForm> {
                   textInputAction: TextInputAction.next,
                   autofillHints: const [AutofillHints.newUsername],
                   validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Username can\'t be empty';
-                    }
-                    return null;
+                    return _validateUsername(value);
                   },
                   decoration: const InputDecoration(
                     hintText: 'Enter a username',
@@ -233,14 +366,7 @@ class ProfileFormState extends State<ProfileForm> {
                   textInputAction: TextInputAction.done,
                   autofillHints: const [AutofillHints.newPassword],
                   validator: (value) {
-                    final password = value ?? '';
-                    if (password.trim().isEmpty) {
-                      return null;
-                    }
-                    if (password.length < 8) {
-                      return 'Password must be at least 8 characters';
-                    }
-                    return null;
+                    return _validatePassword(value);
                   },
                   decoration: InputDecoration(
                     hintText: hasPassword ? '••••••••' : 'Set a password',
@@ -300,7 +426,6 @@ class ProfileFormState extends State<ProfileForm> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
           if (!hasPassword)
             const Padding(
               padding: EdgeInsets.only(bottom: 12),
@@ -309,13 +434,6 @@ class ProfileFormState extends State<ProfileForm> {
                 textAlign: TextAlign.center,
               ),
             ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: ElevatedButton(
-              onPressed: saveProfile,
-              child: const Text('Save'),
-            ),
-          ),
         ],
       ),
     );

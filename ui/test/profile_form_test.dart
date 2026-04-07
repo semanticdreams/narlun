@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+import 'dart:async';
 
 import 'package:narlun/dialog_service.dart';
 import 'package:narlun/http.dart';
@@ -38,10 +39,17 @@ class FakeProfileHttpService extends HttpService {
       );
 
   Map<String, dynamic>? lastPayload;
+  int updateProfileCalls = 0;
+  final List<Future<SessionUser> Function(Map<String, dynamic>)>
+  updateHandlers = [];
 
   @override
   Future<SessionUser> update_profile(data) async {
+    updateProfileCalls += 1;
     lastPayload = Map<String, dynamic>.from(data as Map);
+    if (updateHandlers.isNotEmpty) {
+      return await updateHandlers.removeAt(0)(lastPayload!);
+    }
     return SessionUser(
       authenticated: true,
       id: 1,
@@ -84,7 +92,7 @@ void main() {
   });
 
   testWidgets(
-    'shows status near the top and saves it through the profile form',
+    'shows status near the top and autosaves it through the profile form',
     (tester) async {
       final httpService = FakeProfileHttpService();
       final meModel = MeModel()
@@ -106,7 +114,11 @@ void main() {
       final statusField = find.byType(TextFormField).at(2);
 
       await tester.enterText(statusField, '  new status  ');
-      await tester.tap(find.text('Save'));
+      await tester.pump(
+        ProfileFormState.autosaveDelay - const Duration(milliseconds: 200),
+      );
+      expect(httpService.lastPayload, isNull);
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpAndSettle();
 
       expect(httpService.lastPayload?['status'], 'new status');
@@ -229,38 +241,39 @@ void main() {
     expect(generatedStatus, isNot('busy'));
   });
 
-  testWidgets('saving a username change finishes credential autofill context', (
-    tester,
-  ) async {
-    final httpService = FakeProfileHttpService();
-    final meModel = MeModel()
-      ..setData(
-        const SessionUser(
-          authenticated: true,
-          id: 1,
-          username: 'alice',
-          status: 'busy',
-          hasPassword: true,
+  testWidgets(
+    'autosaving a username change finishes credential autofill context',
+    (tester) async {
+      final httpService = FakeProfileHttpService();
+      final meModel = MeModel()
+        ..setData(
+          const SessionUser(
+            authenticated: true,
+            id: 1,
+            username: 'alice',
+            status: 'busy',
+            hasPassword: true,
+          ),
+        );
+
+      await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+      await tester.enterText(find.byType(TextFormField).first, 'alice-renamed');
+      await tester.pump(ProfileFormState.autosaveDelay);
+      await tester.pumpAndSettle();
+
+      expect(httpService.lastPayload?['username'], 'alice-renamed');
+      expect(httpService.lastPayload?.containsKey('password'), isFalse);
+      expect(
+        tester.testTextInput.log.where(
+          (call) => call.method == 'TextInput.finishAutofillContext',
         ),
+        hasLength(1),
       );
+    },
+  );
 
-    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
-
-    await tester.enterText(find.byType(TextFormField).first, 'alice-renamed');
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-
-    expect(httpService.lastPayload?['username'], 'alice-renamed');
-    expect(httpService.lastPayload?.containsKey('password'), isFalse);
-    expect(
-      tester.testTextInput.log.where(
-        (call) => call.method == 'TextInput.finishAutofillContext',
-      ),
-      hasLength(1),
-    );
-  });
-
-  testWidgets('generates a memorable passphrase and saves it as password', (
+  testWidgets('generates a memorable passphrase and autosaves it as password', (
     tester,
   ) async {
     final httpService = FakeProfileHttpService();
@@ -289,7 +302,7 @@ void main() {
     );
     expect(editablePasswordField.obscureText, isFalse);
 
-    await tester.tap(find.text('Save'));
+    await tester.pump(ProfileFormState.autosaveDelay);
     await tester.pumpAndSettle();
 
     expect(httpService.lastPayload?['password'], isA<String>());
@@ -303,6 +316,58 @@ void main() {
       ),
       hasLength(1),
     );
+  });
+
+  testWidgets('late autosave completion does not overwrite newer typing', (
+    tester,
+  ) async {
+    final httpService = FakeProfileHttpService();
+    final firstSaveCompleter = Completer<SessionUser>();
+    httpService.updateHandlers.add((data) => firstSaveCompleter.future);
+    final meModel = MeModel()
+      ..setData(
+        const SessionUser(
+          authenticated: true,
+          id: 1,
+          username: 'alice',
+          status: 'busy',
+          hasPassword: true,
+        ),
+      );
+
+    await tester.pumpWidget(_buildProfileForm(httpService, meModel));
+
+    final statusFieldFinder = find.byType(TextFormField).at(2);
+    await tester.enterText(statusFieldFinder, 'first draft');
+    await tester.pump(ProfileFormState.autosaveDelay);
+    await tester.pump();
+
+    expect(httpService.updateProfileCalls, 1);
+    expect(httpService.lastPayload?['status'], 'first draft');
+
+    await tester.enterText(statusFieldFinder, 'second draft');
+    await tester.pump();
+
+    firstSaveCompleter.complete(
+      const SessionUser(
+        authenticated: true,
+        id: 1,
+        username: 'alice',
+        status: 'first draft',
+        hasPassword: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final statusField = tester.widget<TextFormField>(statusFieldFinder);
+    expect(statusField.controller!.text, 'second draft');
+
+    await tester.pump(ProfileFormState.autosaveDelay);
+    await tester.pumpAndSettle();
+
+    expect(httpService.updateProfileCalls, 2);
+    expect(httpService.lastPayload?['status'], 'second draft');
+    expect(meModel.data?.status, 'second draft');
   });
 
   testWidgets(
@@ -322,7 +387,8 @@ void main() {
 
       await tester.pumpWidget(_buildProfileForm(httpService, meModel));
 
-      await tester.tap(find.text('Save'));
+      await tester.enterText(find.byType(TextFormField).at(2), 'still busy');
+      await tester.pump(ProfileFormState.autosaveDelay);
       await tester.pumpAndSettle();
 
       expect(httpService.lastPayload?.containsKey('password'), isFalse);
@@ -347,7 +413,14 @@ void main() {
     await tester.pumpWidget(_buildProfileForm(httpService, meModel));
 
     await tester.enterText(find.byType(TextFormField).at(1), 'short');
-    await tester.tap(find.text('Save'));
+    await tester.pump(ProfileFormState.autosaveDelay);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Password must be at least 8 characters'), findsNothing);
+    expect(httpService.lastPayload, isNull);
+
+    final formState = tester.state<ProfileFormState>(find.byType(ProfileForm));
+    await formState.flushPendingChanges();
     await tester.pumpAndSettle();
 
     expect(find.text('Password must be at least 8 characters'), findsOneWidget);

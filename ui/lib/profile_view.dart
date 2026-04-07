@@ -14,8 +14,6 @@ import 'models.dart';
 import 'profile_form.dart';
 import 'session_actions.dart';
 
-enum _UnsavedProfileAction { save, discard }
-
 class ProfileView extends StatefulWidget {
   final Future<Uint8List?> Function()? imagePicker;
   final DialogService? dialogService;
@@ -28,64 +26,18 @@ class ProfileView extends StatefulWidget {
 
 class _ProfileViewState extends State<ProfileView> {
   final _profileFormKey = GlobalKey<ProfileFormState>();
-  bool _hasUnsavedChanges = false;
   bool _allowImmediatePop = false;
   bool _isResolvingPop = false;
-
-  Future<bool> _resolveUnsavedChanges() async {
-    if (!_hasUnsavedChanges) {
-      return true;
-    }
-
-    final action = await showDialog<_UnsavedProfileAction>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Save changes?'),
-        content: const Text(
-          'You have unsaved profile changes. Save them before leaving?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(context, _UnsavedProfileAction.discard),
-            child: const Text('Discard'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, _UnsavedProfileAction.save),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    switch (action) {
-      case _UnsavedProfileAction.save:
-        return await _profileFormKey.currentState?.saveProfile(
-              showSuccessMessage: false,
-            ) ??
-            false;
-      case _UnsavedProfileAction.discard:
-        return true;
-      case null:
-        return false;
-    }
-  }
+  Future<bool>? _pictureSaveOperation;
+  bool _isUploadingPicture = false;
 
   Future<void> _attemptPop() async {
     if (_isResolvingPop) {
       return;
     }
-    if (!_hasUnsavedChanges) {
-      await Navigator.of(context).maybePop();
-      return;
-    }
 
     _isResolvingPop = true;
-    final shouldPop = await _resolveUnsavedChanges();
+    final shouldPop = await _flushPendingProfileChanges();
     if (!mounted) {
       return;
     }
@@ -113,21 +65,35 @@ class _ProfileViewState extends State<ProfileView> {
     });
   }
 
+  Future<bool> _flushPendingProfileChanges() async {
+    final pictureSave = _pictureSaveOperation;
+    if (pictureSave != null) {
+      final result = await pictureSave;
+      if (!result) {
+        return false;
+      }
+    }
+    return await _profileFormKey.currentState?.flushPendingChanges() ?? true;
+  }
+
   Future<void> _openSettings() async {
     if (_isResolvingPop) {
       return;
     }
-    final shouldLeave = await _resolveUnsavedChanges();
+    _isResolvingPop = true;
+    final shouldLeave = await _flushPendingProfileChanges();
     if (!mounted || !shouldLeave) {
+      _isResolvingPop = false;
       return;
     }
+    _isResolvingPop = false;
     Navigator.of(context).pushReplacementNamed('/settings');
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope<void>(
-      canPop: _allowImmediatePop || !_hasUnsavedChanges,
+      canPop: _allowImmediatePop,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) {
           return;
@@ -162,74 +128,31 @@ class _ProfileViewState extends State<ProfileView> {
                       Container(
                         alignment: Alignment.topRight,
                         child: TextButton(
+                          onPressed: _isUploadingPicture
+                              ? null
+                              : () async {
+                                  final saveFuture = _saveProfilePicture();
+                                  _pictureSaveOperation = saveFuture;
+                                  final result = await saveFuture;
+                                  if (!mounted ||
+                                      !identical(
+                                        _pictureSaveOperation,
+                                        saveFuture,
+                                      )) {
+                                    return;
+                                  }
+                                  _pictureSaveOperation = null;
+                                  if (!result) {
+                                    return;
+                                  }
+                                },
                           child: const Text('Upload picture'),
-                          onPressed: () async {
-                            final httpService = Provider.of<HttpService>(
-                              context,
-                              listen: false,
-                            );
-                            final resolvedDialogService =
-                                widget.dialogService ??
-                                locator<DialogService>();
-                            try {
-                              final file =
-                                  await (widget.imagePicker ??
-                                      pickImageBytes)();
-                              if (file == null) {
-                                return;
-                              }
-                              final picture = await httpService
-                                  .upload_profile_picture(file);
-                              if (!context.mounted) {
-                                return;
-                              }
-                              Provider.of<MeModel>(
-                                context,
-                                listen: false,
-                              ).setProfilePicture(picture);
-
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Profile picture saved'),
-                                ),
-                              );
-                            } on UnauthorizedResponse {
-                              if (!context.mounted) {
-                                return;
-                              }
-                              await expireSession(
-                                context,
-                                httpService: httpService,
-                                description:
-                                    'Your session has ended. Please sign in again.',
-                              );
-                            } catch (error) {
-                              await showActionErrorDialog(
-                                resolvedDialogService,
-                                title: 'Upload failed',
-                                error: error,
-                                fallbackDescription:
-                                    'Upload failed. Try again later.',
-                              );
-                            }
-                          },
                         ),
                       ),
                     ],
                   ),
                   if (currentUser != null)
-                    ProfileForm(
-                      key: _profileFormKey,
-                      data: currentUser,
-                      onDirtyChanged: (hasUnsavedChanges) {
-                        if (_hasUnsavedChanges == hasUnsavedChanges) {
-                          return;
-                        }
-                        setState(() {
-                          _hasUnsavedChanges = hasUnsavedChanges;
-                        });
-                      },
-                    ),
+                    ProfileForm(key: _profileFormKey, data: currentUser),
                 ],
               ),
             );
@@ -237,5 +160,56 @@ class _ProfileViewState extends State<ProfileView> {
         ),
       ),
     );
+  }
+
+  Future<bool> _saveProfilePicture() async {
+    final httpService = Provider.of<HttpService>(context, listen: false);
+    final meModel = Provider.of<MeModel>(context, listen: false);
+    final messenger = ScaffoldMessenger.of(context);
+    final resolvedDialogService =
+        widget.dialogService ?? locator<DialogService>();
+    try {
+      setState(() {
+        _isUploadingPicture = true;
+      });
+      final file = await (widget.imagePicker ?? pickImageBytes)();
+      if (file == null) {
+        return false;
+      }
+      final picture = await httpService.upload_profile_picture(file);
+      if (!mounted) {
+        return false;
+      }
+      meModel.setProfilePicture(picture);
+
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Profile changes saved')));
+      return true;
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return false;
+      }
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+      return false;
+    } catch (error) {
+      await showActionErrorDialog(
+        resolvedDialogService,
+        title: 'Upload failed',
+        error: error,
+        fallbackDescription: 'Upload failed. Try again later.',
+      );
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingPicture = false;
+        });
+      }
+    }
   }
 }

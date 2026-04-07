@@ -1,10 +1,14 @@
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
+
 import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
 
+import 'browser_notification_api.dart';
+
 Future<String?> readCurrentPushSubscriptionEndpoint() async {
   final container = html.window.navigator.serviceWorker;
-  if (container == null || !html.Notification.supported) {
+  if (container == null || !browserNotificationSupported()) {
     return null;
   }
 

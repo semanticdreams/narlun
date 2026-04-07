@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'browser_notification_api.dart';
 import 'frontend_error_reporter.dart';
 import 'http_client_browser.dart' as session_http;
 import 'models.dart';
@@ -30,7 +31,7 @@ class BrowserPushNotificationsService extends PushNotificationsService {
       details: _pushStateDetails(
         extra: {
           'is_supported': isSupported,
-          'notification_permission': html.Notification.permission,
+          'notification_permission': _notificationPermission,
           'service_worker_supported':
               html.window.navigator.serviceWorker != null,
           'is_secure_context': html.window.isSecureContext == true,
@@ -60,8 +61,7 @@ class BrowserPushNotificationsService extends PushNotificationsService {
 
   @override
   bool get isSupported =>
-      html.Notification.supported &&
-      html.window.navigator.serviceWorker != null;
+      _notificationSupported && html.window.navigator.serviceWorker != null;
 
   @override
   bool get isConfigured => _isConfigured;
@@ -180,22 +180,22 @@ class BrowserPushNotificationsService extends PushNotificationsService {
         return;
       }
 
-      if (html.Notification.permission != 'granted') {
+      if (_notificationPermission != 'granted') {
         _log(
           'request_permission_started',
           'Requesting browser notification permission.',
           details: _pushStateDetails(
-            extra: {'current_permission': html.Notification.permission},
+            extra: {'current_permission': _notificationPermission},
           ),
         );
-        await html.Notification.requestPermission();
+        await requestBrowserNotificationPermission();
       }
       _permissionState = _readPermissionState();
       _log(
         'request_permission_completed',
         'Completed browser notification permission request.',
         details: _pushStateDetails(
-          extra: {'current_permission': html.Notification.permission},
+          extra: {'current_permission': _notificationPermission},
         ),
       );
       if (_permissionState != PushPermissionState.granted) {
@@ -640,10 +640,11 @@ class BrowserPushNotificationsService extends PushNotificationsService {
   }
 
   PushPermissionState _readPermissionState() {
-    if (!isSupported) {
+    final permission = _notificationPermission;
+    if (!isSupported || permission == null) {
       return PushPermissionState.unsupported;
     }
-    switch (html.Notification.permission) {
+    switch (permission) {
       case 'granted':
         return PushPermissionState.granted;
       case 'denied':
@@ -675,7 +676,7 @@ class BrowserPushNotificationsService extends PushNotificationsService {
     return {
       'user_id': _currentUserId,
       'permission_state': _permissionState.name,
-      'notification_permission': html.Notification.permission,
+      'notification_permission': _notificationPermission,
       'is_configured': _isConfigured,
       'is_subscribed': _isSubscribed,
       'has_browser_subscription': _hasBrowserSubscription,
@@ -685,6 +686,10 @@ class BrowserPushNotificationsService extends PushNotificationsService {
       ...?extra,
     };
   }
+
+  bool get _notificationSupported => browserNotificationSupported();
+
+  String? get _notificationPermission => browserNotificationPermission();
 
   Map<String, Object?> _registrationDetails(
     html.ServiceWorkerRegistration registration,

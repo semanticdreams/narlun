@@ -61,7 +61,10 @@ class FakeBootstrapHttpService extends HttpService {
   }
 
   @override
-  Future<SessionUser> claimInstallSession(String token) async {
+  Future<SessionUser> claimInstallSession(
+    String token, {
+    bool silentErrors = false,
+  }) async {
     return _claimInstallSessionHandlers.removeFirst()(token);
   }
 }
@@ -182,4 +185,39 @@ void main() {
 
     expect(find.text('Rooms page'), findsOneWidget);
   });
+
+  testWidgets(
+    'installed app retries transient install-session claim failures',
+    (tester) async {
+      final httpService = FakeBootstrapHttpService()
+        ..enqueueClaimInstallSession((token) async {
+          expect(token, 'handoff-token');
+          throw ServerError(500);
+        })
+        ..enqueueClaimInstallSession((token) async {
+          expect(token, 'handoff-token');
+          return const SessionUser(authenticated: true, id: 7, username: 'sam');
+        });
+
+      await tester.pumpWidget(
+        _buildWelcomeApp(
+          httpService,
+          initialRoute: '/?install_session=handoff-token&next=%2Frooms',
+          isStandaloneContext: () => true,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.text('Still trying to connect. Trying again in 1s...'),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rooms page'), findsOneWidget);
+    },
+  );
 }

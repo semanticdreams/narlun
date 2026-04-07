@@ -330,10 +330,16 @@ class HttpService {
     return body;
   }
 
-  Future<SessionUser> claimInstallSession(String token) async {
+  Future<SessionUser> claimInstallSession(
+    String token, {
+    bool silentErrors = false,
+  }) async {
     final resp = await client.post(
       Uri.parse('$baseurl/users/claim-install-session'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        ..._requestHeaders(silentErrors: silentErrors),
+      },
       body: jsonEncode({'token': token}),
     );
     final body = SessionUser.fromJson(

@@ -28,7 +28,7 @@ class _WelcomeState extends State<WelcomeView> {
   Timer? _retryTimer;
   bool _loading = true;
   int _attempt = 0;
-  String? _attemptedInstallSessionToken;
+  String? _terminalInstallSessionToken;
   String _statusMessage = 'Getting Narlun ready...';
   String? _detailMessage;
 
@@ -100,17 +100,21 @@ class _WelcomeState extends State<WelcomeView> {
       if (widget.isStandaloneContext() &&
           installSessionToken != null &&
           installSessionToken.isNotEmpty &&
-          _attemptedInstallSessionToken != installSessionToken) {
-        _attemptedInstallSessionToken = installSessionToken;
-        final claimedUser = await httpService.claimInstallSession(
-          installSessionToken,
-        );
-        if (!mounted) {
-          return;
-        }
-        if (claimedUser.authenticated) {
-          await _navigateAfterBootstrap(claimedUser);
-          return;
+          _terminalInstallSessionToken != installSessionToken) {
+        try {
+          final claimedUser = await httpService.claimInstallSession(
+            installSessionToken,
+            silentErrors: true,
+          );
+          if (!mounted) {
+            return;
+          }
+          if (claimedUser.authenticated) {
+            await _navigateAfterBootstrap(claimedUser);
+            return;
+          }
+        } on InvalidUsage {
+          _terminalInstallSessionToken = installSessionToken;
         }
       }
 

@@ -32,16 +32,25 @@ class _FakeWebsocketService extends WebsocketService {
 }
 
 class _FakeInstallPromptService extends InstallPromptService {
-  _FakeInstallPromptService({this.available = false});
+  _FakeInstallPromptService({
+    this.available = false,
+    this.canOpenInstalled = false,
+  });
 
   final bool available;
+  final bool canOpenInstalled;
   int requestInstallCalls = 0;
+  int openInstalledAppCalls = 0;
+  String? lastOpenedNextRoute;
 
   @override
   bool get isInstallAvailable => available;
 
   @override
   bool get isInstalled => false;
+
+  @override
+  bool get canOpenInstalledApp => canOpenInstalled;
 
   @override
   bool get shouldShowSuggestion => false;
@@ -53,6 +62,12 @@ class _FakeInstallPromptService extends InstallPromptService {
   Future<InstallPromptOutcome> requestInstall() async {
     requestInstallCalls += 1;
     return InstallPromptOutcome.accepted;
+  }
+
+  @override
+  Future<void> openInstalledApp({String? nextRoute}) async {
+    openInstalledAppCalls += 1;
+    lastOpenedNextRoute = nextRoute;
   }
 }
 
@@ -320,6 +335,40 @@ void main() {
 
     expect(installPromptService.requestInstallCalls, 1);
     expect(find.text('Narlun is installing.'), findsOneWidget);
+  });
+
+  testWidgets('settings can open installed app with current route handoff', (
+    tester,
+  ) async {
+    final installPromptService = _FakeInstallPromptService(
+      available: false,
+      canOpenInstalled: true,
+    );
+    final pushNotificationsService = _FakePushNotificationsService();
+    final httpService = _FakeSettingsHttpService();
+
+    await tester.pumpWidget(
+      buildSettingsApp(
+        httpService: httpService,
+        installPromptService: installPromptService,
+        pushNotificationsService: pushNotificationsService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Open installed app'), findsOneWidget);
+
+    await tester.tap(find.text('Open installed app'));
+    await tester.pumpAndSettle();
+
+    expect(installPromptService.openInstalledAppCalls, 1);
+    expect(installPromptService.lastOpenedNextRoute, '/settings');
+    expect(
+      find.text(
+        'If the app is installed, it should open there with your current session.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('notification update errors surface a dialog', (tester) async {

@@ -11,7 +11,6 @@ import 'frontend_error_reporter.dart';
 import 'http_client_browser.dart' as session_http;
 import 'install_prompt_service.dart';
 import 'install_suggestion_rules.dart';
-import 'models.dart';
 import 'web_install_state_browser.dart';
 
 const _installSuggestionDismissedKey = 'narlun_install_suggestion_dismissed';
@@ -37,7 +36,6 @@ class BrowserInstallPromptService extends InstallPromptService {
       _isInstalled = true;
       _log('app_installed', 'Browser reported the app was installed.');
       notifyListeners();
-      unawaited(_maybePrepareInstallSessionHandoff());
     };
     html.window.addEventListener(
       'beforeinstallprompt',
@@ -55,8 +53,6 @@ class BrowserInstallPromptService extends InstallPromptService {
   bool _isInstalled = false;
   bool _promptObserved = false;
   bool _suggestionDismissed = false;
-  int? _currentUserId;
-  String? _installSessionHandoffUrl;
 
   @override
   bool get isInstallAvailable => false;
@@ -74,7 +70,7 @@ class BrowserInstallPromptService extends InstallPromptService {
   );
 
   @override
-  String? get installSessionHandoffUrl => _installSessionHandoffUrl;
+  bool get canOpenInstalledApp => !isStandaloneWebAppContext();
 
   @override
   void dismissSuggestion() {
@@ -100,46 +96,44 @@ class BrowserInstallPromptService extends InstallPromptService {
   }
 
   @override
-  Future<void> syncSession(SessionUser? user) async {
-    final nextUserId = user?.authenticated == true && user?.id != null
-        ? user!.id
-        : null;
-    if (_currentUserId == nextUserId) {
+  Future<void> openInstalledApp({String? nextRoute}) async {
+    if (!canOpenInstalledApp) {
       return;
     }
-    _currentUserId = nextUserId;
-    if (_currentUserId == null) {
-      _installSessionHandoffUrl = null;
-      notifyListeners();
-      return;
+    final resolvedNextRoute = nextRoute != null && nextRoute.isNotEmpty
+        ? nextRoute
+        : _currentBrowserRoute();
+    try {
+      final response = await _client.post(
+        Uri.parse('$apiBaseUrl/users/install-session'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'next_route': resolvedNextRoute}),
+      );
+      if (response.statusCode != 200) {
+        _log(
+          'session_handoff_prepare_failed',
+          'Server did not accept the installed app handoff request.',
+          details: {'status_code': response.statusCode},
+        );
+        return;
+      }
+      final claimUrl = jsonDecode(response.body)['claim_url'];
+      if (claimUrl is! String || claimUrl.isEmpty) {
+        return;
+      }
+      _log(
+        'session_handoff_opened',
+        'Attempted to open the installed app handoff URL.',
+        details: {'next_route': resolvedNextRoute},
+      );
+      html.window.open(claimUrl, '_blank');
+    } catch (error) {
+      _log(
+        'session_handoff_prepare_failed',
+        'Preparing the installed app handoff URL failed.',
+        details: {'error': error.toString(), 'next_route': resolvedNextRoute},
+      );
     }
-    await _maybePrepareInstallSessionHandoff();
-  }
-
-  @override
-  Future<void> openInstallSessionHandoff() async {
-    final url = _installSessionHandoffUrl;
-    if (url == null || url.isEmpty) {
-      return;
-    }
-    _log(
-      'session_handoff_opened',
-      'Attempted to open the installed app handoff URL.',
-    );
-    html.window.open(url, '_blank');
-  }
-
-  @override
-  void dismissInstallSessionHandoff() {
-    if (_installSessionHandoffUrl == null) {
-      return;
-    }
-    _installSessionHandoffUrl = null;
-    _log(
-      'session_handoff_dismissed',
-      'Dismissed the installed app handoff prompt.',
-    );
-    notifyListeners();
   }
 
   bool _detectInstalled() {
@@ -193,15 +187,9 @@ class BrowserInstallPromptService extends InstallPromptService {
     notifyListeners();
   }
 
-  Future<void> _maybePrepareInstallSessionHandoff() async {
-    if (_currentUserId == null ||
-        !_isInstalled ||
-        isStandaloneWebAppContext() ||
-        _installSessionHandoffUrl != null) {
-      return;
-    }
+  String _currentBrowserRoute() {
     final currentLocation = Uri.base;
-    final nextRoute = currentLocation.path.isEmpty
+    return currentLocation.path.isEmpty
         ? '/'
         : Uri(
             path: currentLocation.path,
@@ -209,38 +197,6 @@ class BrowserInstallPromptService extends InstallPromptService {
                 ? null
                 : currentLocation.queryParameters,
           ).toString();
-    try {
-      final response = await _client.post(
-        Uri.parse('$apiBaseUrl/users/install-session'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'next_route': nextRoute}),
-      );
-      if (response.statusCode != 200) {
-        _log(
-          'session_handoff_prepare_failed',
-          'Server did not accept the installed app handoff request.',
-          details: {'status_code': response.statusCode},
-        );
-        return;
-      }
-      final claimUrl = jsonDecode(response.body)['claim_url'];
-      if (claimUrl is! String || claimUrl.isEmpty) {
-        return;
-      }
-      _installSessionHandoffUrl = claimUrl;
-      _log(
-        'session_handoff_prepared',
-        'Prepared an installed app session handoff URL.',
-        details: {'next_route': nextRoute},
-      );
-      notifyListeners();
-    } catch (error) {
-      _log(
-        'session_handoff_prepare_failed',
-        'Preparing the installed app handoff URL failed.',
-        details: {'error': error.toString(), 'next_route': nextRoute},
-      );
-    }
   }
 
   Map<String, Object?> _installStateDetails({Map<String, Object?>? extra}) {

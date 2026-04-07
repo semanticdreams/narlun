@@ -9,6 +9,7 @@ import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'push_notifications_service.dart';
+import 'route_utils.dart';
 import 'session_actions.dart';
 
 class SettingsView extends StatelessWidget {
@@ -117,6 +118,37 @@ class SettingsView extends StatelessWidget {
     }
   }
 
+  Future<void> _openInstalledApp(
+    BuildContext context,
+    InstallPromptService installPromptService,
+  ) async {
+    try {
+      await installPromptService.openInstalledApp(
+        nextRoute: currentRouteUri(context)?.toString(),
+      );
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'If the app is installed, it should open there with your current session.',
+            ),
+          ),
+        );
+    } catch (error) {
+      await showActionErrorDialog(
+        locator<DialogService>(),
+        title: 'Could not open installed app',
+        error: error,
+        fallbackDescription:
+            'The installed app could not be opened right now. Try again.',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final me = Provider.of<MeModel>(context).data;
@@ -175,17 +207,42 @@ class SettingsView extends StatelessWidget {
               ),
             Consumer<InstallPromptService>(
               builder: (context, installPromptService, child) {
-                if (!installPromptService.isInstallAvailable) {
+                if (!installPromptService.isInstallAvailable &&
+                    !(me?.authenticated == true &&
+                        installPromptService.canOpenInstalledApp)) {
                   return const SizedBox.shrink();
                 }
                 return _SettingsSection(
                   title: 'App',
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      handleInstallRequest(context, installPromptService);
-                    },
-                    icon: const Icon(Icons.download_for_offline_outlined),
-                    label: const Text('Install app'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (installPromptService.isInstallAvailable)
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            handleInstallRequest(context, installPromptService);
+                          },
+                          icon: const Icon(Icons.download_for_offline_outlined),
+                          label: const Text('Install app'),
+                        ),
+                      if (installPromptService.isInstallAvailable &&
+                          me?.authenticated == true &&
+                          installPromptService.canOpenInstalledApp)
+                        const SizedBox(height: 12),
+                      if (me?.authenticated == true &&
+                          installPromptService.canOpenInstalledApp) ...[
+                        OutlinedButton.icon(
+                          onPressed: () =>
+                              _openInstalledApp(context, installPromptService),
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Open installed app'),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Use this after adding Narlun to your home screen to continue there with your current session.',
+                        ),
+                      ],
+                    ],
                   ),
                 );
               },

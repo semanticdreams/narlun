@@ -16,6 +16,7 @@ import 'frontend_error_reporter.dart';
 import 'me_model.dart';
 import 'route_utils.dart';
 import 'set_page_title.dart';
+import 'standalone_back_bridge.dart';
 import 'websocket.dart';
 
 import 'locator.dart';
@@ -42,9 +43,13 @@ class MyApp extends StatelessWidget {
       navigatorKey: navigatorKey,
       builder: (context, widget) => ChangeNotifierProvider<AppRouteState>.value(
         value: routeState,
-        child: AppUpdateBanner(
-          child: InstallSuggestionBannerFrame(
-            child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
+        child: StandaloneBackBridge(
+          navigatorKey: navigatorKey,
+          routeState: routeState,
+          child: AppUpdateBanner(
+            child: InstallSuggestionBannerFrame(
+              child: SessionWatcher(navigatorKey: navigatorKey, child: widget!),
+            ),
           ),
         ),
       ),

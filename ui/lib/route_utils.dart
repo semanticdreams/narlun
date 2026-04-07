@@ -75,6 +75,85 @@ String? sanitizeInviteBackToRoute(String? route) {
   return null;
 }
 
+String? sanitizeStandaloneBackRoute(String? route) {
+  if (route == null || route.isEmpty) {
+    return null;
+  }
+  final uri = Uri.tryParse(route);
+  if (uri == null) {
+    return null;
+  }
+  if (uri.path == '/' ||
+      uri.path == '/signin' ||
+      uri.path == '/signup' ||
+      uri.path == '/profile' ||
+      uri.path == '/settings' ||
+      uri.path == '/invite' ||
+      isPrimaryAppShellRoute(uri)) {
+    return uri.toString();
+  }
+  if (uri.pathSegments.length == 2 && uri.pathSegments.first == 'invite') {
+    return uri.toString();
+  }
+  return null;
+}
+
+String standaloneBackFallbackRoute({
+  required String currentRouteName,
+  String? previousRouteName,
+  SessionUser? me,
+}) {
+  final currentUri = Uri.tryParse(currentRouteName) ?? Uri(path: '/home');
+  final sanitizedPrevious = sanitizeStandaloneBackRoute(previousRouteName);
+  if (sanitizedPrevious != null && sanitizedPrevious != currentRouteName) {
+    return sanitizedPrevious;
+  }
+
+  if (currentUri.path == '/invite') {
+    final inviteBackTo = sanitizeInviteBackToRoute(
+      currentUri.queryParameters['back_to'],
+    );
+    if (inviteBackTo != null) {
+      return inviteBackTo;
+    }
+    final roomId = int.tryParse(currentUri.queryParameters['room_id'] ?? '');
+    if (roomId != null) {
+      return roomsRouteWithOpenRoom(roomId);
+    }
+    return me?.authenticated == true ? '/home' : '/signup';
+  }
+
+  if (currentUri.pathSegments.length == 2 &&
+      currentUri.pathSegments.first == 'invite') {
+    return me?.authenticated == true ? '/home' : '/signup';
+  }
+
+  if (currentUri.path == '/settings') {
+    return '/profile';
+  }
+
+  if (currentUri.path == '/profile') {
+    return '/home';
+  }
+
+  if (currentUri.path == '/signin' ||
+      currentUri.path == '/signup' ||
+      currentUri.path == '/') {
+    return '/';
+  }
+
+  if (currentUri.path == '/rooms' &&
+      currentUri.queryParameters.containsKey('open_room')) {
+    return roomsRoute();
+  }
+
+  if (isPrimaryAppShellRoute(currentUri)) {
+    return '/home';
+  }
+
+  return me?.authenticated == true ? '/home' : '/signup';
+}
+
 String inviteQrRoute({int? roomId}) {
   return inviteQrRouteWithBackTo(roomId: roomId);
 }

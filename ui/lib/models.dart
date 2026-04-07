@@ -27,7 +27,7 @@ class SessionUser {
       id: json['id'] as int?,
       username: json['username'] as String?,
       picture: json['picture'] as String?,
-      status: json['status'] as String? ?? json['about_me'] as String?,
+      status: json['status'] as String?,
       hasPassword: json['has_password'] == true,
     );
   }
@@ -312,7 +312,7 @@ class NearbyUser {
       id: json['id'] as int,
       username: json['username'] as String,
       picture: json['picture'] as String?,
-      status: json['status'] as String? ?? json['about_me'] as String?,
+      status: json['status'] as String?,
       distance: json['distance'] as int? ?? 0,
       lastSeen: rawLastSeen is String
           ? DateTime.parse(rawLastSeen)

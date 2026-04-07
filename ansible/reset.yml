@@ -1,0 +1,76 @@
+---
+- name: Reset Narlun application data
+  hosts: app
+  become: true
+
+  tasks:
+    - name: Stop backend service
+      ansible.builtin.systemd:
+        name: "{{ backend_service_name }}"
+        state: stopped
+
+    - name: Stop nginx
+      ansible.builtin.service:
+        name: nginx
+        state: stopped
+
+    - name: Stop redis service
+      ansible.builtin.service:
+        name: redis-server
+        state: stopped
+
+    - name: Remove redis persistence directory
+      ansible.builtin.file:
+        path: "{{ redis_data_dir }}"
+        state: absent
+
+    - name: Recreate redis persistence directory
+      ansible.builtin.file:
+        path: "{{ redis_data_dir }}"
+        state: directory
+        owner: redis
+        group: redis
+        mode: "0750"
+
+    - name: Find app-managed log files
+      ansible.builtin.find:
+        paths:
+          - "{{ log_dir }}"
+          - "{{ nginx_app_log_dir }}"
+        recurse: false
+        file_type: file
+      register: reset_log_files
+
+    - name: Remove app-managed log files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ reset_log_files.files }}"
+
+    - name: Recreate application log files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: touch
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: "0640"
+      loop:
+        - "{{ frontend_error_log_path }}"
+        - "{{ feedback_log_path }}"
+
+    - name: Start redis service
+      ansible.builtin.service:
+        name: redis-server
+        state: started
+        enabled: true
+
+    - name: Start nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+
+    - name: Start backend service
+      ansible.builtin.systemd:
+        name: "{{ backend_service_name }}"
+        state: started
+        enabled: true

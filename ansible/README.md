@@ -69,6 +69,17 @@ make deploy
 
 `make deploy` automatically builds the web bundle locally before syncing files to the server.
 
+To wipe application state on the server and restart from an empty Redis store:
+
+```bash
+cd ansible
+make reset
+```
+
+That reset clears Redis persistence plus app-managed file logs and then restarts
+Redis, nginx, and the backend. It does not remove deployed code, secrets, or
+TLS material, and it does not clear the system journal.
+
 If you run the deploy playbook directly, point it at the repository root with:
 
 ```bash

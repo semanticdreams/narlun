@@ -179,14 +179,6 @@ class RedisStore:
     def _username_index_key(self, username):
         return f'idx:username:{normalize_username(username)}'
 
-    def _user_activity_index_backfill_key(self):
-        return 'meta:user_last_active_backfilled'
-
-    def _legacy_dm_key(self, user_a, user_b):
-        # Backward compatibility for deployed pair-room mappings.
-        low, high = sorted([int(user_a), int(user_b)])
-        return f'dm:{low}:{high}'
-
     def _room_pair_key(self, user_a, user_b):
         low, high = sorted([int(user_a), int(user_b)])
         return f'room_pair:{low}:{high}'
@@ -237,27 +229,6 @@ class RedisStore:
         )
         return True
 
-    async def _iter_user_ids(self):
-        cursor = 0
-        seen = set()
-        while True:
-            cursor, keys = await self.redis.scan(
-                cursor=cursor,
-                match='user:{*}:profile',
-                count=100,
-            )
-            for key in keys:
-                try:
-                    user_id = int(key.split('{', 1)[1].split('}', 1)[0])
-                except (IndexError, ValueError, TypeError):
-                    continue
-                if user_id in seen:
-                    continue
-                seen.add(user_id)
-                yield user_id
-            if cursor == 0:
-                break
-
     async def _iter_room_ids(self):
         cursor = 0
         seen = set()
@@ -278,28 +249,6 @@ class RedisStore:
                 yield room_id
             if cursor == 0:
                 break
-
-    async def _ensure_user_activity_index(self):
-        if await self.redis.get(self._user_activity_index_backfill_key()) == '1':
-            return
-        for user_id in [user_id async for user_id in self._iter_user_ids()]:
-            raw_user = await self._load_user_hash(user_id)
-            if raw_user is None:
-                continue
-            last_active = int(
-                raw_user.get('last_active')
-                or raw_user.get('last_seen')
-                or raw_user.get('created_at')
-                or 0
-            )
-            if last_active <= 0:
-                continue
-            await self.redis.hset(
-                self._user_key(user_id),
-                mapping={'last_active': last_active},
-            )
-            await self.redis.zadd('z:user:last_active', {int(user_id): last_active})
-        await self.redis.set(self._user_activity_index_backfill_key(), '1')
 
     async def _resolve_username_id(self, username):
         username_key = self._username_index_key(username)
@@ -322,7 +271,7 @@ class RedisStore:
         return {
             'id': user_id,
             'username': raw_user['username'],
-            'status': raw_user.get('status') or raw_user.get('about_me') or None,
+            'status': raw_user.get('status') or None,
             'picture': avatar_url(user_id, avatar_version),
             'has_password': password_hash is not None,
             'authenticated': authenticated,
@@ -343,7 +292,7 @@ class RedisStore:
         }
 
     def _default_room_name(self, raw_user, *, seed=None):
-        status = normalize_status(raw_user.get('status') or raw_user.get('about_me') or '')
+        status = normalize_status(raw_user.get('status') or '')
         if status:
             return status
         return pick_random_status(seed=seed)
@@ -584,8 +533,6 @@ class RedisStore:
             raise UserNotFound()
 
         updates = {}
-        remove_legacy_about_me = False
-        remove_legacy_phone = 'phone' in raw_user
         if username is not None:
             username = username.strip()
             if not username:
@@ -598,14 +545,9 @@ class RedisStore:
             updates['password_hash'] = generate_password_hash(password)
         if status is not None:
             updates['status'] = normalize_status(status)
-            remove_legacy_about_me = True
 
         if updates:
             await self.redis.hset(self._user_key(user_id), mapping=updates)
-        if remove_legacy_about_me:
-            await self.redis.hdel(self._user_key(user_id), 'about_me')
-        if remove_legacy_phone:
-            await self.redis.hdel(self._user_key(user_id), 'phone')
         return await self.get_authenticated_user(user_id)
 
     async def _replace_username(self, user_id, old_username, new_username):
@@ -904,27 +846,12 @@ class RedisStore:
         owner = await self._load_user_hash(user_id)
 
         pair_key = self._room_pair_key(user_id, other_user_id)
-        legacy_dm_key = self._legacy_dm_key(user_id, other_user_id)
         existing_room_id = await self.redis.get(pair_key)
         if existing_room_id is not None:
             existing_room_id = int(existing_room_id)
             if await self._load_room_meta(existing_room_id) is not None:
                 return {'id': existing_room_id, 'created': False}
             await self.redis.delete(pair_key)
-
-        existing_room_id = await self.redis.get(legacy_dm_key)
-        if existing_room_id is not None:
-            existing_room_id = int(existing_room_id)
-            meta = await self._load_room_meta(existing_room_id)
-            if meta is None:
-                await self.redis.delete(legacy_dm_key)
-            else:
-                room_meta_key = self._room_meta_key(existing_room_id)
-                await self.redis.set(pair_key, existing_room_id)
-                await self.redis.hset(room_meta_key, mapping={'pair_key': pair_key})
-                await self.redis.hdel(room_meta_key, 'dm_key', 'is_group')
-                await self.redis.delete(legacy_dm_key)
-                return {'id': existing_room_id, 'created': False}
 
         room_id = await self._next_room_id()
         members = sorted([int(user_id), other_user_id])
@@ -1476,7 +1403,7 @@ class RedisStore:
         for member in remaining_members:
             await self.redis.zrem(self._user_rooms_key(member), room_id)
             await self.redis.hdel(self._user_room_prefs_key(member), room_id)
-        pair_key = meta.get('pair_key') or meta.get('dm_key')
+        pair_key = meta.get('pair_key')
         if pair_key:
             await self.redis.delete(pair_key)
         await self.redis.delete(self._room_meta_key(room_id))
@@ -1525,7 +1452,6 @@ class RedisStore:
         return deleted_room_ids
 
     async def cleanup_inactive_data(self, *, current_ts=None):
-        await self._ensure_user_activity_index()
         cutoff = self._inactive_user_cutoff_ts(current_ts=current_ts)
         inactive_user_ids = sorted(
             int(user_id)
@@ -1585,10 +1511,10 @@ class RedisStore:
             int(member)
             for member in await self.redis.smembers(members_key)
         )
-        pair_key = meta.get('pair_key') or meta.get('dm_key') or ''
+        pair_key = meta.get('pair_key') or ''
         if pair_key:
             await self.redis.delete(pair_key)
-            await self.redis.hdel(meta_key, 'pair_key', 'dm_key', 'is_group')
+            await self.redis.hdel(meta_key, 'pair_key')
 
         all_members = sorted({*existing_members, user_id})
         await self._delete_join_request(room_id, user_id)

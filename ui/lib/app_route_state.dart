@@ -1,7 +1,10 @@
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 class AppRouteState extends ChangeNotifier {
   List<String?> _routeNames = const [];
+  List<String?>? _pendingRouteNames;
+  bool _flushScheduled = false;
 
   String? get routeName => _routeNames.isEmpty ? null : _routeNames.last;
 
@@ -21,8 +24,31 @@ class AppRouteState extends ChangeNotifier {
     if (_listsEqual(_routeNames, routeNames)) {
       return;
     }
-    _routeNames = List<String?>.unmodifiable(routeNames);
-    notifyListeners();
+    final nextRouteNames = List<String?>.unmodifiable(routeNames);
+    final schedulerPhase = SchedulerBinding.instance.schedulerPhase;
+    if (schedulerPhase == SchedulerPhase.idle ||
+        schedulerPhase == SchedulerPhase.postFrameCallbacks) {
+      _routeNames = nextRouteNames;
+      _pendingRouteNames = null;
+      notifyListeners();
+      return;
+    }
+    _pendingRouteNames = nextRouteNames;
+    if (_flushScheduled) {
+      return;
+    }
+    _flushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _flushScheduled = false;
+      final pendingRouteNames = _pendingRouteNames;
+      _pendingRouteNames = null;
+      if (pendingRouteNames == null ||
+          _listsEqual(_routeNames, pendingRouteNames)) {
+        return;
+      }
+      _routeNames = pendingRouteNames;
+      notifyListeners();
+    });
   }
 
   bool _listsEqual(List<String?> left, List<String?> right) {

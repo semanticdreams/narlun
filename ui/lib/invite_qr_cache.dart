@@ -7,8 +7,8 @@ class InviteQrCache {
   InviteQrCache({DateTime Function()? now}) : _now = now ?? DateTime.now;
 
   final DateTime Function() _now;
-  final Map<String, InviteLink> _invitesByScope = {};
-  final Map<String, Future<InviteLink>> _loadTasksByScope = {};
+  final Map<int, InviteLink> _invitesByRoomId = {};
+  final Map<int, Future<InviteLink>> _loadTasksByRoomId = {};
   int? _sessionUserId;
 
   void syncSession(SessionUser? user) {
@@ -19,18 +19,17 @@ class InviteQrCache {
       return;
     }
     _sessionUserId = nextUserId;
-    _invitesByScope.clear();
-    _loadTasksByScope.clear();
+    _invitesByRoomId.clear();
+    _loadTasksByRoomId.clear();
   }
 
-  InviteLink? cachedInviteFor({int? roomId}) {
-    final scopeKey = _scopeKey(roomId);
-    final invite = _invitesByScope[scopeKey];
+  InviteLink? cachedInviteFor({required int roomId}) {
+    final invite = _invitesByRoomId[roomId];
     if (invite == null) {
       return null;
     }
     if (!_isInviteUsable(invite)) {
-      _invitesByScope.remove(scopeKey);
+      _invitesByRoomId.remove(roomId);
       return null;
     }
     return invite;
@@ -38,10 +37,9 @@ class InviteQrCache {
 
   Future<InviteLink> loadInvite({
     required HttpService httpService,
-    int? roomId,
+    required int roomId,
     bool forceRefresh = false,
   }) {
-    final scopeKey = _scopeKey(roomId);
     if (!forceRefresh) {
       final cachedInvite = cachedInviteFor(roomId: roomId);
       if (cachedInvite != null) {
@@ -49,7 +47,7 @@ class InviteQrCache {
       }
     }
 
-    final existingTask = _loadTasksByScope[scopeKey];
+    final existingTask = _loadTasksByRoomId[roomId];
     if (existingTask != null) {
       return existingTask;
     }
@@ -57,31 +55,25 @@ class InviteQrCache {
     final task = _createAndStoreInvite(
       httpService: httpService,
       roomId: roomId,
-      scopeKey: scopeKey,
     );
-    _loadTasksByScope[scopeKey] = task;
+    _loadTasksByRoomId[roomId] = task;
     return task;
   }
 
   Future<InviteLink> _createAndStoreInvite({
     required HttpService httpService,
-    required int? roomId,
-    required String scopeKey,
+    required int roomId,
   }) async {
     try {
       final invite = await httpService.create_invite(roomId: roomId);
-      _invitesByScope[scopeKey] = invite;
+      _invitesByRoomId[roomId] = invite;
       return invite;
     } finally {
-      _loadTasksByScope.remove(scopeKey);
+      _loadTasksByRoomId.remove(roomId);
     }
   }
 
   bool _isInviteUsable(InviteLink invite) {
     return invite.expiresAt.isAfter(_now());
-  }
-
-  String _scopeKey(int? roomId) {
-    return roomId == null ? 'global' : 'room:$roomId';
   }
 }

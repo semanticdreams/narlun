@@ -191,9 +191,18 @@ class BackendClient {
   }
 
   async joinUser(jwtCookie, userId) {
-    const response = await this.request('POST', '/social/join-user', {
+    const response = await this.request('POST', '/social/create-room', {
       cookie: jwtCookie,
-      body: { user_id: userId },
+      body: { name: '', user_ids: [userId] },
+      expectedStatus: 200,
+    });
+    return response.json;
+  }
+
+  async createGroupRoom(jwtCookie, name, userIds) {
+    const response = await this.request('POST', '/social/create-room', {
+      cookie: jwtCookie,
+      body: { name, user_ids: userIds },
       expectedStatus: 200,
     });
     return response.json;
@@ -229,6 +238,14 @@ class BackendClient {
     const response = await this.request('POST', '/social/create-invite', {
       cookie: jwtCookie,
       body,
+      expectedStatus: 200,
+    });
+    return response.json;
+  }
+
+  async getRooms(jwtCookie) {
+    const response = await this.request('GET', '/social/get-rooms', {
+      cookie: jwtCookie,
       expectedStatus: 200,
     });
     return response.json;
@@ -271,6 +288,10 @@ class BackendSession {
     return this.client.joinUser(this.jwtCookie, userId);
   }
 
+  async createGroupRoom(name, userIds) {
+    return this.client.createGroupRoom(this.jwtCookie, name, userIds);
+  }
+
   async sendMessage(roomId, body) {
     return this.client.sendMessage(this.jwtCookie, roomId, body);
   }
@@ -285,6 +306,10 @@ class BackendSession {
 
   async createInvite(roomId) {
     return this.client.createInvite(this.jwtCookie, roomId);
+  }
+
+  async getRooms() {
+    return this.client.getRooms(this.jwtCookie);
   }
 }
 

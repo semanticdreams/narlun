@@ -399,16 +399,6 @@ class HttpService {
     return NearbyItem.listFromJson(body['nearby'] as List<dynamic>);
   }
 
-  Future<int> join_user(user_id) async {
-    final data = {'user_id': user_id};
-    final resp = await client.post(
-      Uri.parse(baseurl + '/social/join-user'),
-      body: jsonEncode(data),
-    );
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    return body['id'] as int;
-  }
-
   Future<RoomSummary> create_room({
     String name = '',
     List<int> userIds = const [],
@@ -429,14 +419,10 @@ class HttpService {
     return RoomSummary.fromJson(body['room'] as Map<String, dynamic>);
   }
 
-  Future<InviteLink> create_invite({int? roomId}) async {
-    final payload = <String, dynamic>{};
-    if (roomId != null) {
-      payload['room_id'] = roomId;
-    }
+  Future<InviteLink> create_invite({required int roomId}) async {
     final resp = await client.post(
       Uri.parse(baseurl + '/social/create-invite'),
-      body: jsonEncode(payload),
+      body: jsonEncode({'room_id': roomId}),
     );
     return InviteLink.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }

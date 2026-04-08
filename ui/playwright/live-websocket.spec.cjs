@@ -13,6 +13,10 @@ const {
 let harness;
 let backendClient;
 
+function defaultRoomTitleFor(username) {
+  return `New room by ${username}`;
+}
+
 async function browserSignup(page, rootUrl, username) {
   await page.goto(`${rootUrl}/`);
   await expect(
@@ -67,43 +71,48 @@ test('rooms list updates and live messages arrive from the backend in the browse
   const alice = await currentBrowserUser(page);
   const bob = await backendClient.signupGuest(randomUsername('bob'));
   const room = await bob.joinUser(alice.id);
+  const roomTitle = defaultRoomTitleFor(bob.username);
 
   await page.getByRole('tab', { name: 'Rooms' }).click();
-  await expect(page.getByText(bob.username)).toBeVisible();
-  await page.getByText(bob.username).last().click();
+  await expect(page.getByText(roomTitle)).toBeVisible();
+  await page.getByText(roomTitle).last().click();
   await bob.sendMessage(room.id, 'hello from backend');
   await expect(page.getByText('hello from backend')).toBeVisible();
 });
 
-test('tapping a nearby user opens the room immediately in the browser', async ({ page }) => {
+test('tapping a nearby room sends a join request in the browser', async ({ page }) => {
   await browserSignup(page, harness.rootUrl, randomUsername('alice'));
   const bob = await backendClient.signupGuest(randomUsername('bob'));
+  const room = await bob.createGroupRoom('', []);
+  const roomTitle = defaultRoomTitleFor(bob.username);
 
   await bob.checkin(1, 2);
   await page.reload();
 
-  await expect(page.getByText(bob.username)).toBeVisible({ timeout: 20_000 });
-  await page.getByText(bob.username).click();
+  await expect(page.getByText(roomTitle)).toBeVisible({ timeout: 20_000 });
+  await page.getByText(roomTitle).click();
 
-  await expect(page.getByRole('textbox')).toBeVisible();
-  await expect(page.getByText(bob.username).first()).toBeVisible();
+  await expect(page.getByText('Join request sent.')).toBeVisible();
+  await expect(page.getByText('Requested')).toBeVisible();
+  const bobRooms = await bob.getRooms();
+  expect(bobRooms.some((candidate) => candidate.id === room.id)).toBe(true);
 });
 
-test('room deletion while open returns to the room list in the browser', async ({ page }) => {
+test('room stays open when another member disappears and it becomes solo in the browser', async ({ page }) => {
   await browserSignup(page, harness.rootUrl, randomUsername('alice'));
   const alice = await currentBrowserUser(page);
   const bob = await backendClient.signupGuest(randomUsername('bob'));
+  const roomTitle = defaultRoomTitleFor(bob.username);
 
   await bob.joinUser(alice.id);
   await page.getByRole('tab', { name: 'Rooms' }).click();
-  await expect(page.getByText(bob.username)).toBeVisible();
-  await page.getByText(bob.username).last().click();
+  await expect(page.getByText(roomTitle)).toBeVisible();
+  await page.getByText(roomTitle).last().click();
 
   await bob.signout();
 
-  await expect(page.getByText('This room is no longer available.').first()).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Rooms' })).toBeVisible();
-  await expect(page.getByText(bob.username)).toHaveCount(0);
+  await expect(page.getByRole('textbox')).toBeVisible();
+  await expect(page.getByText('This room is no longer available.')).toHaveCount(0);
 });
 
 test('guest account signout from another client returns the browser app to signup', async ({ page }) => {
@@ -123,10 +132,11 @@ test('rooms list websocket reconnect survives a backend restart in the browser',
   await harness.restartBackend();
 
   const bob = await backendClient.signupGuest(randomUsername('bob'));
+  const roomTitle = defaultRoomTitleFor(bob.username);
   await bob.joinUser(alice.id);
 
   await page.getByRole('tab', { name: 'Rooms' }).click();
-  await expect(page.getByText(bob.username)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(roomTitle)).toBeVisible({ timeout: 20_000 });
 });
 
 test('room websocket reconnect survives a backend restart in the browser', async ({ page }) => {
@@ -134,10 +144,11 @@ test('room websocket reconnect survives a backend restart in the browser', async
   const alice = await currentBrowserUser(page);
   const bob = await backendClient.signupGuest(randomUsername('bob'));
   const room = await bob.joinUser(alice.id);
+  const roomTitle = defaultRoomTitleFor(bob.username);
 
   await page.getByRole('tab', { name: 'Rooms' }).click();
-  await expect(page.getByText(bob.username)).toBeVisible();
-  await page.getByText(bob.username).last().click();
+  await expect(page.getByText(roomTitle)).toBeVisible();
+  await page.getByText(roomTitle).last().click();
 
   await harness.restartBackend();
 
@@ -199,10 +210,11 @@ test('room invite link sends a new user through signup into the existing room', 
   const browserJwt = await currentJwtCookie(page);
   const bob = await backendClient.signupGuest(randomUsername('bob'));
   const room = await bob.joinUser(alice.id);
+  const roomTitle = defaultRoomTitleFor(bob.username);
 
   await page.getByRole('tab', { name: 'Rooms' }).click();
-  await expect(page.getByText(bob.username)).toBeVisible();
-  await page.getByText(bob.username).last().click();
+  await expect(page.getByText(roomTitle)).toBeVisible();
+  await page.getByText(roomTitle).last().click();
   await expect(page.getByRole('textbox')).toBeVisible();
 
   await page.getByRole('button', { name: 'Invite people to this room' }).click();

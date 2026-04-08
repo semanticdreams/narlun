@@ -77,7 +77,6 @@ async def test_nearby_is_rooms_only_and_excludes_joined_rooms(cli):
 
     await checkin(cli, users[0]['jwt'], HAMBURG)
     nearby = await checkin(cli, users[1]['jwt'], MADRID)
-    assert nearby['nearby_users'] == []
     assert nearby['nearby'] == []
 
     room = await create_group_room(cli, users[0]['jwt'], '', [])
@@ -86,7 +85,6 @@ async def test_nearby_is_rooms_only_and_excludes_joined_rooms(cli):
 
     nearby = await checkin(cli, users[2]['jwt'], HAMBURG)
     room_items = [item for item in nearby['nearby'] if item['type'] == 'room']
-    assert nearby['nearby_users'] == []
     assert [item['room']['id'] for item in room_items] == [room['id']]
 
     nearby = await checkin(cli, users[0]['jwt'], HAMBURG)
@@ -154,7 +152,6 @@ async def test_nearby_rooms_only_list_is_not_truncated_by_room_items(cli, monkey
     await checkin(cli, users[3]['jwt'], BERLIN)
 
     nearby = await checkin(cli, users[2]['jwt'], HAMBURG)
-    assert nearby['nearby_users'] == []
     assert [item['type'] for item in nearby['nearby']] == ['room', 'room']
     assert first_room['id'] in {item['room']['id'] for item in nearby['nearby']}
 
@@ -175,7 +172,7 @@ async def test_nearby_excludes_users_inactive_for_more_than_two_hours(cli, monke
     monkeypatch.setattr(redis_store.time, 'time', lambda: base_time)
 
     nearby = await checkin(cli, users[1]['jwt'], HAMBURG)
-    assert nearby['nearby_users'] == []
+    assert nearby['nearby'] == []
 
 
 async def test_nearby_excludes_rooms_inactive_for_more_than_two_hours_even_with_active_members(
@@ -597,16 +594,41 @@ async def test_message_ordering_within_one_second(cli, monkeypatch):
     assert [message['body'] for message in messages[:2]] == ['second', 'first']
 
 
-async def test_user_invite_accept_creates_room_with_inviter(cli):
-    users = [await signup(cli) for _ in range(2)]
+async def test_expired_solo_rooms_reject_new_messages_immediately(cli, monkeypatch):
+    created = await signup(cli)
+    room = await create_group_room(cli, created['jwt'], '', [])
 
-    invite = await create_invite(cli, users[0]['jwt'])
-    response = await accept_invite(cli, users[1]['jwt'], invite['token'])
-    assert response.status == 200
-    room = await response.json()
+    original_time = redis_store.time.time
+    base_time = original_time()
+    monkeypatch.setattr(redis_store.time, 'time', lambda: base_time)
 
-    participant_ids = sorted(participant['id'] for participant in room['participants'])
-    assert participant_ids == sorted([users[0]['user']['id'], users[1]['user']['id']])
+    expired_now = base_time + redis_store.SOLO_ROOM_EXPIRY_SECONDS + 1
+    monkeypatch.setattr(redis_store.time, 'time', lambda: expired_now)
+
+    response = await cli.post(
+        '/api/social/send-message',
+        json={'room_id': room['id'], 'body': 'still here?'},
+        headers={'Cookie': f'jwt={created["jwt"]}'},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1000
+
+
+async def test_room_invite_requires_room_id(cli):
+    created = await signup(cli)
+
+    response = await cli.post(
+        '/api/social/create-invite',
+        json={},
+        headers={'Cookie': f'jwt={created["jwt"]}'},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1003
+    assert body['message'] == 'Room invite requires a room'
 
 
 async def test_room_invite_adds_user_to_existing_room(cli):

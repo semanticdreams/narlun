@@ -701,7 +701,6 @@ class RedisStore:
         )
         response = {
             'nearby': [*nearby[:MAX_NEARBY_RESULTS], *pinned_requested_rooms],
-            'nearby_users': [],
         }
         logger.info(
             'Computed nearby checkin result',
@@ -809,20 +808,6 @@ class RedisStore:
         nearby_viewer_ids.difference_update(room_member_ids)
         return sorted(nearby_viewer_ids)
 
-    async def join_user(self, user_id, other_user_id):
-        user_id = int(user_id)
-        other_user_id = int(other_user_id)
-        if user_id == other_user_id:
-            raise ValueError('Cannot start a room with yourself')
-        if await self._load_user_hash(other_user_id) is None:
-            raise UserNotFound()
-        room = await self.create_group_room(
-            user_id,
-            name='',
-            user_ids=[other_user_id],
-        )
-        return {'id': room['id'], 'created': True}
-
     async def create_group_room(self, owner_id, *, name, user_ids):
         member_ids = sorted({int(owner_id), *[int(user_id) for user_id in user_ids]})
         if len(member_ids) < 1:
@@ -917,9 +902,7 @@ class RedisStore:
         return {'room': room['room'], 'created': True}
 
     async def get_room_join_requests(self, user_id, room_id):
-        room_id = int(room_id)
-        if not await self.user_in_room(user_id, room_id):
-            raise PermissionDenied()
+        room_id = await self._require_active_room_membership(user_id, room_id)
         await self._prune_expired_room_join_requests(room_id)
         requester_ids = [
             int(requester_id)
@@ -933,10 +916,8 @@ class RedisStore:
         return requests
 
     async def approve_room_join_request(self, approver_id, room_id, requester_id):
-        room_id = int(room_id)
+        room_id = await self._require_active_room_membership(approver_id, room_id)
         requester_id = int(requester_id)
-        if not await self.user_in_room(approver_id, room_id):
-            raise PermissionDenied()
         await self._prune_expired_room_join_requests(room_id)
         if not await self.redis.exists(self._join_request_key(room_id, requester_id)):
             raise JoinRequestNotFound()
@@ -944,10 +925,8 @@ class RedisStore:
         return await self._add_user_to_room(room_id, requester_id, inviter_id=approver_id)
 
     async def reject_room_join_request(self, approver_id, room_id, requester_id):
-        room_id = int(room_id)
+        room_id = await self._require_active_room_membership(approver_id, room_id)
         requester_id = int(requester_id)
-        if not await self.user_in_room(approver_id, room_id):
-            raise PermissionDenied()
         await self._prune_expired_room_join_requests(room_id)
         if not await self.redis.exists(self._join_request_key(room_id, requester_id)):
             raise JoinRequestNotFound()
@@ -958,25 +937,16 @@ class RedisStore:
         )
         return True
 
-    async def create_invite(self, inviter_id, *, room_id=None):
+    async def create_invite(self, inviter_id, *, room_id):
         if await self._load_user_hash(inviter_id) is None:
             raise UserNotFound()
 
+        room_id = await self._require_active_room_membership(inviter_id, room_id)
         payload = {
             'inviter_id': int(inviter_id),
             'created_at': now_ts(),
+            'room_id': room_id,
         }
-        if room_id is None:
-            payload['target'] = 'user'
-        else:
-            room_id = int(room_id)
-            meta = await self._get_room_meta_if_active(room_id)
-            if meta is None:
-                raise RoomNotFound()
-            if not await self.user_in_room(inviter_id, room_id):
-                raise PermissionDenied()
-            payload['target'] = 'room'
-            payload['room_id'] = room_id
 
         token = secrets.token_urlsafe(18)
         await self.redis.set(
@@ -1043,34 +1013,28 @@ class RedisStore:
         if await self._load_user_hash(user_id) is None or await self._load_user_hash(inviter_id) is None:
             raise InviteNotFound()
 
-        if invite['target'] == 'room':
-            room_id = int(invite['room_id'])
-            if await self._get_room_meta_if_active(room_id) is None:
-                raise RoomNotFound()
-            return await self._add_user_to_room(
-                room_id,
-                user_id,
-                inviter_id=inviter_id,
-            )
-
-        if int(user_id) == inviter_id:
-            raise PermissionDenied()
-        room_data = await self.join_user(inviter_id, user_id)
-        room = await self._serialize_room(room_data['id'])
-        if room is None:
+        room_id = int(invite['room_id'])
+        if await self._get_room_meta_if_active(room_id) is None:
             raise RoomNotFound()
-        return {
-            'room': room,
-            'membership_changed': room_data.get('created') is True,
-        }
+        return await self._add_user_to_room(
+            room_id,
+            user_id,
+            inviter_id=inviter_id,
+        )
 
     async def user_in_room(self, user_id, room_id):
         return bool(await self.redis.sismember(self._room_members_key(room_id), user_id))
 
-    async def send_message(self, sender_id, room_id, body):
+    async def _require_active_room_membership(self, user_id, room_id):
         room_id = int(room_id)
-        if not await self.user_in_room(sender_id, room_id):
+        if await self._get_room_meta_if_active(room_id) is None:
+            raise RoomNotFound()
+        if not await self.user_in_room(user_id, room_id):
             raise PermissionDenied()
+        return room_id
+
+    async def send_message(self, sender_id, room_id, body):
+        room_id = await self._require_active_room_membership(sender_id, room_id)
         body = body.strip()
         if not body:
             raise ValueError('Empty message body')
@@ -1295,9 +1259,7 @@ class RedisStore:
         return room_bool(value)
 
     async def set_room_push_muted(self, user_id, room_id, *, push_muted):
-        room_id = int(room_id)
-        if not await self.user_in_room(user_id, room_id):
-            raise PermissionDenied()
+        room_id = await self._require_active_room_membership(user_id, room_id)
         prefs_key = self._user_room_prefs_key(user_id)
         if push_muted:
             await self.redis.hset(prefs_key, room_id, '1')
@@ -1612,11 +1574,7 @@ class RedisStore:
         }
 
     async def get_messages(self, user_id, room_id):
-        room_id = int(room_id)
-        if await self._get_room_meta_if_active(room_id) is None:
-            raise RoomNotFound()
-        if not await self.user_in_room(user_id, room_id):
-            raise PermissionDenied()
+        room_id = await self._require_active_room_membership(user_id, room_id)
         cutoff_ms = now_ms() - (MESSAGE_TTL_SECONDS * 1000)
         room_messages_key = self._room_messages_key(room_id)
         await self.redis.zremrangebyscore(room_messages_key, '-inf', cutoff_ms)
@@ -1636,12 +1594,8 @@ class RedisStore:
         ]
 
     async def mark_room_read(self, user_id, room_id, *, message_id=None):
-        room_id = int(room_id)
+        room_id = await self._require_active_room_membership(user_id, room_id)
         user_id = int(user_id)
-        if await self._get_room_meta_if_active(room_id) is None:
-            raise RoomNotFound()
-        if not await self.user_in_room(user_id, room_id):
-            raise PermissionDenied()
 
         room_messages_key = self._room_messages_key(room_id)
         if message_id is None:
@@ -1726,10 +1680,8 @@ class RedisStore:
         return True
 
     async def leave_room(self, user_id, room_id):
-        room_id = int(room_id)
         user_id = int(user_id)
-        if not await self.user_in_room(user_id, room_id):
-            raise PermissionDenied()
+        room_id = await self._require_active_room_membership(user_id, room_id)
         return await self._remove_user_from_room(user_id, room_id)
 
     async def _remove_user_from_room(self, user_id, room_id):

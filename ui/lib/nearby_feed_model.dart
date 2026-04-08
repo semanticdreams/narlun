@@ -77,7 +77,31 @@ class NearbyFeedModel extends ChangeNotifier {
     await refresh();
   }
 
-  Future<void> refresh({bool userInitiated = true}) async {
+  Future<bool> refreshIfLocationAlreadyAvailable() async {
+    if (_sessionUserId == null) {
+      return false;
+    }
+    if (!(await locationService.isLocationServiceEnabled())) {
+      return false;
+    }
+    final permission = await locationService.checkPermission();
+    if (!_hasGrantedPermission(permission)) {
+      return false;
+    }
+    try {
+      await refresh(userInitiated: false, requestPermissionIfDenied: false);
+      return true;
+    } on NearbyLocationProblem {
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> refresh({
+    bool userInitiated = true,
+    bool requestPermissionIfDenied = true,
+  }) async {
     if (_sessionUserId == null) {
       return;
     }
@@ -90,6 +114,7 @@ class NearbyFeedModel extends ChangeNotifier {
       refreshSessionVersion: refreshSessionVersion,
       refreshSessionUserId: refreshSessionUserId,
       userInitiated: userInitiated,
+      requestPermissionIfDenied: requestPermissionIfDenied,
     );
     _refreshTask = task;
     try {
@@ -105,6 +130,7 @@ class NearbyFeedModel extends ChangeNotifier {
     required int refreshSessionVersion,
     required int? refreshSessionUserId,
     required bool userInitiated,
+    required bool requestPermissionIfDenied,
   }) async {
     final now = _now();
     if (!userInitiated && !_shouldRequestNearby(now)) {
@@ -129,6 +155,9 @@ class NearbyFeedModel extends ChangeNotifier {
 
     var permission = await locationService.checkPermission();
     if (permission == LocationPermission.denied) {
+      if (!requestPermissionIfDenied) {
+        _setLocationProblem('Location access was denied.');
+      }
       permission = await locationService.requestPermission();
       if (permission == LocationPermission.denied) {
         _setLocationProblem('Location access was denied.');
@@ -195,6 +224,11 @@ class NearbyFeedModel extends ChangeNotifier {
       return true;
     }
     return now.difference(lastNearbyRequestAt) >= minAutomaticRefreshInterval;
+  }
+
+  bool _hasGrantedPermission(LocationPermission permission) {
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
   }
 
   Future<Position> _resolvePosition({required DateTime now}) async {

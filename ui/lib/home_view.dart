@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -15,6 +17,7 @@ import 'narlun_app_bar_title.dart';
 import 'nearby_users_view.dart';
 import 'rooms_feed_model.dart';
 import 'route_utils.dart';
+import 'session_actions.dart';
 
 class HomeView extends StatelessWidget {
   final int? initialTabIndex;
@@ -203,21 +206,31 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     }
   }
 
+  Future<void> _refreshRoomsAfterCreate() async {
+    try {
+      await _roomsFeedModel.refresh(silentErrors: true);
+    } catch (_) {}
+  }
+
   Future<void> _createRoom() async {
     final httpService = Provider.of<HttpService>(context, listen: false);
     try {
       final room = await httpService.create_room();
-      await _roomsFeedModel.refresh(silentErrors: true);
       if (!mounted) {
         return;
       }
+      unawaited(_refreshRoomsAfterCreate());
+      unawaited(_nearbyFeedModel.refreshIfLocationAlreadyAvailable());
       await _openRoom(room);
     } on UnauthorizedResponse {
       if (!mounted) {
         return;
       }
-      Provider.of<MeModel>(context, listen: false).reset();
-      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
     } catch (error) {
       if (!mounted) {
         return;

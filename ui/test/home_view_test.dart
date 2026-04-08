@@ -74,6 +74,9 @@ class FakeNearbyHttpService extends HttpService {
   int createRoomCalls = 0;
   List<NearbyItem> nearbyItems = const [];
   RoomSummary? createdRoom;
+  Object? createRoomError;
+  Object? getRoomsError;
+  bool clearedLocalSession = false;
 
   @override
   Future<List<NearbyItem>> checkin(lat, lon) async {
@@ -87,6 +90,9 @@ class FakeNearbyHttpService extends HttpService {
     List<int> userIds = const [],
   }) async {
     createRoomCalls += 1;
+    if (createRoomError != null) {
+      throw createRoomError!;
+    }
     createdRoom = RoomSummary(
       id: 42,
       name: 'New room by me',
@@ -98,6 +104,9 @@ class FakeNearbyHttpService extends HttpService {
 
   @override
   Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
+    if (getRoomsError != null) {
+      throw getRoomsError!;
+    }
     return createdRoom == null ? const [] : [createdRoom!];
   }
 
@@ -108,18 +117,32 @@ class FakeNearbyHttpService extends HttpService {
   }) async {
     return const [];
   }
+
+  @override
+  Future<void> clearLocalSession() async {
+    clearedLocalSession = true;
+  }
 }
 
 class FakeLocationService implements LocationService {
+  FakeLocationService({
+    this.enabled = true,
+    this.permission = LocationPermission.whileInUse,
+    this.requestPermissionResult = LocationPermission.whileInUse,
+  });
+
   int isEnabledCalls = 0;
   int checkPermissionCalls = 0;
   int requestPermissionCalls = 0;
   int getCurrentPositionCalls = 0;
+  bool enabled;
+  LocationPermission permission;
+  LocationPermission requestPermissionResult;
 
   @override
   Future<LocationPermission> checkPermission() async {
     checkPermissionCalls += 1;
-    return LocationPermission.whileInUse;
+    return permission;
   }
 
   @override
@@ -142,13 +165,13 @@ class FakeLocationService implements LocationService {
   @override
   Future<bool> isLocationServiceEnabled() async {
     isEnabledCalls += 1;
-    return true;
+    return enabled;
   }
 
   @override
   Future<LocationPermission> requestPermission() async {
     requestPermissionCalls += 1;
-    return LocationPermission.whileInUse;
+    return requestPermissionResult;
   }
 }
 
@@ -343,6 +366,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(httpService.createRoomCalls, 1);
+    expect(httpService.checkinCalls, 1);
     expect(
       ModalRoute.of(tester.element(find.byType(MessagesView)))?.settings.name,
       roomsRouteWithOpenRoom(42),
@@ -354,5 +378,125 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Create room'), findsOneWidget);
+  });
+
+  testWidgets(
+    'room creation still opens the room if the rooms refresh fails afterwards',
+    (tester) async {
+      final httpService = FakeNearbyHttpService()
+        ..getRoomsError = ServerError(500);
+      final locationService = FakeLocationService();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider<InstallPromptService>(
+              create: (_) => _FakeInstallPromptService(),
+            ),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            home: HomeView(
+              initialTabIndex: 1,
+              nearbyLocationService: locationService,
+              roomsView: const Scaffold(body: Text('Rooms placeholder')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create room'));
+      await tester.pumpAndSettle();
+
+      expect(httpService.createRoomCalls, 1);
+      expect(find.byType(MessagesView), findsOneWidget);
+      expect(find.text('Could not create a room right now.'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'room creation does not prompt for location if nearby permission is not granted',
+    (tester) async {
+      final httpService = FakeNearbyHttpService();
+      final locationService = FakeLocationService()
+        ..permission = LocationPermission.denied
+        ..requestPermissionResult = LocationPermission.whileInUse;
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider<InstallPromptService>(
+              create: (_) => _FakeInstallPromptService(),
+            ),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            home: HomeView(
+              initialTabIndex: 1,
+              nearbyLocationService: locationService,
+              roomsView: const Scaffold(body: Text('Rooms placeholder')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create room'));
+      await tester.pumpAndSettle();
+
+      expect(httpService.createRoomCalls, 1);
+      expect(httpService.checkinCalls, 0);
+      expect(locationService.requestPermissionCalls, 0);
+    },
+  );
+
+  testWidgets('unauthorized room creation expires the local session cleanly', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..createRoomError = UnauthorizedResponse();
+    final locationService = FakeLocationService();
+    final meModel = MeModel()
+      ..setData(const SessionUser(authenticated: true, id: 1, username: 'me'));
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider<MeModel>.value(value: meModel),
+        ],
+        child: MaterialApp(
+          home: HomeView(
+            initialTabIndex: 1,
+            nearbyLocationService: locationService,
+            roomsView: const Scaffold(body: Text('Rooms placeholder')),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Create room'));
+    await tester.pumpAndSettle();
+
+    expect(httpService.clearedLocalSession, isTrue);
+    expect(meModel.data?.authenticated, isFalse);
+    expect(find.byType(MessagesView), findsNothing);
   });
 }

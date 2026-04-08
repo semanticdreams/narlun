@@ -11,7 +11,17 @@ import 'me_model.dart';
 import 'models.dart';
 import 'route_utils.dart';
 
-class InviteQrView extends StatefulWidget {
+Future<void> _copyInviteLink(BuildContext context, String inviteUrl) async {
+  await Clipboard.setData(ClipboardData(text: inviteUrl));
+  if (!context.mounted) {
+    return;
+  }
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(const SnackBar(content: Text('Invite link copied.')));
+}
+
+class InviteQrView extends StatelessWidget {
   final RoomSummary? room;
   final int? roomId;
   final String? backToRoute;
@@ -27,11 +37,97 @@ class InviteQrView extends StatefulWidget {
     this.inviteQrCache,
   });
 
+  int? get _targetRoomId => room?.id ?? roomId;
+
   @override
-  State<InviteQrView> createState() => _InviteQrViewState();
+  Widget build(BuildContext context) {
+    final targetRoomId = _targetRoomId;
+    if (targetRoomId == null) {
+      return _GlobalInviteQrView(
+        backToRoute: backToRoute,
+        preferPopOnBack: preferPopOnBack,
+      );
+    }
+    return _RoomInviteQrView(
+      room: room,
+      roomId: targetRoomId,
+      backToRoute: backToRoute,
+      preferPopOnBack: preferPopOnBack,
+      inviteQrCache: inviteQrCache,
+    );
+  }
 }
 
-class _InviteQrViewState extends State<InviteQrView> {
+class _GlobalInviteQrView extends StatelessWidget {
+  final String? backToRoute;
+  final bool preferPopOnBack;
+
+  const _GlobalInviteQrView({
+    required this.backToRoute,
+    required this.preferPopOnBack,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final inviteUrl = Uri.base.resolve('/nearby').toString();
+    return _InviteQrShell(
+      title: 'Open Nearby',
+      description:
+          'Scan this code to open Narlun. New people can choose a username and land straight on Nearby.',
+      fallbackRoute: sanitizeInviteBackToRoute(backToRoute) ?? '/home',
+      preferPopOnBack: preferPopOnBack,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          QrImageView(
+            data: inviteUrl,
+            size: 220,
+            backgroundColor: Colors.white,
+          ),
+          const SizedBox(height: 20),
+          TextFormField(
+            key: const Key('invite-link-text'),
+            initialValue: inviteUrl,
+            readOnly: true,
+            maxLines: 1,
+            decoration: const InputDecoration(
+              labelText: 'Link',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const Key('invite-copy-button'),
+            onPressed: () => _copyInviteLink(context, inviteUrl),
+            icon: const Icon(Icons.copy_outlined),
+            label: const Text('Copy link'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoomInviteQrView extends StatefulWidget {
+  final RoomSummary? room;
+  final int roomId;
+  final String? backToRoute;
+  final bool preferPopOnBack;
+  final InviteQrCache? inviteQrCache;
+
+  const _RoomInviteQrView({
+    required this.room,
+    required this.roomId,
+    required this.backToRoute,
+    required this.preferPopOnBack,
+    required this.inviteQrCache,
+  });
+
+  @override
+  State<_RoomInviteQrView> createState() => _RoomInviteQrViewState();
+}
+
+class _RoomInviteQrViewState extends State<_RoomInviteQrView> {
   InviteLink? _invite;
   Object? _error;
   bool _loading = false;
@@ -39,10 +135,6 @@ class _InviteQrViewState extends State<InviteQrView> {
   late final InviteQrCache _inviteQrCache;
   late final TextEditingController _linkController;
   int? _sessionUserId;
-
-  int? get _targetRoomId => widget.room?.id ?? widget.roomId;
-  bool get _isRoomInvite => _targetRoomId != null;
-  String get _globalOnboardingUrl => Uri.base.resolve('/nearby').toString();
 
   @override
   void initState() {
@@ -55,13 +147,9 @@ class _InviteQrViewState extends State<InviteQrView> {
     _inviteQrCache =
         widget.inviteQrCache ?? providedInviteQrCache ?? InviteQrCache();
     _linkController = TextEditingController();
-    if (!_isRoomInvite) {
-      _linkController.text = _globalOnboardingUrl;
-      return;
-    }
     final session = Provider.of<MeModel?>(context, listen: false)?.data;
     _syncInviteCacheSession(session);
-    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
+    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: widget.roomId);
     if (cachedInvite != null) {
       _applyInvite(cachedInvite);
     } else {
@@ -78,14 +166,11 @@ class _InviteQrViewState extends State<InviteQrView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_isRoomInvite) {
-      return;
-    }
     final session = Provider.of<MeModel?>(context)?.data;
     if (!_syncInviteCacheSession(session)) {
       return;
     }
-    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
+    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: widget.roomId);
     if (cachedInvite != null) {
       setState(() {
         _error = null;
@@ -104,17 +189,12 @@ class _InviteQrViewState extends State<InviteQrView> {
   }
 
   @override
-  void didUpdateWidget(covariant InviteQrView oldWidget) {
+  void didUpdateWidget(covariant _RoomInviteQrView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_isRoomInvite) {
-      _linkController.text = _globalOnboardingUrl;
+    if (oldWidget.roomId == widget.roomId) {
       return;
     }
-    final previousRoomId = oldWidget.room?.id ?? oldWidget.roomId;
-    if (previousRoomId == _targetRoomId) {
-      return;
-    }
-    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
+    final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: widget.roomId);
     if (cachedInvite != null) {
       setState(() {
         _error = null;
@@ -144,27 +224,6 @@ class _InviteQrViewState extends State<InviteQrView> {
     return true;
   }
 
-  String get _fallbackRoute {
-    final configuredBackToRoute = sanitizeInviteBackToRoute(widget.backToRoute);
-    if (configuredBackToRoute != null) {
-      return configuredBackToRoute;
-    }
-    final roomId = _targetRoomId;
-    if (roomId != null) {
-      return roomsRouteWithOpenRoom(roomId);
-    }
-    return '/home';
-  }
-
-  Future<void> _handleBackNavigation() async {
-    final navigator = Navigator.of(context);
-    if (widget.preferPopOnBack && navigator.canPop()) {
-      navigator.pop();
-      return;
-    }
-    await navigator.pushReplacementNamed(_fallbackRoute);
-  }
-
   void _applyInvite(InviteLink invite) {
     _invite = invite;
     _linkController.text = inviteUrlForToken(invite.token);
@@ -182,7 +241,7 @@ class _InviteQrViewState extends State<InviteQrView> {
     try {
       final invite = await _inviteQrCache.loadInvite(
         httpService: _httpService,
-        roomId: _targetRoomId,
+        roomId: widget.roomId,
         forceRefresh: forceRefresh,
       );
       if (!mounted) {
@@ -220,62 +279,19 @@ class _InviteQrViewState extends State<InviteQrView> {
     await _loadInvite(forceRefresh: true);
   }
 
-  Future<void> _copyInviteLink(String inviteUrl) async {
-    await Clipboard.setData(ClipboardData(text: inviteUrl));
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('Invite link copied.')));
-  }
-
   @override
   Widget build(BuildContext context) {
     final me = Provider.of<MeModel?>(context)?.data;
     final displayUser = me ?? const SessionUser(authenticated: false);
     final roomLabel = widget.room?.displayTitleFor(displayUser).trim();
-    final title = widget.room == null && widget.roomId == null
-        ? 'Open Nearby'
-        : (roomLabel?.isNotEmpty ?? false)
+    final title = (roomLabel?.isNotEmpty ?? false)
         ? 'Invite to $roomLabel'
         : 'Invite to this room';
-    final description = widget.room == null && widget.roomId == null
-        ? 'Scan this code to open Narlun. New people can choose a username and land straight on Nearby.'
-        : 'Scan this code to open Narlun. New people can choose a username and land straight in this room.';
+    const description =
+        'Scan this code to open Narlun. New people can choose a username and land straight in this room.';
 
     Widget body;
-    if (!_isRoomInvite) {
-      final inviteUrl = _globalOnboardingUrl;
-      body = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          QrImageView(
-            data: inviteUrl,
-            size: 220,
-            backgroundColor: Colors.white,
-          ),
-          const SizedBox(height: 20),
-          TextFormField(
-            key: const Key('invite-link-text'),
-            controller: _linkController,
-            readOnly: true,
-            maxLines: 1,
-            decoration: const InputDecoration(
-              labelText: 'Link',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            key: const Key('invite-copy-button'),
-            onPressed: () => _copyInviteLink(inviteUrl),
-            icon: const Icon(Icons.copy_outlined),
-            label: const Text('Copy link'),
-          ),
-        ],
-      );
-    } else if (_error != null && _invite == null) {
+    if (_error != null && _invite == null) {
       body = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -363,7 +379,7 @@ class _InviteQrViewState extends State<InviteQrView> {
             children: [
               FilledButton.icon(
                 key: const Key('invite-copy-button'),
-                onPressed: () => _copyInviteLink(inviteUrl),
+                onPressed: () => _copyInviteLink(context, inviteUrl),
                 icon: const Icon(Icons.link),
                 label: const Text('Copy link'),
               ),
@@ -378,20 +394,58 @@ class _InviteQrViewState extends State<InviteQrView> {
       );
     }
 
+    return _InviteQrShell(
+      title: title,
+      description: description,
+      fallbackRoute:
+          sanitizeInviteBackToRoute(widget.backToRoute) ??
+          roomsRouteWithOpenRoom(widget.roomId),
+      preferPopOnBack: widget.preferPopOnBack,
+      body: body,
+    );
+  }
+}
+
+class _InviteQrShell extends StatelessWidget {
+  final String title;
+  final String description;
+  final Widget body;
+  final String fallbackRoute;
+  final bool preferPopOnBack;
+
+  const _InviteQrShell({
+    required this.title,
+    required this.description,
+    required this.body,
+    required this.fallbackRoute,
+    required this.preferPopOnBack,
+  });
+
+  Future<void> _handleBackNavigation(BuildContext context) async {
+    final navigator = Navigator.of(context);
+    if (preferPopOnBack && navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+    await navigator.pushReplacementNamed(fallbackRoute);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return PopScope<void>(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) {
           return;
         }
-        await _handleBackNavigation();
+        await _handleBackNavigation(context);
       },
       child: Scaffold(
         appBar: AppBar(
           title: Text(title),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: _handleBackNavigation,
+            onPressed: () => _handleBackNavigation(context),
           ),
         ),
         backgroundColor: const Color(0xFFF5ECFF),

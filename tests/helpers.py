@@ -75,8 +75,8 @@ async def checkin(cli, jwt, location):
 
 async def join_user(cli, jwt, user_id):
     response = await cli.post(
-        '/api/social/join-user',
-        json={'user_id': user_id},
+        '/api/social/create-room',
+        json={'name': '', 'user_ids': [user_id]},
         headers=auth_headers(jwt),
     )
     assert response.status == 200
@@ -93,13 +93,10 @@ async def create_group_room(cli, jwt, name, user_ids):
     return await response.json()
 
 
-async def create_invite(cli, jwt, room_id=None):
-    payload = {}
-    if room_id is not None:
-        payload['room_id'] = room_id
+async def create_invite(cli, jwt, room_id):
     response = await cli.post(
         '/api/social/create-invite',
-        json=payload,
+        json={'room_id': room_id},
         headers=auth_headers(jwt),
     )
     assert response.status == 200

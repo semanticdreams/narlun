@@ -82,45 +82,12 @@ async def checkin(req):
         extra=request_log_context(
             req,
             nearby_item_count=len(result['nearby']),
-            nearby_user_count=len(result['nearby_users']),
-            nearby_user_ids=sample_values(
-                [item['user']['id'] for item in result['nearby'] if item['type'] == 'user'],
-            ),
             nearby_room_ids=sample_values(
                 [item['room']['id'] for item in result['nearby'] if item['type'] == 'room'],
             ),
         ),
     )
     return jsonify(result)
-
-
-@routes.post('/join-user')
-@authenticated
-async def join_user(req):
-    try:
-        room = await req.store.join_user(req.user['id'], req.data['user_id'])
-    except UserNotFound:
-        raise NoSuchUserError()
-    except ValueError as exc:
-        raise InvalidRoomError(message=str(exc))
-    await req.store.publish_rooms_changed([req.user['id'], req.data['user_id']])
-    if room.get('created') is True:
-        await _publish_room_nearby_changes(req, room['id'])
-        req.push.enqueue_room_created(
-            req.user['id'],
-            room['id'],
-            [req.data['user_id']],
-        )
-    logger.info(
-        'Joined user room',
-        extra=request_log_context(
-            req,
-            room_id=room['id'],
-            room_created=room.get('created') is True,
-            other_user_id=req.data['user_id'],
-        ),
-    )
-    return jsonify(room)
 
 
 @routes.post('/create-room')
@@ -199,6 +166,8 @@ async def get_room_requests(req):
         requests = await req.store.get_room_join_requests(req.user['id'], room_id)
     except PermissionDenied:
         raise NoSuchRoomError()
+    except RoomNotFound:
+        raise NoSuchRoomError()
     logger.info(
         'Fetched room join requests',
         extra=request_log_context(
@@ -235,6 +204,8 @@ async def approve_room_request(req):
     try:
         result = await req.store.approve_room_join_request(req.user['id'], room_id, user_id)
     except PermissionDenied:
+        raise NoSuchRoomError()
+    except RoomNotFound:
         raise NoSuchRoomError()
     except JoinRequestNotFound:
         raise InvalidJoinRequestError(message='Join request is no longer pending')
@@ -274,6 +245,8 @@ async def reject_room_request(req):
     try:
         await req.store.reject_room_join_request(req.user['id'], room_id, user_id)
     except PermissionDenied:
+        raise NoSuchRoomError()
+    except RoomNotFound:
         raise NoSuchRoomError()
     except JoinRequestNotFound:
         raise InvalidJoinRequestError(message='Join request is no longer pending')
@@ -388,7 +361,10 @@ async def mark_room_read(req):
 @routes.post('/create-invite')
 @authenticated
 async def create_invite(req):
-    room_id = req.data.get('room_id')
+    try:
+        room_id = int(req.data.get('room_id'))
+    except (TypeError, ValueError):
+        raise InvalidRoomError(message='Room invite requires a room')
     try:
         invite = await req.store.create_invite(req.user['id'], room_id=room_id)
     except RoomNotFound:
@@ -399,8 +375,7 @@ async def create_invite(req):
         'Created invite',
         extra=request_log_context(
             req,
-            room_id=invite.get('room_id'),
-            invite_target='room' if invite.get('room_id') is not None else 'user',
+            room_id=invite['room_id'],
         ),
     )
     return jsonify(invite)
@@ -484,6 +459,8 @@ async def update_room_settings(req):
             push_muted=push_muted,
         )
     except PermissionDenied:
+        raise NoSuchRoomError()
+    except RoomNotFound:
         raise NoSuchRoomError()
 
     await req.store.publish_rooms_changed([req.user['id']])

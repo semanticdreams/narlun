@@ -205,9 +205,12 @@ class BackendClient {
 
   Future<Map<String, dynamic>> joinUser(String jwtCookie, int userId) async {
     final response = await _client.post(
-      apiBaseUri.resolve('social/join-user'),
+      apiBaseUri.resolve('social/create-room'),
       headers: {'Content-Type': 'application/json', 'Cookie': jwtCookie},
-      body: jsonEncode({'user_id': userId}),
+      body: jsonEncode({
+        'name': '',
+        'user_ids': [userId],
+      }),
     );
     expect(response.statusCode, 200);
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -457,6 +460,10 @@ String randomUsername(String prefix) {
   return '$prefix-${DateTime.now().microsecondsSinceEpoch}';
 }
 
+String defaultRoomTitleFor(String username) {
+  return 'New room by $username';
+}
+
 Future<String> currentFrontendJwtCookie() async {
   final jwtCookie = await loadSessionCookieForTests();
   if (jwtCookie == null || jwtCookie.isEmpty) {
@@ -511,14 +518,14 @@ Future<void> signUpThroughUi(WidgetTester tester, String username) async {
   await pumpUntilFound(tester, find.text('Rooms'));
 }
 
-Future<void> openRoomFromList(WidgetTester tester, String username) async {
+Future<void> openRoomFromList(WidgetTester tester, String title) async {
   final roomsTab = find.text('Rooms').first;
   if (roomsTab.evaluate().isNotEmpty) {
     await tester.tap(roomsTab);
     await tester.pumpAndSettle();
   }
-  await pumpUntilFound(tester, find.text(username));
-  await tester.tap(find.text(username).last);
+  await pumpUntilFound(tester, find.text(title));
+  await tester.tap(find.text(title).last);
   await tester.pumpAndSettle();
 }
 
@@ -556,38 +563,38 @@ void main() {
     final aliceJwtCookie = await currentFrontendJwtCookie();
     final alice = await backendClient.getMe(aliceJwtCookie);
     final bob = await backendClient.signupGuest(randomUsername('bob'));
+    final roomTitle = defaultRoomTitleFor(bob.username);
 
     final room = await bob.joinUser(alice['id'] as int);
-    await pumpUntilFound(tester, find.text(bob.username));
+    await pumpUntilFound(tester, find.text(roomTitle));
 
-    await openRoomFromList(tester, bob.username);
+    await openRoomFromList(tester, roomTitle);
     await bob.sendMessage(room['id'] as int, 'hello from backend');
     await pumpUntilFound(tester, find.text('hello from backend'));
   });
 
-  testWidgets('room deletion while open returns to the room list', (
-    tester,
-  ) async {
-    await launchApp(tester, harness);
-    final aliceUsername = randomUsername('alice');
-    await signUpThroughUi(tester, aliceUsername);
+  testWidgets(
+    'room stays open when another member disappears and it becomes solo',
+    (tester) async {
+      await launchApp(tester, harness);
+      final aliceUsername = randomUsername('alice');
+      await signUpThroughUi(tester, aliceUsername);
 
-    final aliceJwtCookie = await currentFrontendJwtCookie();
-    final alice = await backendClient.getMe(aliceJwtCookie);
-    final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final aliceJwtCookie = await currentFrontendJwtCookie();
+      final alice = await backendClient.getMe(aliceJwtCookie);
+      final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final roomTitle = defaultRoomTitleFor(bob.username);
 
-    await bob.joinUser(alice['id'] as int);
-    await pumpUntilFound(tester, find.text(bob.username));
-    await openRoomFromList(tester, bob.username);
+      await bob.joinUser(alice['id'] as int);
+      await pumpUntilFound(tester, find.text(roomTitle));
+      await openRoomFromList(tester, roomTitle);
 
-    await bob.signout();
-    await pumpUntilFound(
-      tester,
-      find.text('This room is no longer available.'),
-    );
-    await pumpUntilFound(tester, find.text('Rooms'));
-    await pumpUntilNotFound(tester, find.text(bob.username));
-  });
+      await bob.signout();
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byKey(const Key('message-input-field')), findsOneWidget);
+      expect(find.text('This room is no longer available.'), findsNothing);
+    },
+  );
 
   testWidgets(
     'guest account signout from another client returns to signup flow',
@@ -620,8 +627,9 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
 
     final bob = await backendClient.signupGuest(randomUsername('bob'));
+    final roomTitle = defaultRoomTitleFor(bob.username);
     await bob.joinUser(alice['id'] as int);
-    await pumpUntilFound(tester, find.text(bob.username));
+    await pumpUntilFound(tester, find.text(roomTitle));
   });
 
   testWidgets(
@@ -641,8 +649,9 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
 
       final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final roomTitle = defaultRoomTitleFor(bob.username);
       await bob.joinUser(alice['id'] as int);
-      await pumpUntilFound(tester, find.text(bob.username));
+      await pumpUntilFound(tester, find.text(roomTitle));
     },
   );
 
@@ -657,9 +666,10 @@ void main() {
     final alice = await backendClient.getMe(aliceJwtCookie);
     final bob = await backendClient.signupGuest(randomUsername('bob'));
     final room = await bob.joinUser(alice['id'] as int);
+    final roomTitle = defaultRoomTitleFor(bob.username);
 
-    await pumpUntilFound(tester, find.text(bob.username));
-    await openRoomFromList(tester, bob.username);
+    await pumpUntilFound(tester, find.text(roomTitle));
+    await openRoomFromList(tester, roomTitle);
 
     await harness.stopBackend();
     await tester.pump(const Duration(seconds: 4));
@@ -681,10 +691,11 @@ void main() {
       final aliceJwtCookie = await currentFrontendJwtCookie();
       final alice = await backendClient.getMe(aliceJwtCookie);
       final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final roomTitle = defaultRoomTitleFor(bob.username);
 
       await bob.joinUser(alice['id'] as int);
-      await pumpUntilFound(tester, find.text(bob.username));
-      await openRoomFromList(tester, bob.username);
+      await pumpUntilFound(tester, find.text(roomTitle));
+      await openRoomFromList(tester, roomTitle);
 
       await harness.stopBackend();
       await tester.pump(const Duration(seconds: 4));
@@ -693,12 +704,8 @@ void main() {
       await bob.signout();
       await tester.pump(const Duration(seconds: 2));
 
-      await pumpUntilFound(
-        tester,
-        find.text('This room is no longer available.'),
-      );
-      await pumpUntilFound(tester, find.text('Rooms'));
-      await pumpUntilNotFound(tester, find.text(bob.username));
+      expect(find.byKey(const Key('message-input-field')), findsOneWidget);
+      expect(find.text('This room is no longer available.'), findsNothing);
     },
   );
 
@@ -791,7 +798,7 @@ void main() {
   });
 
   testWidgets(
-    'live backend profile updates refresh room titles for other users',
+    'live backend profile updates do not rename explicit room titles',
     (tester) async {
       await launchApp(tester, harness);
       final aliceUsername = randomUsername('alice');
@@ -800,13 +807,15 @@ void main() {
       final aliceJwtCookie = await currentFrontendJwtCookie();
       final alice = await backendClient.getMe(aliceJwtCookie);
       final bob = await backendClient.signupGuest(randomUsername('bob'));
+      final roomTitle = defaultRoomTitleFor(bob.username);
 
       await bob.joinUser(alice['id'] as int);
-      await pumpUntilFound(tester, find.text(bob.username));
+      await pumpUntilFound(tester, find.text(roomTitle));
 
       await bob.updateProfile(username: 'renamed-bob');
-      await pumpUntilFound(tester, find.text('renamed-bob'));
-      await pumpUntilNotFound(tester, find.text(bob.username));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text(roomTitle), findsWidgets);
+      expect(find.text('New room by renamed-bob'), findsNothing);
     },
   );
 
@@ -850,9 +859,10 @@ void main() {
     final alice = await backendClient.getMe(aliceJwtCookie);
     final bob = await backendClient.signupGuest(randomUsername('bob'));
     final room = await bob.joinUser(alice['id'] as int);
+    final roomTitle = defaultRoomTitleFor(bob.username);
 
-    await pumpUntilFound(tester, find.text(bob.username));
-    await openRoomFromList(tester, bob.username);
+    await pumpUntilFound(tester, find.text(roomTitle));
+    await openRoomFromList(tester, roomTitle);
 
     final bobSocket = await backendClient.connectWebSocket(bob.jwtCookie);
     try {
@@ -882,9 +892,10 @@ void main() {
     final alice = await backendClient.getMe(aliceJwtCookie);
     final bob = await backendClient.signupGuest(randomUsername('bob'));
     final room = await bob.joinUser(alice['id'] as int);
+    final roomTitle = defaultRoomTitleFor(bob.username);
 
-    await pumpUntilFound(tester, find.text(bob.username));
-    await openRoomFromList(tester, bob.username);
+    await pumpUntilFound(tester, find.text(roomTitle));
+    await openRoomFromList(tester, roomTitle);
 
     await tester.enterText(
       find.byKey(const Key('message-input-field')),

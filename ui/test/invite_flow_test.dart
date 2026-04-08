@@ -44,7 +44,7 @@ class _FakeInviteHttpService extends HttpService {
   int createInviteCalls = 0;
 
   @override
-  Future<InviteLink> create_invite({int? roomId}) async {
+  Future<InviteLink> create_invite({required int roomId}) async {
     createInviteCalls += 1;
     createdInviteRoomId = roomId;
     return inviteToCreate!;
@@ -60,7 +60,7 @@ String _inviteLinkText(WidgetTester tester) {
   final textField = tester.widget<TextFormField>(
     find.byKey(const Key('invite-link-text')),
   );
-  return textField.controller?.text ?? '';
+  return textField.controller?.text ?? textField.initialValue ?? '';
 }
 
 Widget _buildInviteQrApp({

@@ -1075,6 +1075,7 @@ class RedisStore:
         *,
         kind='text',
         whatsapp_group=None,
+        location=None,
     ):
         room_id = await self._require_active_room_membership(sender_id, room_id)
         body = body.strip()
@@ -1092,6 +1093,8 @@ class RedisStore:
         }
         if whatsapp_group is not None:
             message['whatsapp_group'] = whatsapp_group
+        if location is not None:
+            message['location'] = location
         encoded = json.dumps(message)
         cutoff_ms = timestamp_ms - (MESSAGE_TTL_SECONDS * 1000)
         room_messages_key = self._room_messages_key(room_id)
@@ -1107,6 +1110,8 @@ class RedisStore:
         }
         if whatsapp_group is not None:
             last_message['whatsapp_group'] = whatsapp_group
+        if location is not None:
+            last_message['location'] = location
         room_meta_key = self._room_meta_key(room_id)
         await self.redis.hset(room_meta_key, mapping={
             'updated_at': timestamp_ms,

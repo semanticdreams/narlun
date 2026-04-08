@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'add_location_view.dart';
 import 'add_whatsapp_group_view.dart';
 import 'avatar_image.dart';
 import 'chat_labels.dart';
@@ -13,6 +14,7 @@ import 'invite_qr_button.dart';
 import 'leave_room_notice.dart';
 import 'leave_room_notice_storage.dart';
 import 'locator.dart';
+import 'location_service.dart';
 import 'models.dart';
 import 'push_notifications_service.dart';
 import 'room_details_view.dart';
@@ -28,6 +30,7 @@ class MessagesView extends StatefulWidget {
   final RoomMessagesCache? roomMessagesCache;
   final WebsocketService? websocketService;
   final Future<bool> Function(String url)? externalLinkOpener;
+  final LocationService? locationService;
 
   const MessagesView({
     super.key,
@@ -37,6 +40,7 @@ class MessagesView extends StatefulWidget {
     this.roomMessagesCache,
     this.websocketService,
     this.externalLinkOpener,
+    this.locationService,
   });
 
   @override
@@ -48,6 +52,7 @@ class _OutgoingMessageDraft {
     required this.kind,
     required this.body,
     this.whatsappGroup,
+    this.location,
   });
 
   factory _OutgoingMessageDraft.text(String body) {
@@ -65,9 +70,18 @@ class _OutgoingMessageDraft {
     );
   }
 
+  factory _OutgoingMessageDraft.location(LocationMessageData location) {
+    return _OutgoingMessageDraft._(
+      kind: ChatMessageKind.location,
+      body: '',
+      location: location,
+    );
+  }
+
   final ChatMessageKind kind;
   final String body;
   final WhatsappGroupMessageData? whatsappGroup;
+  final LocationMessageData? location;
 }
 
 class MessagesState extends State<MessagesView> {
@@ -108,6 +122,7 @@ class MessagesState extends State<MessagesView> {
   late final RoomMessagesCache roomMessagesCache;
   late final WebsocketService websocketService;
   late final Future<bool> Function(String url) externalLinkOpener;
+  late final LocationService locationService;
   late RoomSummary room;
 
   final List<ChatMessage> messages = [];
@@ -452,6 +467,7 @@ class MessagesState extends State<MessagesView> {
       readByUsers: [_meParticipant()],
       deliveryState: MessageDeliveryState.sending,
       whatsappGroup: draft.whatsappGroup,
+      location: draft.location,
     );
   }
 
@@ -875,6 +891,7 @@ class MessagesState extends State<MessagesView> {
     websocketService = widget.websocketService ?? locator<WebsocketService>();
     httpService =
         widget.httpService ?? Provider.of<HttpService>(context, listen: false);
+    locationService = widget.locationService ?? createLocationService();
     final providedRoomMessagesCache = Provider.of<RoomMessagesCache?>(
       context,
       listen: false,
@@ -1210,6 +1227,7 @@ class MessagesState extends State<MessagesView> {
         draft.body,
         kind: draft.kind,
         whatsappInviteUrl: draft.whatsappGroup?.inviteUrl,
+        location: draft.location,
       );
       if (mounted && !_roomClosed) {
         setState(() {
@@ -1331,6 +1349,31 @@ class MessagesState extends State<MessagesView> {
     );
   }
 
+  Future<void> _openLocationComposer() async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/rooms/add-location'),
+        builder: (_) => AddLocationView(
+          locationService: locationService,
+          onAdd: (location) {
+            return _sendDraftMessage(
+              _OutgoingMessageDraft.location(location),
+              propagateInvalidUsage: true,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _showComposerAddSheet() async {
     if (_roomClosed || !mounted) {
       return;
@@ -1354,6 +1397,13 @@ class MessagesState extends State<MessagesView> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
+                  key: const Key('message-add-location'),
+                  leading: const Icon(Icons.location_on_rounded),
+                  title: const Text('Location'),
+                  subtitle: const Text('Share your current location'),
+                  onTap: () => Navigator.of(sheetContext).pop('location'),
+                ),
+                ListTile(
                   key: const Key('message-add-whatsapp-group'),
                   leading: const Icon(Icons.group_add_rounded),
                   title: const Text('WhatsApp group'),
@@ -1368,8 +1418,13 @@ class MessagesState extends State<MessagesView> {
         );
       },
     );
-    if (selection == 'whatsapp-group' && mounted) {
+    if (!mounted) {
+      return;
+    }
+    if (selection == 'whatsapp-group') {
       await _openWhatsappGroupComposer();
+    } else if (selection == 'location') {
+      await _openLocationComposer();
     }
   }
 
@@ -1385,6 +1440,105 @@ class MessagesState extends State<MessagesView> {
           content: Text('Could not open this WhatsApp group right now.'),
         ),
       );
+  }
+
+  Future<bool> _openLocationInGoogleMaps(LocationMessageData location) async {
+    final opened = await externalLinkOpener(location.googleMapsUrl);
+    if (opened || !mounted) {
+      return opened;
+    }
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not open Google Maps right now.')),
+      );
+    return false;
+  }
+
+  Future<void> _showLocationDetails(LocationMessageData location) async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFDE4CE),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.location_on_rounded,
+                        color: Color(0xFFD86F2C),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Shared location',
+                            style: Theme.of(sheetContext).textTheme.titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF1F2528),
+                                ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            location.coordinateLabel,
+                            style: Theme.of(sheetContext).textTheme.bodyMedium
+                                ?.copyWith(color: const Color(0xFF56605F)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (location.accuracyLabel != null) ...[
+                  const SizedBox(height: 14),
+                  Text(
+                    location.accuracyLabel!,
+                    style: Theme.of(sheetContext).textTheme.bodyMedium
+                        ?.copyWith(color: const Color(0xFF56605F)),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    key: const Key('location-open-google-maps-button'),
+                    onPressed: () async {
+                      final opened = await _openLocationInGoogleMaps(location);
+                      if (opened && sheetContext.mounted) {
+                        Navigator.of(sheetContext).pop();
+                      }
+                    },
+                    icon: const Icon(Icons.map_rounded),
+                    label: const Text('Open in Google Maps'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _toggleComposerInputMode() {
@@ -1900,6 +2054,7 @@ class MessagesState extends State<MessagesView> {
               me: widget.me,
               hasOtherParticipants: _hasOtherParticipants,
               onOpenWhatsappInvite: _openWhatsappInvite,
+              onOpenLocationDetails: _showLocationDetails,
               showAuthorLabel: _otherParticipantCount > 1,
               startsCluster: startsCluster,
               endsCluster: endsCluster,
@@ -2121,6 +2276,7 @@ class _MessageBubbleRow extends StatelessWidget {
     required this.me,
     required this.hasOtherParticipants,
     required this.onOpenWhatsappInvite,
+    required this.onOpenLocationDetails,
     required this.showAuthorLabel,
     required this.startsCluster,
     required this.endsCluster,
@@ -2132,6 +2288,8 @@ class _MessageBubbleRow extends StatelessWidget {
   final SessionUser me;
   final bool hasOtherParticipants;
   final Future<void> Function(String inviteUrl) onOpenWhatsappInvite;
+  final Future<void> Function(LocationMessageData location)
+  onOpenLocationDetails;
   final bool showAuthorLabel;
   final bool startsCluster;
   final bool endsCluster;
@@ -2190,12 +2348,78 @@ class _MessageBubbleRow extends StatelessWidget {
             ),
           ],
         );
+      case ChatMessageKind.location:
+        final location = message.location;
+        if (location == null) {
+          return const Text('Shared location');
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFDE4CE),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.location_on_rounded,
+                    size: 18,
+                    color: Color(0xFFD86F2C),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Shared location',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: const Color(0xFF1F2528),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              location.coordinateLabel,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF394241)),
+            ),
+            if (location.accuracyLabel != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                location.accuracyLabel!,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6A7372)),
+              ),
+            ],
+            const SizedBox(height: 10),
+            FilledButton.tonalIcon(
+              key: Key('location-message-open-button-${message.id}'),
+              onPressed: () => onOpenLocationDetails(location),
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('View location'),
+            ),
+          ],
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isSender = message.senderId == me.id;
+    final openOnBubbleTap = message.kind == ChatMessageKind.location
+        ? message.location == null
+              ? null
+              : () {
+                  unawaited(onOpenLocationDetails(message.location!));
+                }
+        : null;
     final hasBeenDelivered = message.deliveredByUsers.any(
       (reader) => reader.id != me.id && reader.id != message.senderId,
     );
@@ -2265,32 +2489,41 @@ class _MessageBubbleRow extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildMessageContent(context),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: bubbleRadius,
+                      onTap: openOnBubbleTap,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              timeLabel,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: const Color(0xFF7A7E80)),
+                            _buildMessageContent(context),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  timeLabel,
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: const Color(0xFF7A7E80),
+                                      ),
+                                ),
+                                if (isSender) const SizedBox(width: 6),
+                                if (isSender)
+                                  Icon(
+                                    key: const Key('message-status-icon'),
+                                    statusIcon,
+                                    size: 15,
+                                    color: statusColor,
+                                  ),
+                              ],
                             ),
-                            if (isSender) const SizedBox(width: 6),
-                            if (isSender)
-                              Icon(
-                                key: const Key('message-status-icon'),
-                                statusIcon,
-                                size: 15,
-                                color: statusColor,
-                              ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),

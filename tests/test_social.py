@@ -687,6 +687,65 @@ async def test_send_whatsapp_group_message_requires_valid_invite_link(cli):
     assert body['message'] == 'WhatsApp invite link must use chat.whatsapp.com.'
 
 
+async def test_send_location_message_returns_structured_payload(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    message = await send_message(
+        cli,
+        users[0]['jwt'],
+        room['id'],
+        kind='location',
+        location={'lat': 47.4979, 'lon': 19.0402, 'accuracy_meters': 12.4},
+    )
+
+    assert message['kind'] == 'location'
+    assert message['body'] == ''
+    assert message['location'] == {
+        'lat': 47.4979,
+        'lon': 19.0402,
+        'accuracy_meters': 12.4,
+    }
+
+    response = await get_messages(cli, users[1]['jwt'], room['id'])
+    assert response.status == 200
+    messages = await response.json()
+    assert messages[0]['kind'] == 'location'
+    assert messages[0]['location'] == {
+        'lat': 47.4979,
+        'lon': 19.0402,
+        'accuracy_meters': 12.4,
+    }
+
+    rooms = await get_rooms(cli, users[1]['jwt'])
+    assert rooms[0]['last_message']['kind'] == 'location'
+    assert rooms[0]['last_message']['location'] == {
+        'lat': 47.4979,
+        'lon': 19.0402,
+        'accuracy_meters': 12.4,
+    }
+
+
+async def test_send_location_message_requires_valid_coordinates(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/send-message',
+        json={
+            'room_id': room['id'],
+            'kind': 'location',
+            'location': {'lat': 120, 'lon': 19.0402},
+        },
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1008
+    assert body['message'] == 'Location latitude must be between -90 and 90.'
+
+
 async def test_room_invite_requires_room_id(cli):
     created = await signup(cli)
 

@@ -2,11 +2,12 @@ import 'whatsapp_group_links.dart';
 
 enum MessageDeliveryState { sending, sent }
 
-enum ChatMessageKind { text, whatsappGroup }
+enum ChatMessageKind { text, whatsappGroup, location }
 
 ChatMessageKind chatMessageKindFromJson(Object? raw) {
   return switch (raw) {
     'whatsapp_group' => ChatMessageKind.whatsappGroup,
+    'location' => ChatMessageKind.location,
     _ => ChatMessageKind.text,
   };
 }
@@ -15,6 +16,7 @@ String chatMessageKindToJson(ChatMessageKind kind) {
   return switch (kind) {
     ChatMessageKind.text => 'text',
     ChatMessageKind.whatsappGroup => 'whatsapp_group',
+    ChatMessageKind.location => 'location',
   };
 }
 
@@ -30,14 +32,71 @@ class WhatsappGroupMessageData {
   }
 }
 
+class LocationMessageData {
+  final double lat;
+  final double lon;
+  final double? accuracyMeters;
+
+  const LocationMessageData({
+    required this.lat,
+    required this.lon,
+    this.accuracyMeters,
+  });
+
+  factory LocationMessageData.fromJson(Map<String, dynamic> json) {
+    return LocationMessageData(
+      lat: (json['lat'] as num?)?.toDouble() ?? 0,
+      lon: (json['lon'] as num?)?.toDouble() ?? 0,
+      accuracyMeters: (json['accuracy_meters'] as num?)?.toDouble(),
+    );
+  }
+
+  static LocationMessageData? maybeFromJson(Object? raw) {
+    if (raw is! Map<String, dynamic>) {
+      return null;
+    }
+    final lat = raw['lat'];
+    final lon = raw['lon'];
+    if (lat is! num || lon is! num) {
+      return null;
+    }
+    final accuracy = raw['accuracy_meters'];
+    return LocationMessageData(
+      lat: lat.toDouble(),
+      lon: lon.toDouble(),
+      accuracyMeters: accuracy is num ? accuracy.toDouble() : null,
+    );
+  }
+
+  String get coordinateLabel =>
+      '${lat.toStringAsFixed(5)}, ${lon.toStringAsFixed(5)}';
+
+  String? get accuracyLabel {
+    final accuracyMeters = this.accuracyMeters;
+    if (accuracyMeters == null ||
+        !accuracyMeters.isFinite ||
+        accuracyMeters < 0) {
+      return null;
+    }
+    return 'Accuracy ${accuracyMeters.round()} m';
+  }
+
+  String get googleMapsUrl => Uri.https('www.google.com', '/maps/search/', {
+    'api': '1',
+    'query': '$lat,$lon',
+  }).toString();
+}
+
 String messagePreviewText({
   required ChatMessageKind kind,
   required String body,
   WhatsappGroupMessageData? whatsappGroup,
+  LocationMessageData? location,
 }) {
   return switch (kind) {
     ChatMessageKind.text => body,
     ChatMessageKind.whatsappGroup => whatsappGroupPreviewLabel,
+    ChatMessageKind.location => 'Shared location',
   };
 }
 
@@ -133,6 +192,7 @@ class MessagePreview {
   final int? senderId;
   final String? senderUsername;
   final WhatsappGroupMessageData? whatsappGroup;
+  final LocationMessageData? location;
 
   const MessagePreview({
     this.kind = ChatMessageKind.text,
@@ -140,6 +200,7 @@ class MessagePreview {
     this.senderId,
     this.senderUsername,
     this.whatsappGroup,
+    this.location,
   });
 
   factory MessagePreview.fromJson(Map<String, dynamic> json) {
@@ -155,11 +216,16 @@ class MessagePreview {
               json['whatsapp_group'] as Map<String, dynamic>,
             )
           : null,
+      location: LocationMessageData.maybeFromJson(json['location']),
     );
   }
 
-  String get previewText =>
-      messagePreviewText(kind: kind, body: body, whatsappGroup: whatsappGroup);
+  String get previewText => messagePreviewText(
+    kind: kind,
+    body: body,
+    whatsappGroup: whatsappGroup,
+    location: location,
+  );
 }
 
 class RoomSummary {
@@ -283,6 +349,7 @@ class ChatMessage {
   final MessageDeliveryState deliveryState;
   final String? clientTag;
   final WhatsappGroupMessageData? whatsappGroup;
+  final LocationMessageData? location;
 
   const ChatMessage({
     required this.id,
@@ -297,6 +364,7 @@ class ChatMessage {
     this.deliveryState = MessageDeliveryState.sent,
     this.clientTag,
     this.whatsappGroup,
+    this.location,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -325,6 +393,7 @@ class ChatMessage {
               json['whatsapp_group'] as Map<String, dynamic>,
             )
           : null,
+      location: LocationMessageData.maybeFromJson(json['location']),
     );
   }
 
@@ -348,6 +417,7 @@ class ChatMessage {
     MessageDeliveryState? deliveryState,
     String? clientTag,
     WhatsappGroupMessageData? whatsappGroup,
+    LocationMessageData? location,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -362,16 +432,23 @@ class ChatMessage {
       deliveryState: deliveryState ?? this.deliveryState,
       clientTag: clientTag ?? this.clientTag,
       whatsappGroup: whatsappGroup ?? this.whatsappGroup,
+      location: location ?? this.location,
     );
   }
 
-  String get displayText =>
-      messagePreviewText(kind: kind, body: body, whatsappGroup: whatsappGroup);
+  String get displayText => messagePreviewText(
+    kind: kind,
+    body: body,
+    whatsappGroup: whatsappGroup,
+    location: location,
+  );
 
   String get pendingMatchKey => switch (kind) {
     ChatMessageKind.text => 'text:$body',
     ChatMessageKind.whatsappGroup =>
       'whatsapp:${whatsappGroup?.inviteUrl ?? ''}',
+    ChatMessageKind.location =>
+      'location:${location?.lat.toStringAsFixed(6) ?? ''}:${location?.lon.toStringAsFixed(6) ?? ''}:${location?.accuracyMeters?.toStringAsFixed(1) ?? ''}',
   };
 }
 

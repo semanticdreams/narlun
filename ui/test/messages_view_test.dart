@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
@@ -12,6 +13,7 @@ import 'package:narlun/http.dart';
 import 'package:narlun/leave_room_notice.dart';
 import 'package:narlun/leave_room_notice_storage.dart';
 import 'package:narlun/locator.dart';
+import 'package:narlun/location_service.dart';
 import 'package:narlun/me_model.dart';
 import 'package:narlun/messages_view.dart';
 import 'package:narlun/models.dart';
@@ -205,12 +207,20 @@ class FakeHttpService extends HttpService {
     message_body, {
     ChatMessageKind kind = ChatMessageKind.text,
     String? whatsappInviteUrl,
+    LocationMessageData? location,
   }) async {
     sentMessages.add({
       'room_id': room_id,
       'body': message_body,
       'kind': chatMessageKindToJson(kind),
       if (whatsappInviteUrl != null) 'whatsapp_invite_url': whatsappInviteUrl,
+      if (location != null)
+        'location': {
+          'lat': location.lat,
+          'lon': location.lon,
+          if (location.accuracyMeters != null)
+            'accuracy_meters': location.accuracyMeters,
+        },
     });
     if (_sendMessageHandlers.isNotEmpty) {
       return _sendMessageHandlers.removeFirst()(
@@ -252,6 +262,61 @@ class FakeHttpService extends HttpService {
       'message_id': messageId,
       'silent_errors': silentErrors,
     });
+  }
+}
+
+class FakeLocationService implements LocationService {
+  FakeLocationService({
+    this.enabled = true,
+    this.permission = LocationPermission.whileInUse,
+    this.requestPermissionResult = LocationPermission.whileInUse,
+    this.position,
+  });
+
+  bool enabled;
+  LocationPermission permission;
+  LocationPermission requestPermissionResult;
+  Position? position;
+  int isEnabledCalls = 0;
+  int checkPermissionCalls = 0;
+  int requestPermissionCalls = 0;
+  int getCurrentPositionCalls = 0;
+
+  @override
+  Future<LocationPermission> checkPermission() async {
+    checkPermissionCalls += 1;
+    return permission;
+  }
+
+  @override
+  Future<Position> getCurrentPosition() async {
+    getCurrentPositionCalls += 1;
+    return position ??
+        Position(
+          longitude: 19.0402,
+          latitude: 47.4979,
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          accuracy: 12.4,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+  }
+
+  @override
+  Future<bool> isLocationServiceEnabled() async {
+    isEnabledCalls += 1;
+    return enabled;
+  }
+
+  @override
+  Future<LocationPermission> requestPermission() async {
+    requestPermissionCalls += 1;
+    permission = requestPermissionResult;
+    return requestPermissionResult;
   }
 }
 
@@ -483,6 +548,7 @@ Widget _buildMessagesApp({
   RoomMessagesCache? roomMessagesCache,
   PushNotificationsService? pushNotificationsService,
   Future<bool> Function(String url)? externalLinkOpener,
+  LocationService? locationService,
   SessionUser me = const SessionUser(
     authenticated: true,
     id: 1,
@@ -504,6 +570,7 @@ Widget _buildMessagesApp({
     roomMessagesCache: roomMessagesCache,
     websocketService: websocketService,
     externalLinkOpener: externalLinkOpener,
+    locationService: locationService,
   );
   final provider = Provider<RoomMessagesCache>.value(
     value: roomMessagesCache ?? RoomMessagesCache(),
@@ -1882,6 +1949,78 @@ void main() {
     );
   });
 
+  testWidgets('composer can add a location message from the add menu', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final locationService = FakeLocationService();
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueSendMessage((roomId, body) async {
+      return ChatMessage(
+        id: 'loc-1',
+        kind: ChatMessageKind.location,
+        body: '',
+        senderId: 1,
+        senderUsername: 'me',
+        timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+        location: const LocationMessageData(
+          lat: 47.4979,
+          lon: 19.0402,
+          accuracyMeters: 12.4,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        locationService: locationService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('message-add-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('message-add-location')));
+    await tester.pump();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Share location'), findsOneWidget);
+    expect(find.byKey(const Key('location-coordinate-label')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('location-add-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Share location'), findsNothing);
+    expect(httpService.sentMessages.last, {
+      'room_id': 1,
+      'body': '',
+      'kind': 'location',
+      'location': {'lat': 47.4979, 'lon': 19.0402, 'accuracy_meters': 12.4},
+    });
+    expect(
+      find.byKey(const Key('location-message-open-button-loc-1')),
+      findsOneWidget,
+    );
+    expect(locationService.getCurrentPositionCalls, 1);
+  });
+
   testWidgets('whatsapp group message button opens the invite link', (
     tester,
   ) async {
@@ -1932,6 +2071,122 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(openedUrls, ['https://chat.whatsapp.com/InviteToken123']);
+  });
+
+  testWidgets('location message details can open Google Maps', (tester) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final openedUrls = <String>[];
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'loc-1',
+          kind: ChatMessageKind.location,
+          body: '',
+          senderId: 2,
+          senderUsername: 'other',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          location: const LocationMessageData(
+            lat: 47.4979,
+            lon: 19.0402,
+            accuracyMeters: 12.4,
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        externalLinkOpener: (url) async {
+          openedUrls.add(url);
+          return true;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('location-message-open-button-loc-1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('location-open-google-maps-button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('location-open-google-maps-button')));
+    await tester.pumpAndSettle();
+
+    expect(openedUrls, [
+      'https://www.google.com/maps/search/?api=1&query=47.4979%2C19.0402',
+    ]);
+  });
+
+  testWidgets('tapping the location bubble opens the details sheet', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'loc-1',
+          kind: ChatMessageKind.location,
+          body: '',
+          senderId: 2,
+          senderUsername: 'other',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          location: const LocationMessageData(
+            lat: 47.4979,
+            lon: 19.0402,
+            accuracyMeters: 12.4,
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Shared location'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('location-open-google-maps-button')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('paste button fills the WhatsApp invite field from clipboard', (

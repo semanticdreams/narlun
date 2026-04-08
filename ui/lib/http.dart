@@ -513,6 +513,7 @@ class HttpService {
     message_body, {
     ChatMessageKind kind = ChatMessageKind.text,
     String? whatsappInviteUrl,
+    LocationMessageData? location,
   }) async {
     final data = <String, Object?>{
       'room_id': room_id,
@@ -521,6 +522,14 @@ class HttpService {
     };
     if (whatsappInviteUrl != null && whatsappInviteUrl.isNotEmpty) {
       data['whatsapp_group'] = {'invite_url': whatsappInviteUrl};
+    }
+    if (location != null) {
+      data['location'] = {
+        'lat': location.lat,
+        'lon': location.lon,
+        if (location.accuracyMeters != null)
+          'accuracy_meters': location.accuracyMeters,
+      };
     }
     final resp = await client.post(
       Uri.parse(baseurl + '/social/send-message'),

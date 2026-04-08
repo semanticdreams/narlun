@@ -164,10 +164,13 @@ async def send_message(
     *,
     kind='text',
     whatsapp_group=None,
+    location=None,
 ):
     payload = {'room_id': room_id, 'body': body, 'kind': kind}
     if whatsapp_group is not None:
         payload['whatsapp_group'] = whatsapp_group
+    if location is not None:
+        payload['location'] = location
     response = await cli.post(
         '/api/social/send-message',
         json=payload,

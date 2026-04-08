@@ -1,3 +1,4 @@
+import math
 import logging
 from urllib.parse import urlsplit, urlunsplit
 
@@ -108,6 +109,47 @@ def _normalize_whatsapp_invite_url(raw_value):
     return urlunsplit(('https', 'chat.whatsapp.com', f'/{path_parts[0]}', '', ''))
 
 
+def _parse_location_message(location):
+    if not isinstance(location, dict):
+        raise InvalidMessageContentError(message='Location must include coordinates.')
+
+    try:
+        lat = float(location.get('lat'))
+        lon = float(location.get('lon'))
+    except (TypeError, ValueError) as exc:
+        raise InvalidMessageContentError(
+            message='Location must include valid latitude and longitude.',
+        ) from exc
+
+    if not math.isfinite(lat) or lat < -90 or lat > 90:
+        raise InvalidMessageContentError(
+            message='Location latitude must be between -90 and 90.',
+        )
+    if not math.isfinite(lon) or lon < -180 or lon > 180:
+        raise InvalidMessageContentError(
+            message='Location longitude must be between -180 and 180.',
+        )
+
+    accuracy_meters = location.get('accuracy_meters')
+    if accuracy_meters is not None:
+        try:
+            accuracy_meters = float(accuracy_meters)
+        except (TypeError, ValueError) as exc:
+            raise InvalidMessageContentError(
+                message='Location accuracy must be a number.',
+            ) from exc
+        if not math.isfinite(accuracy_meters) or accuracy_meters < 0:
+            raise InvalidMessageContentError(
+                message='Location accuracy must be zero or greater.',
+            )
+
+    return {
+        'lat': lat,
+        'lon': lon,
+        **({'accuracy_meters': accuracy_meters} if accuracy_meters is not None else {}),
+    }
+
+
 def _parse_outgoing_message_payload(data):
     kind = data.get('kind') or 'text'
     if kind == 'text':
@@ -118,6 +160,7 @@ def _parse_outgoing_message_payload(data):
             'kind': 'text',
             'body': body,
             'whatsapp_group': None,
+            'location': None,
         }
     if kind == 'whatsapp_group':
         whatsapp_group = data.get('whatsapp_group')
@@ -133,6 +176,14 @@ def _parse_outgoing_message_payload(data):
             'kind': 'whatsapp_group',
             'body': '',
             'whatsapp_group': {'invite_url': normalized_url},
+            'location': None,
+        }
+    if kind == 'location':
+        return {
+            'kind': 'location',
+            'body': '',
+            'whatsapp_group': None,
+            'location': _parse_location_message(data.get('location')),
         }
     raise InvalidMessageContentError(message='Unknown message type.')
 
@@ -375,6 +426,7 @@ async def send_message(req):
             payload['body'],
             kind=payload['kind'],
             whatsapp_group=payload['whatsapp_group'],
+            location=payload['location'],
         )
     except PermissionDenied:
         raise NoSuchRoomError()

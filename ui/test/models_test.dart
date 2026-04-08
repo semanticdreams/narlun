@@ -87,4 +87,46 @@ void main() {
       'whatsapp:https://chat.whatsapp.com/InviteToken123',
     );
   });
+
+  test('location previews use the specialized label', () {
+    final preview = MessagePreview.fromJson({
+      'kind': 'location',
+      'body': '',
+      'location': {'lat': 47.4979, 'lon': 19.0402, 'accuracy_meters': 12.4},
+    });
+    final message = ChatMessage.fromJson({
+      'id': 'm-2',
+      'kind': 'location',
+      'body': '',
+      'sender_id': 1,
+      'timestamp': '2026-04-04T10:00:00.000Z',
+      'location': {'lat': 47.4979, 'lon': 19.0402, 'accuracy_meters': 12.4},
+    });
+
+    expect(preview.previewText, 'Shared location');
+    expect(message.displayText, 'Shared location');
+    expect(message.location?.coordinateLabel, '47.49790, 19.04020');
+    expect(message.location?.googleMapsUrl, contains('maps/search/'));
+    expect(message.pendingMatchKey, 'location:47.497900:19.040200:12.4');
+  });
+
+  test('malformed location payloads are ignored instead of becoming 0,0', () {
+    final preview = MessagePreview.fromJson({
+      'kind': 'location',
+      'body': '',
+      'location': {'lon': 19.0402},
+    });
+    final message = ChatMessage.fromJson({
+      'id': 'm-3',
+      'kind': 'location',
+      'body': '',
+      'sender_id': 1,
+      'timestamp': '2026-04-04T10:00:00.000Z',
+      'location': {'lat': 'bad', 'lon': 19.0402},
+    });
+
+    expect(preview.location, isNull);
+    expect(message.location, isNull);
+    expect(message.displayText, 'Shared location');
+  });
 }

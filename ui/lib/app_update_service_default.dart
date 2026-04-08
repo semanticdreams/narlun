@@ -11,6 +11,9 @@ class DefaultAppUpdateService extends AppUpdateService {
   bool get isApplyingUpdate => false;
 
   @override
+  bool get shouldShowUpdatePrompt => false;
+
+  @override
   Future<void> applyUpdate() async {}
 
   @override

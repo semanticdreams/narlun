@@ -44,6 +44,8 @@ class FakeHttpService extends HttpService {
   final Queue<Future<List<RoomJoinRequest>> Function(int roomId)>
   _roomRequestHandlers =
       Queue<Future<List<RoomJoinRequest>> Function(int roomId)>();
+  final Queue<Future<void> Function(int roomId)> _leaveRoomHandlers =
+      Queue<Future<void> Function(int roomId)>();
   final Queue<Future<ChatMessage> Function(int roomId, String body)>
   _sendMessageHandlers =
       Queue<Future<ChatMessage> Function(int roomId, String body)>();
@@ -76,6 +78,10 @@ class FakeHttpService extends HttpService {
     Future<List<RoomJoinRequest>> Function(int roomId) handler,
   ) {
     _roomRequestHandlers.add(handler);
+  }
+
+  void enqueueLeaveRoom(Future<void> Function(int roomId) handler) {
+    _leaveRoomHandlers.add(handler);
   }
 
   void enqueueSendMessage(
@@ -171,6 +177,9 @@ class FakeHttpService extends HttpService {
   @override
   Future<void> leave_room(room_id) async {
     leftRooms.add(room_id as int);
+    if (_leaveRoomHandlers.isNotEmpty) {
+      await _leaveRoomHandlers.removeFirst()(room_id);
+    }
   }
 
   @override
@@ -1125,6 +1134,77 @@ void main() {
     expect(httpService.leftRooms, [1]);
     expect(find.text('Open room'), findsOneWidget);
   });
+
+  testWidgets(
+    'leave room does not double-pop when room-deleted arrives during the request',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      final leaveCompleter = Completer<void>();
+      httpService.enqueueLeaveRoom((_) => leaveCompleter.future);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                return FilledButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MessagesView(
+                          room: RoomSummary(
+                            id: 1,
+                            name: 'Solo room',
+                            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+                            participants: const [
+                              RoomParticipant(id: 1, username: 'me'),
+                            ],
+                          ),
+                          me: const SessionUser(
+                            authenticated: true,
+                            id: 1,
+                            username: 'me',
+                          ),
+                          httpService: httpService,
+                          websocketService: websocketService,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open room'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open room'));
+      await tester.pumpAndSettle();
+
+      tester
+          .widget<PopupMenuButton<String>>(
+            find.byKey(const Key('room-menu-button')),
+          )
+          .onSelected
+          ?.call('leave-room');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Leave'));
+      await tester.pump();
+
+      websocketService.emitRoomDeleted(1);
+      await tester.pumpAndSettle();
+
+      leaveCompleter.complete();
+      await tester.pumpAndSettle();
+
+      expect(httpService.leftRooms, [1]);
+      expect(find.text('Open room'), findsOneWidget);
+      expect(find.byType(MessagesView), findsNothing);
+    },
+  );
 
   test('leave room notice storage is scoped per user', () {
     expect(hasSeenLeaveRoomInfo(1), isFalse);

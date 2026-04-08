@@ -10,11 +10,13 @@ class FakeAppUpdateService extends AppUpdateService {
     this.supported = true,
     this.updateAvailable = false,
     this.applyingUpdate = false,
+    this.showUpdatePrompt = true,
   });
 
   final bool supported;
   bool updateAvailable;
   bool applyingUpdate;
+  final bool showUpdatePrompt;
   int checkCalls = 0;
   int applyCalls = 0;
 
@@ -26,6 +28,9 @@ class FakeAppUpdateService extends AppUpdateService {
 
   @override
   bool get isApplyingUpdate => applyingUpdate;
+
+  @override
+  bool get shouldShowUpdatePrompt => showUpdatePrompt;
 
   @override
   Future<void> applyUpdate() async {
@@ -108,5 +113,31 @@ void main() {
 
     expect(find.text('Reloading...'), findsOneWidget);
     expect(find.text('Reload'), findsNothing);
+  });
+
+  testWidgets('stays hidden when updates are auto-applied', (tester) async {
+    final updateService = FakeAppUpdateService(
+      updateAvailable: true,
+      showUpdatePrompt: false,
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppUpdateService>.value(
+        value: updateService,
+        child: const MaterialApp(
+          home: AppUpdateBanner(
+            child: Scaffold(body: Text('Home')),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Home'), findsOneWidget);
+    expect(
+      find.text('A newer version of Narlun is ready. Reload to update.'),
+      findsNothing,
+    );
+    expect(find.text('Reload'), findsNothing);
+    expect(find.text('Reloading...'), findsNothing);
   });
 }

@@ -17,7 +17,9 @@ class AppUpdateBanner extends StatelessWidget {
         return Stack(
           children: [
             Positioned.fill(child: child),
-            if (updateService.isSupported && updateService.isUpdateAvailable)
+            if (updateService.isSupported &&
+                updateService.shouldShowUpdatePrompt &&
+                updateService.isUpdateAvailable)
               SafeArea(
                 bottom: false,
                 child: Align(

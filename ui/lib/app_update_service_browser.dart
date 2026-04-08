@@ -7,16 +7,19 @@ import 'app_update_service.dart';
 import 'web_install_state_browser.dart';
 
 const _updateCheckInterval = Duration(minutes: 20);
+const _applyUpdateFallbackDelay = Duration(seconds: 8);
 
 class BrowserAppUpdateService extends AppUpdateService {
   BrowserAppUpdateService() {
     _serviceWorkerContainer = html.window.navigator.serviceWorker;
     _isSupported = _serviceWorkerContainer != null;
+    _shouldShowUpdatePrompt = !detectInstalledWebApp();
     if (!_isSupported) {
       return;
     }
 
     _controllerChangeListener = (_) {
+      _cancelApplyUpdateFallback();
       if (_isApplyingUpdate || _isUpdateAvailable) {
         html.window.location.reload();
         return;
@@ -50,10 +53,12 @@ class BrowserAppUpdateService extends AppUpdateService {
   html.EventListener? _installingStateChangeListener;
   html.ServiceWorker? _watchedInstallingWorker;
   Timer? _periodicCheckTimer;
+  Timer? _applyUpdateFallbackTimer;
   bool _isSupported = false;
   bool _isUpdateAvailable = false;
   bool _isApplyingUpdate = false;
   bool _isCheckingForUpdate = false;
+  bool _shouldShowUpdatePrompt = true;
 
   @override
   bool get isSupported => _isSupported;
@@ -63,6 +68,9 @@ class BrowserAppUpdateService extends AppUpdateService {
 
   @override
   bool get isApplyingUpdate => _isApplyingUpdate;
+
+  @override
+  bool get shouldShowUpdatePrompt => _shouldShowUpdatePrompt;
 
   Future<void> _initialize() async {
     await _refreshRegistration();
@@ -97,12 +105,14 @@ class BrowserAppUpdateService extends AppUpdateService {
     final registration = await _refreshRegistration();
     final waiting = registration?.waiting;
     if (waiting == null) {
+      _isApplyingUpdate = false;
       _isUpdateAvailable = false;
       notifyListeners();
       return;
     }
     _isApplyingUpdate = true;
     notifyListeners();
+    _scheduleApplyUpdateFallback();
     waiting.postMessage({'type': 'SKIP_WAITING'});
   }
 
@@ -174,10 +184,28 @@ class BrowserAppUpdateService extends AppUpdateService {
     }
     final hasController = _serviceWorkerContainer?.controller != null;
     final hasWaitingUpdate = hasController && registration.waiting != null;
-    _setUpdateAvailable(hasWaitingUpdate);
-    if (hasWaitingUpdate && detectInstalledWebApp() && !_isApplyingUpdate) {
-      unawaited(applyUpdate());
+    if (hasWaitingUpdate && !_shouldShowUpdatePrompt) {
+      _setUpdateAvailable(false);
+      if (!_isApplyingUpdate) {
+        unawaited(applyUpdate());
+      }
+      return;
     }
+    _setUpdateAvailable(hasWaitingUpdate);
+  }
+
+  void _scheduleApplyUpdateFallback() {
+    _applyUpdateFallbackTimer?.cancel();
+    _applyUpdateFallbackTimer = Timer(_applyUpdateFallbackDelay, () {
+      if (_isApplyingUpdate) {
+        html.window.location.reload();
+      }
+    });
+  }
+
+  void _cancelApplyUpdateFallback() {
+    _applyUpdateFallbackTimer?.cancel();
+    _applyUpdateFallbackTimer = null;
   }
 
   void _setUpdateAvailable(bool value) {
@@ -191,6 +219,7 @@ class BrowserAppUpdateService extends AppUpdateService {
   @override
   void dispose() {
     _periodicCheckTimer?.cancel();
+    _cancelApplyUpdateFallback();
     if (_serviceWorkerContainer != null && _controllerChangeListener != null) {
       _serviceWorkerContainer!.removeEventListener(
         'controllerchange',

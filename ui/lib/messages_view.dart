@@ -774,7 +774,7 @@ class MessagesState extends State<MessagesView> {
     try {
       final messenger = ScaffoldMessenger.maybeOf(context);
       await httpService.leave_room(room.id);
-      if (!mounted) {
+      if (!mounted || _roomClosed) {
         return;
       }
       roomMessagesCache.clearRoom(room.id);

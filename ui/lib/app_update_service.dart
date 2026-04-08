@@ -7,6 +7,7 @@ abstract class AppUpdateService extends ChangeNotifier {
   bool get isSupported;
   bool get isUpdateAvailable;
   bool get isApplyingUpdate;
+  bool get shouldShowUpdatePrompt;
 
   Future<void> checkForUpdate();
   Future<void> applyUpdate();

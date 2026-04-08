@@ -69,11 +69,11 @@ class _GlobalInviteQrView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final inviteUrl = Uri.base.resolve('/nearby').toString();
+    final inviteUrl = globalInviteUrl();
     return _InviteQrShell(
-      title: 'Open Nearby',
+      title: 'Invite to Narlun',
       description:
-          'Scan this code to open Narlun. New people can choose a username and land straight on Nearby.',
+          'Scan this code to open Narlun. New people can choose a username and get started right away.',
       fallbackRoute: sanitizeInviteBackToRoute(backToRoute) ?? '/home',
       preferPopOnBack: preferPopOnBack,
       body: Column(
@@ -85,22 +85,31 @@ class _GlobalInviteQrView extends StatelessWidget {
             backgroundColor: Colors.white,
           ),
           const SizedBox(height: 20),
-          TextFormField(
-            key: const Key('invite-link-text'),
-            initialValue: inviteUrl,
-            readOnly: true,
-            maxLines: 1,
-            decoration: const InputDecoration(
-              labelText: 'Link',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            key: const Key('invite-copy-button'),
-            onPressed: () => _copyInviteLink(context, inviteUrl),
-            icon: const Icon(Icons.copy_outlined),
-            label: const Text('Copy link'),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  key: const Key('invite-link-text'),
+                  initialValue: inviteUrl,
+                  readOnly: true,
+                  maxLines: 1,
+                  decoration: const InputDecoration(
+                    labelText: 'Link',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton(
+                key: const Key('invite-copy-button'),
+                onPressed: () => _copyInviteLink(context, inviteUrl),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(52, 52),
+                  padding: EdgeInsets.zero,
+                ),
+                child: const Icon(Icons.copy_outlined),
+              ),
+            ],
           ),
         ],
       ),

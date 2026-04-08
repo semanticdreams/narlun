@@ -186,43 +186,46 @@ class _AddWhatsappGroupViewState extends State<AddWhatsappGroupView> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                TextField(
-                  key: const Key('whatsapp-group-link-field'),
-                  controller: _inviteController,
-                  enabled: !_isSubmitting,
-                  keyboardType: TextInputType.url,
-                  textInputAction: TextInputAction.done,
-                  onChanged: (_) {
-                    if (_errorText == null) {
-                      return;
-                    }
-                    setState(() {
-                      _errorText = null;
-                    });
-                  },
-                  onSubmitted: (_) async {
-                    await _submit();
-                  },
-                  decoration: InputDecoration(
-                    labelText: 'WhatsApp invite link',
-                    hintText: 'https://chat.whatsapp.com/...',
-                    errorText: _errorText,
-                    border: const OutlineInputBorder(),
-                    suffixIconConstraints: const BoxConstraints(
-                      minWidth: 86,
-                      minHeight: 48,
-                    ),
-                    suffixIcon: Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Center(
-                        child: TextButton(
-                          key: const Key('whatsapp-group-paste-button'),
-                          onPressed: _isSubmitting ? null : _pasteFromClipboard,
-                          child: const Text('Paste'),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const Key('whatsapp-group-link-field'),
+                        controller: _inviteController,
+                        enabled: !_isSubmitting,
+                        keyboardType: TextInputType.url,
+                        textInputAction: TextInputAction.done,
+                        onChanged: (_) {
+                          if (_errorText == null) {
+                            return;
+                          }
+                          setState(() {
+                            _errorText = null;
+                          });
+                        },
+                        onSubmitted: (_) async {
+                          await _submit();
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'WhatsApp invite link',
+                          hintText: 'https://chat.whatsapp.com/...',
+                          errorText: _errorText,
+                          border: const OutlineInputBorder(),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      key: const Key('whatsapp-group-paste-button'),
+                      onPressed: _isSubmitting ? null : _pasteFromClipboard,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(52, 56),
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: const Icon(Icons.content_paste_rounded),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
                 SizedBox(

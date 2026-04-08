@@ -163,3 +163,7 @@ String authRouteWithNext(BuildContext context, String path) {
 
   return Uri(path: path, queryParameters: {'next': next}).toString();
 }
+
+String globalInviteUrl() {
+  return Uri.base.resolve('/').toString();
+}

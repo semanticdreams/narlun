@@ -1191,6 +1191,48 @@ class MessagesState extends State<MessagesView> {
     );
   }
 
+  Future<void> _showComposerAddSheet() async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+    }
+    FocusScope.of(context).unfocus();
+    final selection = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  key: const Key('message-add-whatsapp-group'),
+                  leading: const Icon(Icons.group_add_rounded),
+                  title: const Text('WhatsApp group'),
+                  subtitle: const Text(
+                    'Share a join button for a WhatsApp group',
+                  ),
+                  onTap: () => Navigator.of(sheetContext).pop('whatsapp-group'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (selection == 'whatsapp-group' && mounted) {
+      await _openWhatsappGroupComposer();
+    }
+  }
+
   Future<void> _openWhatsappInvite(String inviteUrl) async {
     final opened = await externalLinkOpener(inviteUrl);
     if (opened || !mounted) {
@@ -1578,32 +1620,16 @@ class MessagesState extends State<MessagesView> {
                           SizedBox(
                             width: 52,
                             height: 56,
-                            child: PopupMenuButton<String>(
+                            child: IconButton(
                               key: const Key('message-add-button'),
                               tooltip: 'Add',
-                              requestFocus: false,
                               icon: const Icon(
                                 Icons.add_circle_outline_rounded,
                                 color: Color(0xFF61706E),
                               ),
-                              onSelected: (value) {
-                                if (value == 'whatsapp-group') {
-                                  unawaited(_openWhatsappGroupComposer());
-                                }
+                              onPressed: () {
+                                unawaited(_showComposerAddSheet());
                               },
-                              itemBuilder: (context) => const [
-                                PopupMenuItem<String>(
-                                  key: Key('message-add-whatsapp-group'),
-                                  value: 'whatsapp-group',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.group_add_rounded),
-                                      SizedBox(width: 10),
-                                      Text('WhatsApp group'),
-                                    ],
-                                  ),
-                                ),
-                              ],
                             ),
                           ),
                         ],

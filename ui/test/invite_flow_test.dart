@@ -85,7 +85,7 @@ Widget _buildInviteQrApp({
 }
 
 void main() {
-  testWidgets('global invite QR view renders a nearby onboarding link', (
+  testWidgets('global invite QR view renders a root onboarding link', (
     tester,
   ) async {
     final httpService = _FakeInviteHttpService();
@@ -93,9 +93,12 @@ void main() {
     await tester.pumpWidget(_buildInviteQrApp(httpService: httpService));
     await tester.pumpAndSettle();
 
-    expect(find.text('Open Nearby'), findsWidgets);
-    expect(_inviteLinkText(tester), contains('/nearby'));
-    expect(find.text('Copy link'), findsOneWidget);
+    expect(find.text('Invite to Narlun'), findsWidgets);
+    final inviteUri = Uri.parse(_inviteLinkText(tester));
+    expect(inviteUri.path, '/');
+    expect(inviteUri.hasQuery, isFalse);
+    expect(find.byKey(const Key('invite-copy-button')), findsOneWidget);
+    expect(find.text('Copy link'), findsNothing);
     expect(httpService.createInviteCalls, 0);
     expect(httpService.createdInviteRoomId, isNull);
   });
@@ -286,7 +289,7 @@ void main() {
     ).pushNamed(inviteQrRouteWithBackTo(backTo: '/rooms'), arguments: true);
     await tester.pumpAndSettle();
 
-    expect(find.text('Open Nearby'), findsWidgets);
+    expect(find.text('Invite to Narlun'), findsWidgets);
 
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();

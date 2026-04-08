@@ -256,11 +256,17 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
   @override
   Widget build(BuildContext context) {
     final tabController = _tabController ?? DefaultTabController.of(context);
+    final inviteBackToRoute = _activeTabIndex == 0
+        ? nearbyRoute()
+        : roomsRoute();
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: const NarlunAppBarTitle(),
-        actions: const [InviteQrButton(), AppBarAvatar()],
+        actions: [
+          InviteQrButton(backToRoute: inviteBackToRoute),
+          const AppBarAvatar(),
+        ],
         bottom: const TabBar(
           tabs: [
             Tab(icon: Icon(Icons.people_outline), text: 'Nearby'),

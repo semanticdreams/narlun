@@ -72,6 +72,7 @@ class FakeNearbyHttpService extends HttpService {
 
   int checkinCalls = 0;
   int createRoomCalls = 0;
+  int getRoomsCalls = 0;
   List<NearbyItem> nearbyItems = const [];
   RoomSummary? createdRoom;
   Object? createRoomError;
@@ -104,6 +105,7 @@ class FakeNearbyHttpService extends HttpService {
 
   @override
   Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
+    getRoomsCalls += 1;
     if (getRoomsError != null) {
       throw getRoomsError!;
     }
@@ -234,6 +236,46 @@ void main() {
       expect(locationService.checkPermissionCalls, 1);
       expect(locationService.getCurrentPositionCalls, 1);
       expect(httpService.checkinCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'home view does not warm rooms until the rooms tab is opened',
+    (tester) async {
+      final httpService = FakeNearbyHttpService();
+      final locationService = FakeLocationService();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<HttpService>.value(value: httpService),
+            ChangeNotifierProvider<InstallPromptService>(
+              create: (_) => _FakeInstallPromptService(),
+            ),
+            ChangeNotifierProvider(
+              create: (_) => MeModel()
+                ..setData(
+                  const SessionUser(authenticated: true, id: 1, username: 'me'),
+                ),
+            ),
+          ],
+          child: MaterialApp(
+            home: HomeView(
+              initialTabIndex: 0,
+              nearbyLocationService: locationService,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(httpService.getRoomsCalls, 0);
+
+      await tester.tap(find.text('Rooms'));
+      await tester.pumpAndSettle();
+
+      expect(httpService.getRoomsCalls, 1);
     },
   );
 

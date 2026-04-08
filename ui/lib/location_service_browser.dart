@@ -80,7 +80,7 @@ class BrowserLocationService implements LocationService {
         );
       }
     } else {
-      position = await _awaitNextPosition();
+      position = await _requestSinglePosition();
     }
     logFrontendDiagnostic(
       'location_get_current_position',
@@ -106,7 +106,7 @@ class BrowserLocationService implements LocationService {
 
     try {
       await _ensureWatchActive();
-      final position = _lastKnownPosition ?? await _awaitNextPosition();
+      final position = _lastKnownPosition ?? await _requestSinglePosition();
       _storePosition(position);
       logFrontendDiagnostic(
         'location_request_permission',
@@ -264,6 +264,25 @@ class BrowserLocationService implements LocationService {
         _nextPositionAfter = null;
       }
       throw TimeoutException('Browser geolocation timed out.');
+    }
+  }
+
+  Future<Position> _requestSinglePosition() async {
+    try {
+      final geoPosition = await html.window.navigator.geolocation
+          .getCurrentPosition(
+            enableHighAccuracy: false,
+            timeout: _positionRequestTimeout,
+            maximumAge: _positionCacheMaxAge,
+          );
+      final position = _toPosition(geoPosition);
+      _storePosition(position);
+      return position;
+    } catch (error) {
+      if (error is html.PositionError) {
+        throw _mapPositionError(error);
+      }
+      rethrow;
     }
   }
 

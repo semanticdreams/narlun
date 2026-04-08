@@ -27,6 +27,7 @@ class ConversationsView extends StatefulWidget {
   final RoomsFeedModel? roomsFeedModel;
   final bool enableRealtimeRoomSummarySync;
   final VoidCallback? onCreateRoom;
+  final bool autoLoadInitial;
 
   const ConversationsView({
     super.key,
@@ -38,6 +39,7 @@ class ConversationsView extends StatefulWidget {
     this.roomsFeedModel,
     this.enableRealtimeRoomSummarySync = true,
     this.onCreateRoom,
+    this.autoLoadInitial = true,
   });
 
   @override
@@ -214,7 +216,7 @@ class _ConversationsState extends State<ConversationsView> {
     _meModel?.addListener(_handleSessionChanged);
     _syncFeedSession();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
+      if (!mounted || !widget.autoLoadInitial) {
         return;
       }
       unawaited(_ensureWarmRooms());
@@ -243,6 +245,14 @@ class _ConversationsState extends State<ConversationsView> {
       _meModel = meModel;
       _meModel?.addListener(_handleSessionChanged);
       _syncFeedSession();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ConversationsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.autoLoadInitial && widget.autoLoadInitial) {
+      unawaited(_ensureWarmRooms());
     }
   }
 

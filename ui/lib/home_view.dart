@@ -287,6 +287,7 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
                 roomsFeedModel: _roomsFeedModel,
                 enableRealtimeRoomSummarySync: false,
                 showChrome: false,
+                autoLoadInitial: _activeTabIndex == 1,
                 onCreateRoom: _createRoom,
                 onOpenNearby: () {
                   tabController.animateTo(0);

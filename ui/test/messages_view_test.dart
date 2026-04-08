@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -526,6 +527,40 @@ void main() {
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('No messages yet'), findsOneWidget);
+  });
+
+  testWidgets('room subtitle shows the full member count', (tester) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          name: 'Solo room',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        room: RoomSummary(
+          id: 1,
+          name: 'Solo room',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 member'), findsOneWidget);
+    expect(find.text('Just you'), findsNothing);
+    expect(find.text('1 other member'), findsNothing);
   });
 
   testWidgets('shows a dismissible notification prompt when entering a room', (
@@ -1580,6 +1615,61 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(openedUrls, ['https://chat.whatsapp.com/InviteToken123']);
+  });
+
+  testWidgets('paste button fills the WhatsApp invite field from clipboard', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.getData') {
+            return <String, dynamic>{
+              'text': 'chat.whatsapp.com/InviteToken123',
+            };
+          }
+          return null;
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('message-add-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('message-add-whatsapp-group')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('whatsapp-group-paste-button')));
+    await tester.pumpAndSettle();
+
+    final input = tester.widget<TextField>(
+      find.byKey(const Key('whatsapp-group-link-field')),
+    );
+    expect(input.controller!.text, 'chat.whatsapp.com/InviteToken123');
   });
 
   testWidgets(

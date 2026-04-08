@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'http.dart';
 import 'whatsapp_group_links.dart';
@@ -21,6 +22,37 @@ class _AddWhatsappGroupViewState extends State<AddWhatsappGroupView> {
   void dispose() {
     _inviteController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    if (_isSubmitting) {
+      return;
+    }
+    try {
+      final clipboardData = await Clipboard.getData('text/plain');
+      final pastedText = clipboardData?.text?.trim();
+      if (!mounted || pastedText == null || pastedText.isEmpty) {
+        return;
+      }
+      _inviteController.value = TextEditingValue(
+        text: pastedText,
+        selection: TextSelection.collapsed(offset: pastedText.length),
+      );
+      if (_errorText != null) {
+        setState(() {
+          _errorText = null;
+        });
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Could not paste right now.')),
+        );
+    }
   }
 
   Future<void> _submit() async {
@@ -176,6 +208,20 @@ class _AddWhatsappGroupViewState extends State<AddWhatsappGroupView> {
                     hintText: 'https://chat.whatsapp.com/...',
                     errorText: _errorText,
                     border: const OutlineInputBorder(),
+                    suffixIconConstraints: const BoxConstraints(
+                      minWidth: 86,
+                      minHeight: 48,
+                    ),
+                    suffixIcon: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Center(
+                        child: TextButton(
+                          key: const Key('whatsapp-group-paste-button'),
+                          onPressed: _isSubmitting ? null : _pasteFromClipboard,
+                          child: const Text('Paste'),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),

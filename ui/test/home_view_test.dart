@@ -360,9 +360,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Create room'), findsOneWidget);
+    expect(find.byType(FloatingActionButton), findsOneWidget);
 
-    await tester.tap(find.text('Create room'));
+    await tester.tap(find.byType(FloatingActionButton));
     await tester.pumpAndSettle();
 
     expect(httpService.createRoomCalls, 1);
@@ -377,7 +377,7 @@ void main() {
     Navigator.of(tester.element(find.byType(MessagesView))).pop();
     await tester.pumpAndSettle();
 
-    expect(find.text('Create room'), findsOneWidget);
+    expect(find.byType(FloatingActionButton), findsOneWidget);
   });
 
   testWidgets(
@@ -412,7 +412,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Create room'));
+      await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
 
       expect(httpService.createRoomCalls, 1);
@@ -454,7 +454,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Create room'));
+      await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
 
       expect(httpService.createRoomCalls, 1);
@@ -492,7 +492,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Create room'));
+    await tester.tap(find.byType(FloatingActionButton));
     await tester.pumpAndSettle();
 
     expect(httpService.clearedLocalSession, isTrue);

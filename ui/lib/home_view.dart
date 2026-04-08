@@ -289,10 +289,10 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
         ],
       ),
       floatingActionButton: _activeTabIndex == 1
-          ? FloatingActionButton.extended(
+          ? FloatingActionButton(
+              tooltip: 'Create room',
               onPressed: _createRoom,
-              icon: const Icon(Icons.add),
-              label: const Text('Create room'),
+              child: const Icon(Icons.add),
             )
           : null,
     );

@@ -975,13 +975,11 @@ class MessagesState extends State<MessagesView> {
   }
 
   String _roomSubtitle() {
-    if (_otherParticipantCount <= 0) {
-      return 'Just you';
+    final memberCount = room.memberCount;
+    if (memberCount == 1) {
+      return '1 member';
     }
-    if (_otherParticipantCount == 1) {
-      return '1 other member';
-    }
-    return '$_otherParticipantCount other members';
+    return '$memberCount members';
   }
 
   Widget _buildAppBarTitle() {
@@ -1583,6 +1581,7 @@ class MessagesState extends State<MessagesView> {
                             child: PopupMenuButton<String>(
                               key: const Key('message-add-button'),
                               tooltip: 'Add',
+                              requestFocus: false,
                               icon: const Icon(
                                 Icons.add_circle_outline_rounded,
                                 color: Color(0xFF61706E),

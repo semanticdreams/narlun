@@ -13,6 +13,7 @@ from tests.helpers import (
     create_group_room,
     get_room_requests,
     get_messages,
+    mark_room_delivered,
     mark_room_read,
     get_rooms,
     join_user,
@@ -553,6 +554,23 @@ async def test_mark_room_read_adds_read_receipts_to_messages(cli):
     assert messages_response.status == 200
     messages = await messages_response.json()
     assert sorted(reader['id'] for reader in messages[0]['read_by_users']) == sorted([
+        users[0]['user']['id'],
+        users[1]['user']['id'],
+    ])
+
+
+async def test_mark_room_delivered_adds_delivery_receipts_to_messages(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    sent = await send_message(cli, users[0]['jwt'], room['id'], 'hello there')
+
+    response = await mark_room_delivered(cli, users[1]['jwt'], room['id'], sent['id'])
+    assert response.status == 200
+
+    messages_response = await get_messages(cli, users[0]['jwt'], room['id'])
+    assert messages_response.status == 200
+    messages = await messages_response.json()
+    assert sorted(reader['id'] for reader in messages[0]['delivered_by_users']) == sorted([
         users[0]['user']['id'],
         users[1]['user']['id'],
     ])

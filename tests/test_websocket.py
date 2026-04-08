@@ -16,6 +16,7 @@ from tests.helpers import (
     get_messages,
     get_rooms,
     join_user,
+    mark_room_delivered,
     mark_room_read,
     reject_room_request,
     request_room_join,
@@ -179,11 +180,17 @@ async def test_mark_room_read_broadcasts_room_read_event(cli):
         response = await mark_room_read(cli, users[1]['jwt'], room['id'], sent['id'])
         assert response.status == 200
 
-        event = await ws.receive_json()
-        assert event['type'] == 'room-read'
-        assert event['data']['room_id'] == room['id']
-        assert event['data']['user_id'] == users[1]['user']['id']
-        assert event['data']['message_id'] == sent['id']
+        delivered_event = await ws.receive_json()
+        assert delivered_event['type'] == 'room-delivered'
+        assert delivered_event['data']['room_id'] == room['id']
+        assert delivered_event['data']['user_id'] == users[1]['user']['id']
+        assert delivered_event['data']['message_id'] == sent['id']
+
+        read_event = await ws.receive_json()
+        assert read_event['type'] == 'room-read'
+        assert read_event['data']['room_id'] == room['id']
+        assert read_event['data']['user_id'] == users[1]['user']['id']
+        assert read_event['data']['message_id'] == sent['id']
 
         messages_response = await get_messages(cli, users[0]['jwt'], room['id'])
         messages = await messages_response.json()
@@ -191,6 +198,32 @@ async def test_mark_room_read_broadcasts_room_read_event(cli):
             users[0]['user']['id'],
             users[1]['user']['id'],
         ])
+
+
+async def test_mark_room_delivered_broadcasts_room_delivered_event(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    sent = await send_message(cli, users[0]['jwt'], room['id'], 'hello')
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[0]['jwt']),
+    ) as ws:
+        await ws.send_str(json.dumps({'type': 'subscribe-room', 'data': {'room_id': room['id']}}))
+        subscribed = await ws.receive_json()
+        assert subscribed == {
+            'type': 'subscribed-room',
+            'data': {'room_id': room['id']},
+        }
+
+        response = await mark_room_delivered(cli, users[1]['jwt'], room['id'], sent['id'])
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event['type'] == 'room-delivered'
+        assert event['data']['room_id'] == room['id']
+        assert event['data']['user_id'] == users[1]['user']['id']
+        assert event['data']['message_id'] == sent['id']
 
 
 async def test_typing_state_is_broadcast_to_room_subscribers(cli):

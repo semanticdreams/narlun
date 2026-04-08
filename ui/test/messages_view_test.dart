@@ -63,6 +63,7 @@ class FakeHttpService extends HttpService {
   final rejectedRoomRequests = <Map<String, dynamic>>[];
   final leftRooms = <int>[];
   final sentMessages = <Map<String, dynamic>>[];
+  final markedDeliveries = <Map<String, dynamic>>[];
   final markedReads = <Map<String, dynamic>>[];
 
   void enqueueMessages(Future<List<ChatMessage>> Function(int roomId) handler) {
@@ -239,6 +240,19 @@ class FakeHttpService extends HttpService {
       'silent_errors': silentErrors,
     });
   }
+
+  @override
+  Future<void> mark_room_delivered(
+    room_id, {
+    String? messageId,
+    bool silentErrors = true,
+  }) async {
+    markedDeliveries.add({
+      'room_id': room_id,
+      'message_id': messageId,
+      'silent_errors': silentErrors,
+    });
+  }
 }
 
 class FakeWebsocketService extends WebsocketService {
@@ -257,6 +271,8 @@ class FakeWebsocketService extends WebsocketService {
   final StreamController<Map<String, dynamic>> _roomRequestsChangedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _typingStateController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _roomDeliveredController =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _roomReadController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -310,6 +326,12 @@ class FakeWebsocketService extends WebsocketService {
   @override
   Stream<Map<String, dynamic>> typingStateStream(roomId) =>
       _typingStateController.stream.where(
+        (event) => event['data']['room_id'] == roomId,
+      );
+
+  @override
+  Stream<Map<String, dynamic>> roomDeliveredStream(roomId) =>
+      _roomDeliveredController.stream.where(
         (event) => event['data']['room_id'] == roomId,
       );
 
@@ -380,6 +402,23 @@ class FakeWebsocketService extends WebsocketService {
   }) {
     _roomReadController.add({
       'type': 'room-read',
+      'data': {
+        'room_id': roomId,
+        'user_id': userId,
+        'message_id': messageId,
+        'user': {'id': userId, 'username': username},
+      },
+    });
+  }
+
+  void emitRoomDelivered({
+    required int roomId,
+    required int userId,
+    required String messageId,
+    String username = 'Someone',
+  }) {
+    _roomDeliveredController.add({
+      'type': 'room-delivered',
       'data': {
         'room_id': roomId,
         'user_id': userId,
@@ -2107,11 +2146,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Seen'), findsNothing);
-      expect(find.byIcon(Icons.done_rounded), findsNothing);
+      expect(find.byIcon(Icons.schedule_rounded), findsNothing);
       var statusIcon = tester.widget<Icon>(
         find.byKey(const Key('message-status-icon')),
       );
-      expect(statusIcon.icon, Icons.done_all_rounded);
+      expect(statusIcon.icon, Icons.done_rounded);
       expect(statusIcon.color, const Color(0xFF7A7E80));
 
       websocketService.emitRoomRead(
@@ -2131,74 +2170,89 @@ void main() {
     },
   );
 
-  testWidgets('sending a message transitions from pending to delivered', (
-    tester,
-  ) async {
-    final websocketService = FakeWebsocketService();
-    final httpService = FakeHttpService(websocketService: websocketService);
-    final sendCompleter = Completer<ChatMessage>();
-    httpService.enqueueRooms(
-      () async => [
-        RoomSummary(
-          id: 1,
-          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
-          participants: const [
-            RoomParticipant(id: 1, username: 'me'),
-            RoomParticipant(id: 2, username: 'other'),
-          ],
+  testWidgets(
+    'sending a message transitions from pending to sent and delivered',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      final sendCompleter = Completer<ChatMessage>();
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
+          ),
+        ],
+      );
+      httpService.enqueueMessages((_) async => []);
+      httpService.enqueueSendMessage((roomId, body) => sendCompleter.future);
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
         ),
-      ],
-    );
-    httpService.enqueueMessages((_) async => []);
-    httpService.enqueueSendMessage((roomId, body) => sendCompleter.future);
+      );
+      await tester.pumpAndSettle();
 
-    await tester.pumpWidget(
-      _buildMessagesApp(
-        httpService: httpService,
-        websocketService: websocketService,
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('message-input-field')),
+        'Hello now',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('message-send-button')));
+      await tester.pump();
 
-    await tester.enterText(
-      find.byKey(const Key('message-input-field')),
-      'Hello now',
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('message-send-button')));
-    await tester.pump();
+      expect(find.text('Hello now'), findsOneWidget);
+      expect(httpService.sentMessages, [
+        {'room_id': 1, 'body': 'Hello now', 'kind': 'text'},
+      ]);
+      var statusIcon = tester.widget<Icon>(
+        find.byKey(const Key('message-status-icon')),
+      );
+      expect(statusIcon.icon, Icons.schedule_rounded);
+      expect(statusIcon.color, const Color(0xFF7A7E80));
 
-    expect(find.text('Hello now'), findsOneWidget);
-    expect(httpService.sentMessages, [
-      {'room_id': 1, 'body': 'Hello now', 'kind': 'text'},
-    ]);
-    var statusIcon = tester.widget<Icon>(
-      find.byKey(const Key('message-status-icon')),
-    );
-    expect(statusIcon.icon, Icons.done_rounded);
-    expect(statusIcon.color, const Color(0xFF7A7E80));
+      sendCompleter.complete(
+        ChatMessage(
+          id: 'sent-1',
+          body: 'Hello now',
+          senderId: 1,
+          senderUsername: 'me',
+          timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+          readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    sendCompleter.complete(
-      ChatMessage(
-        id: 'sent-1',
-        body: 'Hello now',
-        senderId: 1,
-        senderUsername: 'me',
-        timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
-        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
-      ),
-    );
-    await tester.pumpAndSettle();
+      statusIcon = tester.widget<Icon>(
+        find.byKey(const Key('message-status-icon')),
+      );
+      expect(statusIcon.icon, Icons.done_rounded);
+      expect(statusIcon.color, const Color(0xFF7A7E80));
 
-    statusIcon = tester.widget<Icon>(
-      find.byKey(const Key('message-status-icon')),
-    );
-    expect(statusIcon.icon, Icons.done_all_rounded);
-    expect(statusIcon.color, const Color(0xFF7A7E80));
+      websocketService.emitRoomDelivered(
+        roomId: 1,
+        userId: 2,
+        messageId: 'sent-1',
+        username: 'other',
+      );
+      await tester.pumpAndSettle();
 
-    await tester.pump(const Duration(milliseconds: 220));
-    expect(httpService.markedReads.last['message_id'], 'sent-1');
-  });
+      statusIcon = tester.widget<Icon>(
+        find.byKey(const Key('message-status-icon')),
+      );
+      expect(statusIcon.icon, Icons.done_all_rounded);
+      expect(statusIcon.color, const Color(0xFF7A7E80));
+
+      await tester.pump(const Duration(milliseconds: 220));
+      expect(httpService.markedReads.last['message_id'], 'sent-1');
+    },
+  );
 
   testWidgets(
     'older same-body own messages do not replace a new pending message',
@@ -2251,8 +2305,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Same body'), findsNWidgets(2));
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
       expect(find.byIcon(Icons.done_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.done_all_rounded), findsNothing);
     },
   );
 
@@ -2304,7 +2359,7 @@ void main() {
     },
   );
 
-  testWidgets('outgoing message uses double check until someone reads it', (
+  testWidgets('outgoing message uses single check until someone reads it', (
     tester,
   ) async {
     final websocketService = FakeWebsocketService();
@@ -2345,7 +2400,7 @@ void main() {
     var statusIcon = tester.widget<Icon>(
       find.byKey(const Key('message-status-icon')),
     );
-    expect(statusIcon.icon, Icons.done_all_rounded);
+    expect(statusIcon.icon, Icons.done_rounded);
     expect(statusIcon.color, const Color(0xFF7A7E80));
 
     websocketService.emitRoomRead(
@@ -2362,5 +2417,116 @@ void main() {
     expect(statusIcon.icon, Icons.done_all_rounded);
     expect(statusIcon.color, const Color(0xFF1D8F8C));
     expect(find.text('Seen'), findsNothing);
+  });
+
+  testWidgets('outgoing message uses double gray check after delivery', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'own-1',
+          body: 'Delivered',
+          senderId: 1,
+          senderUsername: 'me',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    websocketService.emitRoomDelivered(
+      roomId: 1,
+      userId: 2,
+      messageId: 'own-1',
+      username: 'other',
+    );
+    await tester.pumpAndSettle();
+
+    final statusIcon = tester.widget<Icon>(
+      find.byKey(const Key('message-status-icon')),
+    );
+    expect(statusIcon.icon, Icons.done_all_rounded);
+    expect(statusIcon.color, const Color(0xFF7A7E80));
+  });
+
+  testWidgets('solo outgoing message turns blue after send confirmation', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final sendCompleter = Completer<ChatMessage>();
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueSendMessage((roomId, body) => sendCompleter.future);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        room: RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [RoomParticipant(id: 1, username: 'me')],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('message-input-field')),
+      'Solo note',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('message-send-button')));
+    await tester.pump();
+
+    sendCompleter.complete(
+      ChatMessage(
+        id: 'solo-1',
+        body: 'Solo note',
+        senderId: 1,
+        senderUsername: 'me',
+        timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final statusIcon = tester.widget<Icon>(
+      find.byKey(const Key('message-status-icon')),
+    );
+    expect(statusIcon.icon, Icons.done_all_rounded);
+    expect(statusIcon.color, const Color(0xFF1D8F8C));
   });
 }

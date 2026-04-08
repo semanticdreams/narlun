@@ -484,6 +484,10 @@ class WebsocketService {
     'room-read',
   ).where((event) => event['data']['room_id'] == roomId);
 
+  Stream<Map<String, dynamic>> roomDeliveredStream(roomId) => eventsStream(
+    'room-delivered',
+  ).where((event) => event['data']['room_id'] == roomId);
+
   Future<void> ensureConnected() async {
     if (_websocket == null) {
       _shouldReconnect = true;
@@ -536,10 +540,7 @@ class WebsocketService {
     return null;
   }
 
-  bool _sameLiveView(
-    Map<String, Object?>? left,
-    Map<String, Object?>? right,
-  ) {
+  bool _sameLiveView(Map<String, Object?>? left, Map<String, Object?>? right) {
     if (left == null || right == null) {
       return left == right;
     }
@@ -598,10 +599,7 @@ class WebsocketService {
     }
     await send({
       'type': 'typing-state',
-      'data': {
-        'room_id': normalizedRoomId,
-        'is_typing': isTyping,
-      },
+      'data': {'room_id': normalizedRoomId, 'is_typing': isTyping},
     });
   }
 

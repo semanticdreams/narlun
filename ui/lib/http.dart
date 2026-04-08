@@ -545,6 +545,22 @@ class HttpService {
       body: jsonEncode(data),
     );
   }
+
+  Future<void> mark_room_delivered(
+    room_id, {
+    String? messageId,
+    bool silentErrors = true,
+  }) async {
+    final data = <String, Object?>{'room_id': room_id};
+    if (messageId != null && messageId.isNotEmpty) {
+      data['message_id'] = messageId;
+    }
+    await client.post(
+      Uri.parse(baseurl + '/social/mark-room-delivered'),
+      headers: _requestHeaders(silentErrors: silentErrors),
+      body: jsonEncode(data),
+    );
+  }
 }
 
 Future<String?> loadSessionCookieForTests() => session_http.readSessionCookie();

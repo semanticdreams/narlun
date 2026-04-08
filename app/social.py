@@ -83,6 +83,15 @@ class InvalidMessageContentError(InvalidUsage):
             self.message = message
 
 
+class InvalidDeliveryReceiptError(InvalidUsage):
+    code = 1009
+    message = 'Invalid delivery receipt'
+
+    def __init__(self, message=None):
+        if message is not None:
+            self.message = message
+
+
 def _normalize_whatsapp_invite_url(raw_value):
     value = (raw_value or '').strip()
     if not value:
@@ -397,6 +406,11 @@ async def mark_room_read(req):
     room_id = req.data.get('room_id')
     message_id = req.data.get('message_id')
     try:
+        delivery_state = await req.store.mark_room_delivered(
+            req.user['id'],
+            room_id,
+            message_id=message_id,
+        )
         read_state = await req.store.mark_room_read(
             req.user['id'],
             room_id,
@@ -407,6 +421,8 @@ async def mark_room_read(req):
     except RoomNotFound:
         raise InvalidReadReceiptError(message='Message is no longer available')
 
+    if delivery_state is not None:
+        await req.store.publish_room_delivered(room_id, delivery_state)
     if read_state is None:
         return web.Response(status=204)
 
@@ -420,6 +436,37 @@ async def mark_room_read(req):
         ),
     )
     return jsonify(read_state)
+
+
+@routes.post('/mark-room-delivered')
+@authenticated
+async def mark_room_delivered(req):
+    room_id = req.data.get('room_id')
+    message_id = req.data.get('message_id')
+    try:
+        delivery_state = await req.store.mark_room_delivered(
+            req.user['id'],
+            room_id,
+            message_id=message_id,
+        )
+    except PermissionDenied:
+        raise NoSuchRoomError()
+    except RoomNotFound:
+        raise InvalidDeliveryReceiptError(message='Message is no longer available')
+
+    if delivery_state is None:
+        return web.Response(status=204)
+
+    await req.store.publish_room_delivered(room_id, delivery_state)
+    logger.info(
+        'Marked room delivered',
+        extra=request_log_context(
+            req,
+            room_id=room_id,
+            message_id=delivery_state['message_id'],
+        ),
+    )
+    return jsonify(delivery_state)
 
 
 @routes.post('/create-invite')

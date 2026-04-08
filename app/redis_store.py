@@ -140,6 +140,9 @@ class RedisStore:
     def _room_read_states_key(self, room_id):
         return f'room:{{{room_id}}}:read_states'
 
+    def _room_delivery_states_key(self, room_id):
+        return f'room:{{{room_id}}}:delivery_states'
+
     def _room_join_requests_key(self, room_id):
         return f'room:{{{room_id}}}:join_requests'
 
@@ -335,7 +338,24 @@ class RedisStore:
             }
         return read_states
 
-    def _serialize_message_with_state(self, message, *, participants_by_id, read_states):
+    async def _get_room_delivery_states(self, room_id):
+        room_id = int(room_id)
+        raw_states = await self.redis.hgetall(self._room_delivery_states_key(room_id))
+        delivery_states = {}
+        for user_id, payload in raw_states.items():
+            try:
+                parsed = json.loads(payload)
+                message_id = str(parsed['message_id'])
+            except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                continue
+            delivery_states[int(user_id)] = {
+                'user_id': int(user_id),
+                'message_id': message_id,
+                'delivered_at': parsed.get('delivered_at'),
+            }
+        return delivery_states
+
+    def _serialize_message_with_state(self, message, *, participants_by_id, delivery_states, read_states):
         sender_id = int(message['sender_id'])
         sender = participants_by_id.get(sender_id) or {
             'id': sender_id,
@@ -343,6 +363,15 @@ class RedisStore:
             'picture': None,
         }
         message_sort_key = self._message_sort_key(message)
+        delivered_by_users = []
+        delivered_user_ids = set()
+        for user_id, delivery_state in delivery_states.items():
+            if self._message_sort_key({'id': delivery_state['message_id']}) < message_sort_key:
+                continue
+            participant = participants_by_id.get(user_id)
+            if participant is not None:
+                delivered_by_users.append(participant)
+                delivered_user_ids.add(int(user_id))
         read_by_users = []
         for user_id, read_state in read_states.items():
             if self._message_sort_key({'id': read_state['message_id']}) < message_sort_key:
@@ -350,10 +379,15 @@ class RedisStore:
             participant = participants_by_id.get(user_id)
             if participant is not None:
                 read_by_users.append(participant)
+                if int(user_id) not in delivered_user_ids:
+                    delivered_by_users.append(participant)
+                    delivered_user_ids.add(int(user_id))
+        delivered_by_users.sort(key=lambda participant: participant['username'])
         read_by_users.sort(key=lambda participant: participant['username'])
         return {
             **message,
             'sender': sender,
+            'delivered_by_users': delivered_by_users,
             'read_by_users': read_by_users,
         }
 
@@ -1086,10 +1120,12 @@ class RedisStore:
         await self.mark_room_read(sender_id, room_id, message_id=message['id'])
 
         participants_by_id = await self._get_room_participants_by_id(room_id)
+        delivery_states = await self._get_room_delivery_states(room_id)
         read_states = await self._get_room_read_states(room_id)
         return self._serialize_message_with_state(
             message,
             participants_by_id=participants_by_id,
+            delivery_states=delivery_states,
             read_states=read_states,
         )
 
@@ -1121,6 +1157,22 @@ class RedisStore:
                 'room_id': int(room_id),
                 'user_id': read_state.get('user_id'),
                 'message_id': read_state.get('message_id'),
+            },
+        )
+
+    async def publish_room_delivered(self, room_id, delivery_state):
+        payload = json.dumps({
+            'type': 'room-delivered',
+            'room_id': int(room_id),
+            **delivery_state,
+        })
+        await self.redis.publish(f'room:{room_id}', payload)
+        logger.debug(
+            'Published room delivery event',
+            extra={
+                'room_id': int(room_id),
+                'user_id': delivery_state.get('user_id'),
+                'message_id': delivery_state.get('message_id'),
             },
         )
 
@@ -1432,6 +1484,7 @@ class RedisStore:
         await self.redis.delete(self._room_meta_key(room_id))
         await self.redis.delete(self._room_members_key(room_id))
         await self.redis.delete(self._room_messages_key(room_id))
+        await self.redis.delete(self._room_delivery_states_key(room_id))
         await self.redis.delete(self._room_read_states_key(room_id))
         return {
             'room_deleted': True,
@@ -1627,15 +1680,69 @@ class RedisStore:
             for message in await self.redis.zrevrange(room_messages_key, 0, MAX_MESSAGE_RESULTS - 1)
         ]
         participants_by_id = await self._get_room_participants_by_id(room_id)
+        delivery_states = await self._get_room_delivery_states(room_id)
         read_states = await self._get_room_read_states(room_id)
         return [
             self._serialize_message_with_state(
                 message,
                 participants_by_id=participants_by_id,
+                delivery_states=delivery_states,
                 read_states=read_states,
             )
             for message in raw_messages
         ]
+
+    async def mark_room_delivered(self, user_id, room_id, *, message_id=None):
+        room_id = await self._require_active_room_membership(user_id, room_id)
+        user_id = int(user_id)
+
+        room_messages_key = self._room_messages_key(room_id)
+        if message_id is None:
+            latest_messages = await self.redis.zrevrange(room_messages_key, 0, 0)
+            if not latest_messages:
+                return None
+            target_message = json.loads(latest_messages[0])
+        else:
+            target_message = None
+            messages = await self.redis.zrevrange(room_messages_key, 0, -1)
+            for encoded_message in messages:
+                candidate = json.loads(encoded_message)
+                if str(candidate.get('id')) == str(message_id):
+                    target_message = candidate
+                    break
+            if target_message is None:
+                raise RoomNotFound()
+
+        next_state = {
+            'user_id': user_id,
+            'message_id': str(target_message['id']),
+            'delivered_at': ts_ms_to_iso(now_ms()),
+        }
+        existing_payload = await self.redis.hget(
+            self._room_delivery_states_key(room_id),
+            user_id,
+        )
+        if existing_payload:
+            try:
+                existing_state = json.loads(existing_payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                existing_state = None
+            if existing_state is not None:
+                existing_sort_key = self._message_sort_key({'id': existing_state.get('message_id')})
+                next_sort_key = self._message_sort_key({'id': next_state['message_id']})
+                if existing_sort_key >= next_sort_key:
+                    return {
+                        'user_id': user_id,
+                        'message_id': str(existing_state.get('message_id')),
+                        'delivered_at': existing_state.get('delivered_at'),
+                    }
+
+        await self.redis.hset(
+            self._room_delivery_states_key(room_id),
+            user_id,
+            json.dumps(next_state),
+        )
+        return next_state
 
     async def mark_room_read(self, user_id, room_id, *, message_id=None):
         room_id = await self._require_active_room_membership(user_id, room_id)
@@ -1743,6 +1850,7 @@ class RedisStore:
         await self.redis.srem(members_key, user_id)
         await self.redis.zrem(self._user_rooms_key(user_id), room_id)
         await self.redis.hdel(self._user_room_prefs_key(user_id), room_id)
+        await self.redis.hdel(self._room_delivery_states_key(room_id), user_id)
         await self.redis.hdel(self._room_read_states_key(room_id), user_id)
         remaining_members = sorted(int(member) for member in await self.redis.smembers(members_key))
 

@@ -278,6 +278,7 @@ class ChatMessage {
   final String? senderUsername;
   final String? senderPicture;
   final DateTime timestamp;
+  final List<RoomParticipant> deliveredByUsers;
   final List<RoomParticipant> readByUsers;
   final MessageDeliveryState deliveryState;
   final String? clientTag;
@@ -291,6 +292,7 @@ class ChatMessage {
     required this.timestamp,
     this.senderUsername,
     this.senderPicture,
+    this.deliveredByUsers = const [],
     this.readByUsers = const [],
     this.deliveryState = MessageDeliveryState.sent,
     this.clientTag,
@@ -309,6 +311,11 @@ class ChatMessage {
       senderPicture:
           json['sender_picture'] as String? ?? sender?['picture'] as String?,
       timestamp: DateTime.parse(json['timestamp'] as String),
+      deliveredByUsers: json['delivered_by_users'] is List<dynamic>
+          ? RoomParticipant.listFromJson(
+              json['delivered_by_users'] as List<dynamic>,
+            )
+          : const [],
       readByUsers: json['read_by_users'] is List<dynamic>
           ? RoomParticipant.listFromJson(json['read_by_users'] as List<dynamic>)
           : const [],
@@ -336,6 +343,7 @@ class ChatMessage {
     String? senderUsername,
     String? senderPicture,
     DateTime? timestamp,
+    List<RoomParticipant>? deliveredByUsers,
     List<RoomParticipant>? readByUsers,
     MessageDeliveryState? deliveryState,
     String? clientTag,
@@ -349,6 +357,7 @@ class ChatMessage {
       senderUsername: senderUsername ?? this.senderUsername,
       senderPicture: senderPicture ?? this.senderPicture,
       timestamp: timestamp ?? this.timestamp,
+      deliveredByUsers: deliveredByUsers ?? this.deliveredByUsers,
       readByUsers: readByUsers ?? this.readByUsers,
       deliveryState: deliveryState ?? this.deliveryState,
       clientTag: clientTag ?? this.clientTag,

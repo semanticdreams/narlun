@@ -121,6 +121,7 @@ class MessagesState extends State<MessagesView> {
   StreamSubscription? roomsChangedSubscription;
   StreamSubscription? roomRequestsChangedSubscription;
   StreamSubscription? typingStateSubscription;
+  StreamSubscription? roomDeliveredSubscription;
   StreamSubscription? roomReadSubscription;
 
   bool _firstAutoscrollExecuted = false;
@@ -133,6 +134,7 @@ class MessagesState extends State<MessagesView> {
       <int, _TypingParticipantState>{};
   Timer? _typingIdleTimer;
   Timer? _typingPresenceCleanupTimer;
+  Timer? _markDeliveredTimer;
   Timer? _markReadTimer;
   bool _typingActive = false;
   bool _showEmojiPicker = false;
@@ -155,6 +157,16 @@ class MessagesState extends State<MessagesView> {
   };
 
   int get _otherParticipantCount => room.otherParticipantsFor(widget.me).length;
+
+  bool get _hasOtherParticipants {
+    final currentUserId = widget.me.id;
+    if (currentUserId == null) {
+      return room.participants.length > 1;
+    }
+    return room.participants.any(
+      (participant) => participant.id != currentUserId,
+    );
+  }
 
   bool _isAtConversationBottom() {
     if (!_scrollController.hasClients) {
@@ -290,8 +302,73 @@ class MessagesState extends State<MessagesView> {
     });
   }
 
+  void _scheduleMarkRoomDelivered({String? messageId}) {
+    if (_roomClosed || messages.isEmpty) {
+      return;
+    }
+    _markDeliveredTimer?.cancel();
+    _markDeliveredTimer = Timer(const Duration(milliseconds: 120), () async {
+      try {
+        await httpService.mark_room_delivered(
+          room.id,
+          messageId: messageId ?? messages.first.id,
+        );
+      } on UnauthorizedResponse {
+        if (!mounted || _roomClosed) {
+          return;
+        }
+        _roomClosed = true;
+        await expireSession(
+          context,
+          httpService: httpService,
+          description: 'Your session has ended. Please sign in again.',
+        );
+      } catch (_) {}
+    });
+  }
+
   bool _messageHasReader(ChatMessage message, int userId) {
     return message.readByUsers.any((reader) => reader.id == userId);
+  }
+
+  bool _messageHasDelivery(ChatMessage message, int userId) {
+    return message.deliveredByUsers.any((reader) => reader.id == userId);
+  }
+
+  void _applyRoomDelivered(Map<String, dynamic> data) {
+    final userId = data['user_id'] as int?;
+    final messageId = data['message_id'] as String?;
+    if (userId == null || messageId == null) {
+      return;
+    }
+    final participant =
+        _participantsById[userId] ??
+        RoomParticipant(id: userId, username: 'Someone');
+    var foundMarker = false;
+    var changed = false;
+    final updatedMessages = <ChatMessage>[];
+    for (final message in messages) {
+      if (!foundMarker && message.id == messageId) {
+        foundMarker = true;
+      }
+      if (!foundMarker || _messageHasDelivery(message, userId)) {
+        updatedMessages.add(message);
+        continue;
+      }
+      changed = true;
+      final deliveredByUsers = [...message.deliveredByUsers, participant]
+        ..sort((left, right) => left.username.compareTo(right.username));
+      updatedMessages.add(message.copyWith(deliveredByUsers: deliveredByUsers));
+    }
+    if (!changed || !mounted) {
+      return;
+    }
+    setState(() {
+      messages
+        ..clear()
+        ..addAll(updatedMessages);
+      _persistMessagesCache();
+    });
   }
 
   void _applyRoomRead(Map<String, dynamic> data) {
@@ -315,9 +392,19 @@ class MessagesState extends State<MessagesView> {
         continue;
       }
       changed = true;
+      final deliveredByUsers =
+          _messageHasDelivery(message, userId)
+                ? message.deliveredByUsers
+                : [...message.deliveredByUsers, participant]
+            ..sort((left, right) => left.username.compareTo(right.username));
       final readers = [...message.readByUsers, participant]
         ..sort((left, right) => left.username.compareTo(right.username));
-      updatedMessages.add(message.copyWith(readByUsers: readers));
+      updatedMessages.add(
+        message.copyWith(
+          deliveredByUsers: deliveredByUsers,
+          readByUsers: readers,
+        ),
+      );
     }
     if (!changed || !mounted) {
       return;
@@ -426,10 +513,22 @@ class MessagesState extends State<MessagesView> {
 
   ChatMessage _syncMessageParticipantMetadata(ChatMessage message) {
     final sender = _participantsById[message.senderId];
+    final syncedDeliveredByUsers = message.deliveredByUsers
+        .map((reader) => _participantsById[reader.id] ?? reader)
+        .toList();
     final syncedReadByUsers = message.readByUsers
         .map((reader) => _participantsById[reader.id] ?? reader)
         .toList();
     if (sender == null &&
+        syncedDeliveredByUsers.length == message.deliveredByUsers.length &&
+        syncedDeliveredByUsers.every(
+          (reader) => message.deliveredByUsers.any(
+            (existing) =>
+                existing.id == reader.id &&
+                existing.username == reader.username &&
+                existing.picture == reader.picture,
+          ),
+        ) &&
         syncedReadByUsers.length == message.readByUsers.length &&
         syncedReadByUsers.every(
           (reader) => message.readByUsers.any(
@@ -444,6 +543,7 @@ class MessagesState extends State<MessagesView> {
     return message.copyWith(
       senderUsername: sender?.username ?? message.senderUsername,
       senderPicture: sender?.picture ?? message.senderPicture,
+      deliveredByUsers: syncedDeliveredByUsers,
       readByUsers: syncedReadByUsers,
     );
   }
@@ -481,6 +581,7 @@ class MessagesState extends State<MessagesView> {
         _scrollToBottom();
         _persistMessagesCache();
       });
+      _scheduleMarkRoomDelivered();
       _scheduleMarkRoomRead();
     } on UnauthorizedResponse {
       if (!mounted || _roomClosed) {
@@ -811,19 +912,21 @@ class MessagesState extends State<MessagesView> {
     messagesStreamSubscription = websocketService
         .messagesStream(widget.room.id)
         .listen((value) {
+          final incomingMessages = ChatMessage.listFromJson(
+            value['data']['messages'] as List<dynamic>,
+          );
           if (!mounted || _roomClosed) {
             return;
           }
           setState(() {
-            _mergeMessages(
-              ChatMessage.listFromJson(
-                value['data']['messages'] as List<dynamic>,
-              ),
-            );
+            _mergeMessages(incomingMessages);
             _resyncMessageParticipants();
             _scrollToBottom();
             _persistMessagesCache();
           });
+          if (incomingMessages.isNotEmpty) {
+            _scheduleMarkRoomDelivered(messageId: incomingMessages.first.id);
+          }
           _scheduleMarkRoomRead();
         });
     typingStateSubscription = websocketService
@@ -833,6 +936,14 @@ class MessagesState extends State<MessagesView> {
             return;
           }
           _applyTypingStateEvent(value['data'] as Map<String, dynamic>);
+        });
+    roomDeliveredSubscription = websocketService
+        .roomDeliveredStream(widget.room.id)
+        .listen((value) {
+          if (!mounted || _roomClosed) {
+            return;
+          }
+          _applyRoomDelivered(value['data'] as Map<String, dynamic>);
         });
     roomReadSubscription = websocketService
         .roomReadStream(widget.room.id)
@@ -1046,6 +1157,7 @@ class MessagesState extends State<MessagesView> {
   void dispose() {
     _typingIdleTimer?.cancel();
     _typingPresenceCleanupTimer?.cancel();
+    _markDeliveredTimer?.cancel();
     _markReadTimer?.cancel();
     unawaited(_setTypingState(false));
     websocketService.unsubscribeRoom(room.id);
@@ -1055,6 +1167,7 @@ class MessagesState extends State<MessagesView> {
     roomsChangedSubscription?.cancel();
     roomRequestsChangedSubscription?.cancel();
     typingStateSubscription?.cancel();
+    roomDeliveredSubscription?.cancel();
     roomReadSubscription?.cancel();
     _scrollController.removeListener(_scrollListener);
     messageController.removeListener(_handleComposerChanged);
@@ -1785,6 +1898,7 @@ class MessagesState extends State<MessagesView> {
               key: ValueKey('chat-message-${message.id}'),
               message: message,
               me: widget.me,
+              hasOtherParticipants: _hasOtherParticipants,
               onOpenWhatsappInvite: _openWhatsappInvite,
               showAuthorLabel: _otherParticipantCount > 1,
               startsCluster: startsCluster,
@@ -2005,6 +2119,7 @@ class _MessageBubbleRow extends StatelessWidget {
     super.key,
     required this.message,
     required this.me,
+    required this.hasOtherParticipants,
     required this.onOpenWhatsappInvite,
     required this.showAuthorLabel,
     required this.startsCluster,
@@ -2015,6 +2130,7 @@ class _MessageBubbleRow extends StatelessWidget {
 
   final ChatMessage message;
   final SessionUser me;
+  final bool hasOtherParticipants;
   final Future<void> Function(String inviteUrl) onOpenWhatsappInvite;
   final bool showAuthorLabel;
   final bool startsCluster;
@@ -2080,18 +2196,27 @@ class _MessageBubbleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSender = message.senderId == me.id;
+    final hasBeenDelivered = message.deliveredByUsers.any(
+      (reader) => reader.id != me.id && reader.id != message.senderId,
+    );
     final hasBeenRead = message.readByUsers.any(
       (reader) => reader.id != me.id && reader.id != message.senderId,
     );
     final bubbleColor = isSender
         ? const Color(0xFFDCF7C5)
         : Colors.white.withValues(alpha: 0.96);
-    final statusColor = isSender && hasBeenRead
+    final shouldShowReadState =
+        isSender && (!hasOtherParticipants || hasBeenRead);
+    final statusColor = shouldShowReadState
         ? const Color(0xFF1D8F8C)
         : const Color(0xFF7A7E80);
-    final statusIcon = message.deliveryState == MessageDeliveryState.sending
-        ? Icons.done_rounded
-        : Icons.done_all_rounded;
+    final statusIcon = switch (message.deliveryState) {
+      MessageDeliveryState.sending => Icons.schedule_rounded,
+      MessageDeliveryState.sent when shouldShowReadState =>
+        Icons.done_all_rounded,
+      MessageDeliveryState.sent when hasBeenDelivered => Icons.done_all_rounded,
+      MessageDeliveryState.sent => Icons.done_rounded,
+    };
 
     return Padding(
       padding: EdgeInsets.only(

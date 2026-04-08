@@ -9,7 +9,6 @@ import 'install_prompt_service.dart';
 import 'locator.dart';
 import 'me_model.dart';
 import 'push_notifications_service.dart';
-import 'route_utils.dart';
 import 'session_actions.dart';
 
 class SettingsView extends StatelessWidget {

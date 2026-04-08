@@ -6,8 +6,7 @@ class AvatarImage extends StatelessWidget {
   final String? picture;
   final double radius;
 
-  const AvatarImage({Key? key, required this.picture, this.radius = 20})
-    : super(key: key);
+  const AvatarImage({super.key, required this.picture, this.radius = 20});
 
   @override
   Widget build(BuildContext context) {

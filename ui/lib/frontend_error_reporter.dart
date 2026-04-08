@@ -27,7 +27,7 @@ class FrontendErrorReporter {
     String? release,
     String? apiBaseUrl,
   }) : _client = client ?? session_http.createHttpClient(),
-       _environment = environment ?? Environment.PROD,
+       _environment = environment ?? Environment.prod,
        _release = release ?? const String.fromEnvironment('APP_RELEASE'),
        _endpoint = Uri.parse(
          '${apiBaseUrl ?? Environment().config.apiUrl}/client-errors',

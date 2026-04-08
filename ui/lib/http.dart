@@ -1,3 +1,5 @@
+// ignore_for_file: non_constant_identifier_names, prefer_interpolation_to_compose_strings, prefer_typing_uninitialized_variables, prefer_function_declarations_over_variables
+
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http_interceptor/http_interceptor.dart';

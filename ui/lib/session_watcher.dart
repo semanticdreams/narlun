@@ -12,10 +12,10 @@ class SessionWatcher extends StatefulWidget {
   final GlobalKey<NavigatorState> navigatorKey;
 
   const SessionWatcher({
-    Key? key,
+    super.key,
     required this.child,
     required this.navigatorKey,
-  }) : super(key: key);
+  });
 
   @override
   State<SessionWatcher> createState() => _SessionWatcherState();

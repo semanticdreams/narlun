@@ -41,7 +41,7 @@ Future<void> initializeApp({
       (environment ??
               const String.fromEnvironment(
                 'ENV',
-                defaultValue: Environment.PROD,
+                defaultValue: Environment.prod,
               ))
           .toUpperCase();
   final selectedApiUrl =

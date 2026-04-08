@@ -72,25 +72,26 @@ class FakePushService:
         self.room_request_rejected_calls.append((requester_id, room_id))
 
 
-async def test_nearby_users_exclude_shared_rooms(cli):
+async def test_nearby_is_rooms_only_and_excludes_joined_rooms(cli):
     users = [await signup(cli) for _ in range(3)]
 
     await checkin(cli, users[0]['jwt'], HAMBURG)
     nearby = await checkin(cli, users[1]['jwt'], MADRID)
-    assert nearby['nearby_users'][0]['id'] == users[0]['user']['id']
+    assert nearby['nearby_users'] == []
+    assert nearby['nearby'] == []
 
-    nearby = await checkin(cli, users[2]['jwt'], BERLIN)
-    nearby_ids = [user['id'] for user in nearby['nearby_users']]
-    assert users[0]['user']['id'] in nearby_ids
-    assert users[1]['user']['id'] in nearby_ids
-
-    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    room = await create_group_room(cli, users[0]['jwt'], '', [])
     assert room['id']
+    await checkin(cli, users[0]['jwt'], HAMBURG)
+
+    nearby = await checkin(cli, users[2]['jwt'], HAMBURG)
+    room_items = [item for item in nearby['nearby'] if item['type'] == 'room']
+    assert nearby['nearby_users'] == []
+    assert [item['room']['id'] for item in room_items] == [room['id']]
 
     nearby = await checkin(cli, users[0]['jwt'], HAMBURG)
-    nearby_ids = [user['id'] for user in nearby['nearby_users']]
-    assert users[1]['user']['id'] not in nearby_ids
-    assert users[2]['user']['id'] in nearby_ids
+    room_items = [item for item in nearby['nearby'] if item['type'] == 'room']
+    assert [item['room']['id'] for item in room_items] == []
 
 
 async def test_nearby_includes_joinable_rooms_and_requested_rooms(cli):
@@ -134,30 +135,28 @@ async def test_requested_rooms_stay_visible_when_nearby_list_is_full(cli, monkey
 
     nearby = await checkin(cli, users[2]['jwt'], HAMBURG)
     room_items = [item for item in nearby['nearby'] if item['type'] == 'room']
-    assert len(nearby['nearby']) == 2
+    assert len(nearby['nearby']) == 1
     assert len(room_items) == 1
     assert room_items[0]['room']['id'] == room['id']
     assert room_items[0]['room']['join_requested'] is True
 
 
-async def test_nearby_users_legacy_list_is_not_truncated_by_room_items(cli, monkeypatch):
+async def test_nearby_rooms_only_list_is_not_truncated_by_room_items(cli, monkeypatch):
     monkeypatch.setattr(redis_store, 'MAX_NEARBY_RESULTS', 2)
 
     users = [await signup(cli) for _ in range(4)]
-    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    first_room = await create_group_room(cli, users[0]['jwt'], '', [])
+    second_room = await create_group_room(cli, users[1]['jwt'], '', [])
+    await create_group_room(cli, users[3]['jwt'], '', [])
 
     await checkin(cli, users[0]['jwt'], HAMBURG)
     await checkin(cli, users[1]['jwt'], MADRID)
     await checkin(cli, users[3]['jwt'], BERLIN)
 
     nearby = await checkin(cli, users[2]['jwt'], HAMBURG)
-    nearby_user_ids = {user['id'] for user in nearby['nearby_users']}
-
-    assert [item['type'] for item in nearby['nearby']] == ['user', 'room']
-    assert nearby_user_ids == {
-        users[0]['user']['id'],
-        users[3]['user']['id'],
-    }
+    assert nearby['nearby_users'] == []
+    assert [item['type'] for item in nearby['nearby']] == ['room', 'room']
+    assert first_room['id'] in {item['room']['id'] for item in nearby['nearby']}
 
 
 async def test_nearby_excludes_users_inactive_for_more_than_two_hours(cli, monkeypatch):
@@ -282,20 +281,13 @@ async def test_room_join_requests_update_room_summaries_for_members(cli):
     assert member_rooms[0]['pending_join_request_count'] == 0
 
 
-async def test_room_name_snapshots_creator_status_on_creation(cli):
+async def test_room_name_defaults_to_new_room_by_creator_username(cli):
     created = await signup(cli)
-    response = await cli.post(
-        '/api/users/update-profile',
-        json={'status': 'Morning coffee crew'},
-        headers={'Cookie': f'jwt={created["jwt"]}'},
-    )
-    assert response.status == 200
-
     other = await signup(cli)
     room = await join_user(cli, created['jwt'], other['user']['id'])
     rooms = await get_rooms(cli, created['jwt'])
     assert rooms[0]['id'] == room['id']
-    assert rooms[0]['name'] == 'Morning coffee crew'
+    assert rooms[0]['name'] == f'New room by {created["username"]}'
 
     response = await cli.post(
         '/api/users/update-profile',
@@ -304,20 +296,23 @@ async def test_room_name_snapshots_creator_status_on_creation(cli):
     )
     assert response.status == 200
     rooms = await get_rooms(cli, created['jwt'])
-    assert rooms[0]['name'] == 'Morning coffee crew'
+    assert rooms[0]['name'] == f'New room by {created["username"]}'
 
 
-async def test_room_name_falls_back_to_curated_random_status_without_creator_status(cli):
+async def test_explicit_room_name_overrides_default_creator_based_name(cli):
     created = await signup(cli)
     other = await signup(cli)
 
-    room = await join_user(cli, created['jwt'], other['user']['id'])
+    room = await create_group_room(
+        cli,
+        created['jwt'],
+        'Project room',
+        [other['user']['id']],
+    )
     rooms = await get_rooms(cli, created['jwt'])
 
-    assert len(RANDOM_STATUSES) == 100
-    assert len(set(RANDOM_STATUSES)) == 100
     assert rooms[0]['id'] == room['id']
-    assert rooms[0]['name'] in RANDOM_STATUSES
+    assert rooms[0]['name'] == 'Project room'
 
     rooms_again = await get_rooms(cli, created['jwt'])
     assert rooms_again[0]['name'] == rooms[0]['name']
@@ -768,17 +763,20 @@ async def test_duplicate_join_request_does_not_request_duplicate_push_delivery(c
     ]
 
 
-async def test_reopening_existing_pair_room_does_not_request_push_delivery(cli_factory):
+async def test_starting_another_room_with_the_same_user_requests_push_delivery_again(cli_factory):
     fake_push = FakePushService()
     cli = await cli_factory(push_service=fake_push)
     users = [await signup(cli) for _ in range(2)]
 
-    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    first_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
     fake_push.room_created_calls.clear()
 
-    await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    second_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
 
-    assert fake_push.room_created_calls == []
+    assert second_room['id'] != first_room['id']
+    assert fake_push.room_created_calls == [
+        (users[0]['user']['id'], second_room['id'], [users[1]['user']['id']]),
+    ]
 
 
 async def test_accepting_invite_twice_does_not_request_duplicate_push(cli_factory):

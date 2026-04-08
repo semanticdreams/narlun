@@ -12,7 +12,9 @@ class InviteQrButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return IconButton(
       key: Key(room == null ? 'global-invite-button' : 'room-invite-button'),
-      tooltip: room == null ? 'Invite someone' : 'Invite people to this room',
+      tooltip: room == null
+          ? 'Open Nearby on another device'
+          : 'Invite people to this room',
       icon: const Icon(Icons.qr_code_2_outlined),
       onPressed: () {
         Navigator.of(context).pushNamed(

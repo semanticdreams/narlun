@@ -41,6 +41,8 @@ class _InviteQrViewState extends State<InviteQrView> {
   int? _sessionUserId;
 
   int? get _targetRoomId => widget.room?.id ?? widget.roomId;
+  bool get _isRoomInvite => _targetRoomId != null;
+  String get _globalOnboardingUrl => Uri.base.resolve('/nearby').toString();
 
   @override
   void initState() {
@@ -53,6 +55,10 @@ class _InviteQrViewState extends State<InviteQrView> {
     _inviteQrCache =
         widget.inviteQrCache ?? providedInviteQrCache ?? InviteQrCache();
     _linkController = TextEditingController();
+    if (!_isRoomInvite) {
+      _linkController.text = _globalOnboardingUrl;
+      return;
+    }
     final session = Provider.of<MeModel?>(context, listen: false)?.data;
     _syncInviteCacheSession(session);
     final cachedInvite = _inviteQrCache.cachedInviteFor(roomId: _targetRoomId);
@@ -72,6 +78,9 @@ class _InviteQrViewState extends State<InviteQrView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (!_isRoomInvite) {
+      return;
+    }
     final session = Provider.of<MeModel?>(context)?.data;
     if (!_syncInviteCacheSession(session)) {
       return;
@@ -97,6 +106,10 @@ class _InviteQrViewState extends State<InviteQrView> {
   @override
   void didUpdateWidget(covariant InviteQrView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!_isRoomInvite) {
+      _linkController.text = _globalOnboardingUrl;
+      return;
+    }
     final previousRoomId = oldWidget.room?.id ?? oldWidget.roomId;
     if (previousRoomId == _targetRoomId) {
       return;
@@ -223,16 +236,46 @@ class _InviteQrViewState extends State<InviteQrView> {
     final displayUser = me ?? const SessionUser(authenticated: false);
     final roomLabel = widget.room?.displayTitleFor(displayUser).trim();
     final title = widget.room == null && widget.roomId == null
-        ? 'Invite someone'
+        ? 'Open Nearby'
         : (roomLabel?.isNotEmpty ?? false)
         ? 'Invite to $roomLabel'
         : 'Invite to this room';
     final description = widget.room == null && widget.roomId == null
-        ? 'Scan this code to open Narlun. New people can choose a username and land straight in a room with you.'
+        ? 'Scan this code to open Narlun. New people can choose a username and land straight on Nearby.'
         : 'Scan this code to open Narlun. New people can choose a username and land straight in this room.';
 
     Widget body;
-    if (_error != null && _invite == null) {
+    if (!_isRoomInvite) {
+      final inviteUrl = _globalOnboardingUrl;
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          QrImageView(
+            data: inviteUrl,
+            size: 220,
+            backgroundColor: Colors.white,
+          ),
+          const SizedBox(height: 20),
+          TextFormField(
+            key: const Key('invite-link-text'),
+            controller: _linkController,
+            readOnly: true,
+            maxLines: 1,
+            decoration: const InputDecoration(
+              labelText: 'Link',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const Key('invite-copy-button'),
+            onPressed: () => _copyInviteLink(inviteUrl),
+            icon: const Icon(Icons.copy_outlined),
+            label: const Text('Copy link'),
+          ),
+        ],
+      );
+    } else if (_error != null && _invite == null) {
       body = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

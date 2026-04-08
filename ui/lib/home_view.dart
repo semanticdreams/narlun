@@ -186,32 +186,58 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
     );
   }
 
-  Future<void> _openNearbyRoom(NearbyUser user, int roomId) async {
+  Future<void> _openRoom(RoomSummary room) async {
     final me = Provider.of<MeModel>(context, listen: false).data;
     if (me == null || !me.authenticated || me.id == null) {
       return;
     }
-
-    final room = RoomSummary(
-      id: roomId,
-      updatedAt: DateTime.now(),
-      participants: [
-        RoomParticipant(id: me.id!, username: me.username ?? ''),
-        RoomParticipant(
-          id: user.id,
-          username: user.username,
-          picture: user.picture,
-        ),
-      ],
-    );
-
-    await Navigator.push(
+    final roomDeleted = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        settings: RouteSettings(name: roomsRouteWithOpenRoom(roomId)),
+        settings: RouteSettings(name: roomsRouteWithOpenRoom(room.id)),
         builder: (context) => MessagesView(room: room, me: me),
       ),
     );
+    if (roomDeleted == true) {
+      await _roomsFeedModel.refresh(silentErrors: true);
+    }
+  }
+
+  Future<void> _createRoom() async {
+    final httpService = Provider.of<HttpService>(context, listen: false);
+    try {
+      final room = await httpService.create_room();
+      await _roomsFeedModel.refresh(silentErrors: true);
+      if (!mounted) {
+        return;
+      }
+      await _openRoom(room);
+    } on UnauthorizedResponse {
+      if (!mounted) {
+        return;
+      }
+      Provider.of<MeModel>(context, listen: false).reset();
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription: 'Could not create a room right now.',
+              ),
+            ),
+          ),
+        );
+    }
   }
 
   @override
@@ -235,7 +261,6 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
             autoCheckin: _activeTabIndex == 0,
             locationService: widget.nearbyLocationService,
             nearbyFeedModel: _nearbyFeedModel,
-            onUserJoined: _openNearbyRoom,
           ),
           widget.roomsView ??
               ConversationsView(
@@ -243,12 +268,20 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
                 roomsFeedModel: _roomsFeedModel,
                 enableRealtimeRoomSummarySync: false,
                 showChrome: false,
+                onCreateRoom: _createRoom,
                 onOpenNearby: () {
                   tabController.animateTo(0);
                 },
               ),
         ],
       ),
+      floatingActionButton: _activeTabIndex == 1
+          ? FloatingActionButton.extended(
+              onPressed: _createRoom,
+              icon: const Icon(Icons.add),
+              label: const Text('Create room'),
+            )
+          : null,
     );
   }
 }

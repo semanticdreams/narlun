@@ -369,6 +369,7 @@ void main() {
     final installPromptService = FakeInstallPromptService();
     final pushNotificationsService = FakePushNotificationsService();
     var openNearbyCalls = 0;
+    var createRoomCalls = 0;
 
     await tester.pumpWidget(
       MultiProvider(
@@ -391,6 +392,9 @@ void main() {
           home: ConversationsView(
             httpService: httpService,
             websocketService: websocketService,
+            onCreateRoom: () {
+              createRoomCalls += 1;
+            },
             onOpenNearby: () {
               openNearbyCalls += 1;
             },
@@ -401,9 +405,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No rooms yet'), findsOneWidget);
-    expect(find.text('Find people nearby'), findsOneWidget);
+    expect(find.text('Create room'), findsOneWidget);
+    expect(find.text('Browse nearby'), findsOneWidget);
 
-    await tester.tap(find.text('Find people nearby'));
+    await tester.tap(find.text('Create room'));
+    await tester.pumpAndSettle();
+
+    expect(createRoomCalls, 1);
+
+    await tester.tap(find.text('Browse nearby'));
     await tester.pumpAndSettle();
 
     expect(openNearbyCalls, 1);

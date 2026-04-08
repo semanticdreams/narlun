@@ -164,16 +164,13 @@ test('install prompt can be triggered from the profile screen', async ({ page })
   expect(await installPromptCallCount(page)).toBe(1);
 });
 
-test('home invite link sends a new user through signup into a direct room', async ({ browser, page }) => {
+test('home onboarding link sends a new user through signup into nearby', async ({ browser, page }) => {
   await browserSignup(page, harness.rootUrl, randomUsername('alice'));
-  const alice = await currentBrowserUser(page);
-  const browserJwt = await currentJwtCookie(page);
 
-  await page.getByRole('button', { name: 'Invite someone' }).click();
-  await expect(page.getByRole('heading', { name: 'Invite someone' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Nearby on another device' }).click();
+  await expect(page.getByRole('heading', { name: 'Open Nearby' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Copy link' })).toBeVisible();
-  const invite = await backendClient.createInvite(browserJwt);
-  const inviteLink = `${harness.rootUrl}/invite/${invite.token}`;
+  const inviteLink = `${harness.rootUrl}/nearby`;
 
   const inviteeContext = await browser.newContext();
   const inviteePage = await inviteeContext.newPage();
@@ -187,12 +184,10 @@ test('home invite link sends a new user through signup into a direct room', asyn
     await inviteePage.locator('input:not([disabled])').first().fill(inviteeUsername);
     await inviteePage.getByRole('button', { name: 'Sign Up' }).click();
 
-    await expect(inviteePage.getByRole('textbox')).toBeVisible({ timeout: 20_000 });
-    await expect(inviteePage.getByText(alice.username).first()).toBeVisible();
-
-    await page.getByRole('button', { name: 'Back' }).click();
-    await page.getByRole('tab', { name: 'Rooms' }).click();
-    await expect(page.getByText(inviteeUsername)).toBeVisible({ timeout: 20_000 });
+    await expect(inviteePage.getByRole('tab', { name: 'Nearby' })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(inviteePage).toHaveURL(/\/nearby$/);
   } finally {
     await inviteeContext.close();
   }

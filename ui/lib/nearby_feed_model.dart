@@ -157,7 +157,7 @@ class NearbyFeedModel extends ChangeNotifier {
         false,
         status: _nearbyItems.isEmpty
             ? 'Nobody nearby right now. Pull to refresh again soon.'
-            : 'Tap people to open a room, or rooms to request access.',
+            : 'Tap rooms to request access.',
       );
     } catch (_) {
       if (!_isCurrentRefresh(

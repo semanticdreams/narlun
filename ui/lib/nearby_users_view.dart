@@ -3,10 +3,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:timeago/timeago.dart' as timeago;
 
 import 'avatar_stack.dart';
-import 'avatar_image.dart';
 import 'dialog_service.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
@@ -22,7 +20,6 @@ class NearbyUsersView extends StatefulWidget {
   static const defaultBackgroundRefreshInterval =
       NearbyFeedModel.minAutomaticRefreshInterval;
 
-  final FutureOr<void> Function(NearbyUser user, int roomId) onUserJoined;
   final HttpService? httpService;
   final DialogService? dialogService;
   final LocationService? locationService;
@@ -33,7 +30,6 @@ class NearbyUsersView extends StatefulWidget {
 
   const NearbyUsersView({
     super.key,
-    required this.onUserJoined,
     this.httpService,
     this.dialogService,
     this.locationService,
@@ -258,36 +254,6 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     }
   }
 
-  Future<void> joinUser(NearbyUser user) async {
-    try {
-      final roomId = await httpService.join_user(user.id);
-      await Future.sync(() => widget.onUserJoined(user, roomId));
-    } on UnauthorizedResponse {
-      if (!mounted) {
-        return;
-      }
-      await expireSession(
-        context,
-        httpService: httpService,
-        description: 'Your session has ended. Please sign in again.',
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      if (isAlreadyPresentedActionError(error)) {
-        return;
-      }
-      final message = describeActionError(
-        error,
-        fallbackDescription: 'Could not open a room with ${user.username}.',
-      );
-      ScaffoldMessenger.maybeOf(context)
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(message)));
-    }
-  }
-
   Future<void> requestRoomJoin(NearbyRoom room) async {
     if (room.joinRequested) {
       return;
@@ -340,35 +306,6 @@ class _NearbyUsersState extends State<NearbyUsersView> {
       nearbyFeedModel.dispose();
     }
     super.dispose();
-  }
-
-  Widget _buildUserTile(NearbyUser user) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: ListTile(
-        key: ValueKey('nearby-user-${user.id}'),
-        leading: AvatarImage(picture: user.picture),
-        title: Text(user.username),
-        subtitle: (user.status?.isNotEmpty ?? false)
-            ? Text(user.status!, maxLines: 1, overflow: TextOverflow.ellipsis)
-            : null,
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text('${user.distance}m away', textAlign: TextAlign.right),
-            const SizedBox(height: 4),
-            Text(
-              'last seen ${timeago.format(user.lastSeen)}',
-              textAlign: TextAlign.right,
-            ),
-          ],
-        ),
-        onTap: () async {
-          await joinUser(user);
-        },
-      ),
-    );
   }
 
   Widget _buildRoomTile(NearbyRoom room) {
@@ -479,9 +416,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                     ),
                   ),
                   for (final item in nearbyItems)
-                    if (item.type == 'user' && item.user != null)
-                      _buildUserTile(item.user!)
-                    else if (item.type == 'room' && item.room != null)
+                    if (item.type == 'room' && item.room != null)
                       _buildRoomTile(item.room!),
                 ],
               ),

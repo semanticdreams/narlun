@@ -100,7 +100,7 @@ async def test_signout_closes_local_socket_even_if_pubsub_publish_fails(cli):
         cli.app['store'].publish_signout = original_publish_signout
 
 
-async def test_room_deleted_event_when_other_guest_account_disappears(cli):
+async def test_rooms_changed_event_when_other_guest_account_disappears(cli):
     users = [await signup(cli) for _ in range(2)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
 
@@ -114,21 +114,15 @@ async def test_room_deleted_event_when_other_guest_account_disappears(cli):
         assert payload['type'] == 'subscribed-room'
         await cli.post('/api/users/signout', headers=auth_headers(users[1]['jwt']))
 
-        seen_room_deleted = False
-        seen_rooms_changed = False
-
         async with async_timeout.timeout(2):
-            while not (seen_room_deleted and seen_rooms_changed):
+            while True:
                 message = await ws.receive()
                 payload = json.loads(message.data)
-                if payload['type'] == 'room-deleted':
-                    assert payload['data']['room_id'] == room['id']
-                    seen_room_deleted = True
-                elif payload['type'] == 'rooms-changed':
-                    seen_rooms_changed = True
+                if payload['type'] == 'rooms-changed':
+                    break
 
     rooms = await get_rooms(cli, users[0]['jwt'])
-    assert all(existing_room['id'] != room['id'] for existing_room in rooms)
+    assert [existing_room['id'] for existing_room in rooms] == [room['id']]
 
 
 async def test_invalid_websocket_payload_returns_error_and_connection_stays_open(cli):
@@ -261,7 +255,7 @@ async def test_invalid_room_id_returns_error(cli):
         }
 
 
-async def test_room_deleted_unsubscribes_backend_pubsub_subscription(cli):
+async def test_solo_room_remains_subscribed_when_other_guest_account_disappears(cli):
     users = [await signup(cli) for _ in range(2)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
 
@@ -281,22 +275,15 @@ async def test_room_deleted_unsubscribes_backend_pubsub_subscription(cli):
         assert int(pubsub_counts[1]) == 1
 
         await cli.post('/api/users/signout', headers=auth_headers(users[1]['jwt']))
-        deleted = await ws.receive_json()
         changed = await ws.receive_json()
-        assert {deleted['type'], changed['type']} == {'room-deleted', 'rooms-changed'}
+        assert changed['type'] == 'rooms-changed'
 
-        deadline = asyncio.get_running_loop().time() + 2
-        while asyncio.get_running_loop().time() < deadline:
-            pubsub_counts = await cli.app['redis'].execute_command(
-                'PUBSUB',
-                'NUMSUB',
-                f'room:{room["id"]}',
-            )
-            if int(pubsub_counts[1]) == 0:
-                break
-            await asyncio.sleep(0.05)
-        else:
-            raise AssertionError('room subscription was not cleaned up')
+        pubsub_counts = await cli.app['redis'].execute_command(
+            'PUBSUB',
+            'NUMSUB',
+            f'room:{room["id"]}',
+        )
+        assert int(pubsub_counts[1]) == 1
 
 
 async def test_unknown_message_type_returns_error(cli):

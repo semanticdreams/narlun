@@ -71,8 +71,9 @@ class FakeNearbyHttpService extends HttpService {
       );
 
   int checkinCalls = 0;
-  int joinUserCalls = 0;
+  int createRoomCalls = 0;
   List<NearbyItem> nearbyItems = const [];
+  RoomSummary? createdRoom;
 
   @override
   Future<List<NearbyItem>> checkin(lat, lon) async {
@@ -81,9 +82,23 @@ class FakeNearbyHttpService extends HttpService {
   }
 
   @override
-  Future<int> join_user(user_id) async {
-    joinUserCalls += 1;
-    return 42;
+  Future<RoomSummary> create_room({
+    String name = '',
+    List<int> userIds = const [],
+  }) async {
+    createRoomCalls += 1;
+    createdRoom = RoomSummary(
+      id: 42,
+      name: 'New room by me',
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [RoomParticipant(id: 1, username: 'me')],
+    );
+    return createdRoom!;
+  }
+
+  @override
+  Future<List<RoomSummary>> get_rooms({bool silentErrors = false}) async {
+    return createdRoom == null ? const [] : [createdRoom!];
   }
 
   @override
@@ -285,23 +300,10 @@ void main() {
     expect(find.byType(BackButton), findsNothing);
   });
 
-  testWidgets('tapping a nearby user opens the room immediately', (
+  testWidgets('rooms tab shows a create room fab that opens the new room', (
     tester,
   ) async {
-    final httpService = FakeNearbyHttpService()
-      ..nearbyItems = [
-        NearbyItem(
-          type: 'user',
-          distance: 120,
-          user: NearbyUser(
-            id: 2,
-            username: 'bob',
-            distance: 120,
-            lastSeen: DateTime.parse('2026-04-04T10:00:00.000Z'),
-            status: 'Nearby',
-          ),
-        ),
-      ];
+    final httpService = FakeNearbyHttpService();
     final locationService = FakeLocationService();
 
     await setupLocator(
@@ -326,7 +328,7 @@ void main() {
         ],
         child: MaterialApp(
           home: HomeView(
-            initialTabIndex: 0,
+            initialTabIndex: 1,
             nearbyLocationService: locationService,
             roomsView: const Scaffold(body: Text('Rooms placeholder')),
           ),
@@ -335,10 +337,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('bob'));
+    expect(find.text('Create room'), findsOneWidget);
+
+    await tester.tap(find.text('Create room'));
     await tester.pumpAndSettle();
 
-    expect(httpService.joinUserCalls, 1);
+    expect(httpService.createRoomCalls, 1);
     expect(
       ModalRoute.of(tester.element(find.byType(MessagesView)))?.settings.name,
       roomsRouteWithOpenRoom(42),
@@ -349,6 +353,6 @@ void main() {
     Navigator.of(tester.element(find.byType(MessagesView))).pop();
     await tester.pumpAndSettle();
 
-    expect(find.text('bob'), findsOneWidget);
+    expect(find.text('Create room'), findsOneWidget);
   });
 }

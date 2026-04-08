@@ -22,8 +22,10 @@ INVITE_TTL_SECONDS = 24 * 60 * 60
 INSTALL_SESSION_TTL_SECONDS = 10 * 60
 JOIN_REQUEST_TTL_SECONDS = NEARBY_ACTIVITY_WINDOW_SECONDS
 REJECTED_JOIN_REQUEST_TTL_SECONDS = 24 * 60 * 60
+SOLO_ROOM_EXPIRY_SECONDS = 60 * 60
 WEBSOCKET_PRESENCE_TTL_SECONDS = 45
 CLEANUP_INTERVAL_SECONDS = 60 * 60
+ROOM_EXPIRY_SWEEP_INTERVAL_SECONDS = 30
 NEARBY_RADIUS_KM = 20000
 MAX_NEARBY_RESULTS = 10
 MAX_GEO_RESULTS = 50
@@ -183,10 +185,6 @@ class RedisStore:
     def _username_index_key(self, username):
         return f'idx:username:{normalize_username(username)}'
 
-    def _room_pair_key(self, user_a, user_b):
-        low, high = sorted([int(user_a), int(user_b)])
-        return f'room_pair:{low}:{high}'
-
     async def _next_user_id(self):
         return int(await self.redis.incr('seq:users'))
 
@@ -281,12 +279,6 @@ class RedisStore:
             'authenticated': authenticated,
         }
 
-    def _serialize_nearby_user(self, raw_user, distance_meters):
-        user = self._serialize_user(raw_user, authenticated=False)
-        user['last_seen'] = ts_to_iso(raw_user['last_seen'])
-        user['distance'] = round(distance_meters, -1)
-        return user
-
     def _serialize_room_participant(self, raw_user):
         user_id = int(raw_user['id'])
         return {
@@ -295,11 +287,15 @@ class RedisStore:
             'picture': avatar_url(user_id, int(raw_user.get('avatar_version', 0))),
         }
 
-    def _default_room_name(self, raw_user, *, seed=None):
-        status = normalize_status(raw_user.get('status') or '')
-        if status:
-            return status
-        return pick_random_status(seed=seed)
+    def _default_new_room_name(self, raw_user):
+        username = (raw_user.get('username') or '').strip()
+        if username:
+            return f'New room by {username}'
+        return 'New room'
+
+    def _solo_room_expiry_ms(self, *, current_ts_ms=None):
+        timestamp_ms = now_ms() if current_ts_ms is None else int(current_ts_ms)
+        return timestamp_ms + (SOLO_ROOM_EXPIRY_SECONDS * 1000)
 
     def _message_sort_key(self, message):
         message_id = str(message.get('id') or '')
@@ -640,7 +636,6 @@ class RedisStore:
             store=None,
             store_dist=None,
         )
-        nearby_users = []
         nearby_room_distances = {}
         for item in result:
             candidate_id = int(item[0])
@@ -667,18 +662,6 @@ class RedisStore:
                     existing_distance = nearby_room_distances.get(normalized_room_id)
                     if existing_distance is None or distance_meters < existing_distance:
                         nearby_room_distances[normalized_room_id] = distance_meters
-            if candidate_id == user_id or candidate_id in excluded_user_ids:
-                continue
-            nearby_users.append({
-                'type': 'user',
-                'distance': round(distance_meters, -1),
-                'user': self._serialize_nearby_user(candidate, distance_meters),
-            })
-
-        sorted_nearby_users = sorted(
-            nearby_users,
-            key=lambda item: (item['distance'], item['user']['username']),
-        )
 
         nearby_rooms = []
         for room_id, distance_meters in nearby_room_distances.items():
@@ -702,20 +685,13 @@ class RedisStore:
             if serialized_room is not None and not await self.user_in_room(user_id, room_id):
                 pinned_requested_rooms.append(serialized_room)
 
-        nearby = [
-            *sorted_nearby_users,
-            *sorted(
-                nearby_rooms,
-                key=lambda item: (
-                    item['distance'] if item['distance'] is not None else 10**12,
-                    item['room']['name'] or '',
-                ),
+        nearby = sorted(
+            nearby_rooms,
+            key=lambda item: (
+                item['distance'] if item['distance'] is not None else 10**12,
+                item['room']['name'] or '',
             ),
-        ]
-        nearby.sort(key=lambda item: (
-            item['distance'] if item['distance'] is not None else 10**12,
-            0 if item['type'] == 'user' else 1,
-        ))
+        )
         pinned_requested_rooms = sorted(
             pinned_requested_rooms,
             key=lambda item: (
@@ -725,10 +701,7 @@ class RedisStore:
         )
         response = {
             'nearby': [*nearby[:MAX_NEARBY_RESULTS], *pinned_requested_rooms],
-            'nearby_users': [
-                item['user']
-                for item in sorted_nearby_users[:MAX_NEARBY_RESULTS]
-            ],
+            'nearby_users': [],
         }
         logger.info(
             'Computed nearby checkin result',
@@ -742,11 +715,7 @@ class RedisStore:
                 'requested_room_count': len(requested_room_ids),
                 'rejected_room_count': len(rejected_room_ids),
                 'returned_item_count': len(response['nearby']),
-                'returned_user_ids': self._sample_ids(
-                    item['user']['id']
-                    for item in response['nearby']
-                    if item['type'] == 'user'
-                ),
+                'returned_user_ids': [],
                 'returned_room_ids': self._sample_ids(
                     item['room']['id']
                     for item in response['nearby']
@@ -847,50 +816,17 @@ class RedisStore:
             raise ValueError('Cannot start a room with yourself')
         if await self._load_user_hash(other_user_id) is None:
             raise UserNotFound()
-        owner = await self._load_user_hash(user_id)
-
-        pair_key = self._room_pair_key(user_id, other_user_id)
-        existing_room_id = await self.redis.get(pair_key)
-        if existing_room_id is not None:
-            existing_room_id = int(existing_room_id)
-            if await self._load_room_meta(existing_room_id) is not None:
-                return {'id': existing_room_id, 'created': False}
-            await self.redis.delete(pair_key)
-
-        room_id = await self._next_room_id()
-        members = sorted([int(user_id), other_user_id])
-        created = True
-        if not await self.redis.set(pair_key, room_id, nx=True):
-            existing_room_id = await self.redis.get(pair_key)
-            room_id = int(existing_room_id)
-            created = False
-
-        await self._ensure_pair_room(
-            room_id,
-            pair_key,
-            members,
-            name=self._default_room_name(owner, seed=room_id),
+        room = await self.create_group_room(
+            user_id,
+            name='',
+            user_ids=[other_user_id],
         )
-        return {'id': int(room_id), 'created': created}
-
-    async def _ensure_pair_room(self, room_id, pair_key, members, *, name):
-        timestamp_ms = now_ms()
-        room_meta_key = self._room_meta_key(room_id)
-        await self.redis.hsetnx(room_meta_key, 'id', room_id)
-        await self.redis.hsetnx(room_meta_key, 'name', name)
-        await self.redis.hsetnx(room_meta_key, 'picture', '')
-        await self.redis.hsetnx(room_meta_key, 'is_public', '0')
-        await self.redis.hsetnx(room_meta_key, 'updated_at', timestamp_ms)
-        await self.redis.hsetnx(room_meta_key, 'last_message', '')
-        await self.redis.hsetnx(room_meta_key, 'pair_key', pair_key)
-        for member in members:
-            await self.redis.sadd(self._room_members_key(room_id), member)
-            await self.redis.zadd(self._user_rooms_key(member), {room_id: timestamp_ms})
+        return {'id': room['id'], 'created': True}
 
     async def create_group_room(self, owner_id, *, name, user_ids):
         member_ids = sorted({int(owner_id), *[int(user_id) for user_id in user_ids]})
-        if len(member_ids) < 2:
-            raise ValueError('A room needs at least two participants')
+        if len(member_ids) < 1:
+            raise ValueError('A room needs at least one participant')
         for member_id in member_ids:
             if await self._load_user_hash(member_id) is None:
                 raise UserNotFound()
@@ -899,20 +835,28 @@ class RedisStore:
         owner = await self._load_user_hash(owner_id)
         resolved_name = name.strip()
         if not resolved_name:
-            resolved_name = self._default_room_name(owner, seed=room_id)
+            resolved_name = self._default_new_room_name(owner)
         timestamp_ms = now_ms()
-        await self.redis.hset(self._room_meta_key(room_id), mapping={
+        meta = {
             'id': room_id,
             'name': resolved_name,
             'picture': '',
             'is_public': '0',
             'updated_at': timestamp_ms,
             'last_message': '',
-        })
+        }
+        if len(member_ids) == 1:
+            meta['solo_expires_at'] = self._solo_room_expiry_ms(
+                current_ts_ms=timestamp_ms,
+            )
+        await self.redis.hset(self._room_meta_key(room_id), mapping=meta)
         for member_id in member_ids:
             await self.redis.sadd(self._room_members_key(room_id), member_id)
             await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
-        return {'id': room_id}
+        room = await self._serialize_room(room_id, viewer_user_id=owner_id)
+        if room is None:
+            raise RoomNotFound()
+        return room
 
     async def get_requested_room_ids(self, user_id):
         await self._prune_expired_user_join_requests(user_id)
@@ -931,7 +875,7 @@ class RedisStore:
     async def request_join_room(self, user_id, room_id):
         room_id = int(room_id)
         user_id = int(user_id)
-        meta = await self._load_room_meta(room_id)
+        meta = await self._get_room_meta_if_active(room_id)
         if meta is None:
             raise RoomNotFound()
         if not self._room_meta_has_recent_nearby_activity(meta):
@@ -1026,7 +970,7 @@ class RedisStore:
             payload['target'] = 'user'
         else:
             room_id = int(room_id)
-            meta = await self._load_room_meta(room_id)
+            meta = await self._get_room_meta_if_active(room_id)
             if meta is None:
                 raise RoomNotFound()
             if not await self.user_in_room(inviter_id, room_id):
@@ -1101,6 +1045,8 @@ class RedisStore:
 
         if invite['target'] == 'room':
             room_id = int(invite['room_id'])
+            if await self._get_room_meta_if_active(room_id) is None:
+                raise RoomNotFound()
             return await self._add_user_to_room(
                 room_id,
                 user_id,
@@ -1443,6 +1389,33 @@ class RedisStore:
     async def get_room_members(self, room_id):
         return sorted(int(member) for member in await self.redis.smembers(self._room_members_key(room_id)))
 
+    async def _get_room_meta_if_active(self, room_id):
+        room_id = int(room_id)
+        meta = await self._load_room_meta(room_id)
+        if meta is None:
+            return None
+        if await self._expire_room_if_needed(room_id, meta=meta):
+            return None
+        return await self._load_room_meta(room_id)
+
+    async def _expire_room_if_needed(self, room_id, *, meta):
+        solo_expires_at = int(meta.get('solo_expires_at', 0) or 0)
+        if solo_expires_at <= 0 or solo_expires_at > now_ms():
+            return False
+        remaining_members = await self.get_room_members(room_id)
+        nearby_viewer_ids = set(await self.get_room_nearby_update_targets(room_id))
+        delete_result = await self._delete_room(
+            room_id,
+            meta=meta,
+            remaining_members=remaining_members,
+            nearby_viewer_ids=nearby_viewer_ids,
+        )
+        if remaining_members:
+            await self.publish_rooms_changed(remaining_members)
+        if delete_result['nearby_viewer_ids']:
+            await self.publish_nearby_changed(delete_result['nearby_viewer_ids'])
+        return True
+
     async def _delete_room(self, room_id, *, meta, remaining_members, nearby_viewer_ids):
         requester_ids = await self._clear_join_requests_for_room(room_id)
         nearby_viewer_ids.update(requester_ids)
@@ -1450,9 +1423,6 @@ class RedisStore:
         for member in remaining_members:
             await self.redis.zrem(self._user_rooms_key(member), room_id)
             await self.redis.hdel(self._user_room_prefs_key(member), room_id)
-        pair_key = meta.get('pair_key')
-        if pair_key:
-            await self.redis.delete(pair_key)
         await self.redis.delete(self._room_meta_key(room_id))
         await self.redis.delete(self._room_members_key(room_id))
         await self.redis.delete(self._room_messages_key(room_id))
@@ -1462,6 +1432,16 @@ class RedisStore:
             'remaining_member_ids': [],
             'nearby_viewer_ids': sorted(int(viewer_id) for viewer_id in nearby_viewer_ids),
         }
+
+    async def prune_expired_solo_rooms(self):
+        deleted_room_ids = []
+        for room_id in [room_id async for room_id in self._iter_room_ids()]:
+            meta = await self._load_room_meta(room_id)
+            if meta is None:
+                continue
+            if await self._expire_room_if_needed(room_id, meta=meta):
+                deleted_room_ids.append(int(room_id))
+        return deleted_room_ids
 
     async def prune_underpopulated_rooms(self):
         deleted_room_ids = []
@@ -1483,6 +1463,14 @@ class RedisStore:
                     await self.publish_rooms_changed(valid_member_ids)
                 await self.redis.srem(self._room_members_key(room_id), *stale_member_ids)
             if len(valid_member_ids) >= 2:
+                continue
+            if len(valid_member_ids) == 1:
+                await self.redis.hset(
+                    self._room_meta_key(room_id),
+                    mapping={
+                        'solo_expires_at': self._solo_room_expiry_ms(),
+                    },
+                )
                 continue
             nearby_viewer_ids = set(await self.get_room_nearby_update_targets(room_id))
             nearby_viewer_ids.update(stale_member_ids)
@@ -1535,7 +1523,7 @@ class RedisStore:
         inviter_id = int(inviter_id)
 
         meta_key = self._room_meta_key(room_id)
-        meta = await self.redis.hgetall(meta_key)
+        meta = await self._get_room_meta_if_active(room_id)
         if not meta:
             raise RoomNotFound()
         if await self._load_user_hash(user_id) is None:
@@ -1558,15 +1546,13 @@ class RedisStore:
             int(member)
             for member in await self.redis.smembers(members_key)
         )
-        pair_key = meta.get('pair_key') or ''
-        if pair_key:
-            await self.redis.delete(pair_key)
-            await self.redis.hdel(meta_key, 'pair_key')
-
         all_members = sorted({*existing_members, user_id})
         await self._delete_join_request(room_id, user_id)
         await self.redis.sadd(members_key, user_id)
-        await self.redis.hset(meta_key, mapping={'updated_at': timestamp_ms})
+        await self.redis.hset(
+            meta_key,
+            mapping={'updated_at': timestamp_ms, 'solo_expires_at': ''},
+        )
         for member_id in all_members:
             await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
 
@@ -1596,7 +1582,7 @@ class RedisStore:
         return rooms
 
     async def _serialize_room(self, room_id, *, viewer_user_id=None):
-        meta = await self.redis.hgetall(self._room_meta_key(room_id))
+        meta = await self._get_room_meta_if_active(room_id)
         if not meta:
             return None
         room_id = int(meta['id'])
@@ -1627,6 +1613,8 @@ class RedisStore:
 
     async def get_messages(self, user_id, room_id):
         room_id = int(room_id)
+        if await self._get_room_meta_if_active(room_id) is None:
+            raise RoomNotFound()
         if not await self.user_in_room(user_id, room_id):
             raise PermissionDenied()
         cutoff_ms = now_ms() - (MESSAGE_TTL_SECONDS * 1000)
@@ -1650,6 +1638,8 @@ class RedisStore:
     async def mark_room_read(self, user_id, room_id, *, message_id=None):
         room_id = int(room_id)
         user_id = int(user_id)
+        if await self._get_room_meta_if_active(room_id) is None:
+            raise RoomNotFound()
         if not await self.user_in_room(user_id, room_id):
             raise PermissionDenied()
 
@@ -1760,7 +1750,7 @@ class RedisStore:
         await self.redis.hdel(self._room_read_states_key(room_id), user_id)
         remaining_members = sorted(int(member) for member in await self.redis.smembers(members_key))
 
-        should_delete_room = len(remaining_members) < 2
+        should_delete_room = len(remaining_members) == 0
 
         if should_delete_room:
             delete_result = await self._delete_room(
@@ -1770,6 +1760,13 @@ class RedisStore:
                 nearby_viewer_ids=nearby_viewer_ids,
             )
             nearby_viewer_ids = set(delete_result['nearby_viewer_ids'])
+        elif len(remaining_members) == 1:
+            await self.redis.hset(
+                meta_key,
+                mapping={'solo_expires_at': self._solo_room_expiry_ms()},
+            )
+        else:
+            await self.redis.hset(meta_key, mapping={'solo_expires_at': ''})
         if nearby_viewer_ids:
             await self.publish_nearby_changed(nearby_viewer_ids)
         return {

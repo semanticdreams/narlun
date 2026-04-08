@@ -16,7 +16,11 @@ from app.feedback import create_feedback_tools
 from app.frontend_errors import create_frontend_error_tools, frontend_error_handler
 from app.observability import request_log_context
 from app.push import PushService
-from app.redis_store import CLEANUP_INTERVAL_SECONDS, RedisStore
+from app.redis_store import (
+    CLEANUP_INTERVAL_SECONDS,
+    ROOM_EXPIRY_SWEEP_INTERVAL_SECONDS,
+    RedisStore,
+)
 from app.social import create_app as create_social_app
 from app.users import create_app as create_users_app
 from app.util import InvalidJsonBody, InvalidUsage, load_user_from_token
@@ -166,18 +170,35 @@ async def create_app(*, redis_url=None, enable_cors=True, push_service=None):
         except Exception:
             logger.exception('Periodic store cleanup failed')
 
+    async def run_periodic_room_expiry_sweep(_app):
+        try:
+            while True:
+                deleted_room_ids = await store.prune_expired_solo_rooms()
+                if deleted_room_ids:
+                    logger.info(
+                        'Periodic room expiry sweep removed expired solo rooms',
+                        extra={'deleted_room_ids': deleted_room_ids},
+                    )
+                await asyncio.sleep(ROOM_EXPIRY_SWEEP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Periodic room expiry sweep failed')
+
     async def start_cleanup_task(_app):
         app['store_cleanup_task'] = asyncio.create_task(run_periodic_store_cleanup(_app))
+        app['room_expiry_task'] = asyncio.create_task(run_periodic_room_expiry_sweep(_app))
 
     async def stop_cleanup_task(_app):
-        task = app.get('store_cleanup_task')
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for key in ('room_expiry_task', 'store_cleanup_task'):
+            task = app.get(key)
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     app.on_startup.append(start_cleanup_task)
     app.on_cleanup.append(stop_cleanup_task)

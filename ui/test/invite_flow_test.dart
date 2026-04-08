@@ -63,26 +63,40 @@ String _inviteLinkText(WidgetTester tester) {
   return textField.controller?.text ?? '';
 }
 
-void main() {
-  testWidgets('invite QR view renders the invite link', (tester) async {
-    final httpService = _FakeInviteHttpService()
-      ..inviteToCreate = InviteLink(
-        token: 'token-123',
-        expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-        roomId: 7,
-      );
-
-    await tester.pumpWidget(
-      Provider<HttpService>.value(
-        value: httpService,
-        child: const MaterialApp(home: InviteQrView()),
+Widget _buildInviteQrApp({
+  required _FakeInviteHttpService httpService,
+  Widget? home,
+  InviteQrCache? inviteQrCache,
+}) {
+  return MultiProvider(
+    providers: [
+      Provider<HttpService>.value(value: httpService),
+      if (inviteQrCache != null)
+        Provider<InviteQrCache>.value(value: inviteQrCache),
+      ChangeNotifierProvider(
+        create: (_) => MeModel()
+          ..setData(
+            const SessionUser(authenticated: true, id: 1, username: 'me'),
+          ),
       ),
-    );
+    ],
+    child: MaterialApp(home: home ?? const InviteQrView()),
+  );
+}
+
+void main() {
+  testWidgets('global invite QR view renders a nearby onboarding link', (
+    tester,
+  ) async {
+    final httpService = _FakeInviteHttpService();
+
+    await tester.pumpWidget(_buildInviteQrApp(httpService: httpService));
     await tester.pumpAndSettle();
 
-    expect(find.text('Invite someone'), findsWidgets);
-    expect(_inviteLinkText(tester), contains('/invite/token-123'));
+    expect(find.text('Open Nearby'), findsWidgets);
+    expect(_inviteLinkText(tester), contains('/nearby'));
     expect(find.text('Copy link'), findsOneWidget);
+    expect(httpService.createInviteCalls, 0);
     expect(httpService.createdInviteRoomId, isNull);
   });
 
@@ -106,54 +120,73 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: MaterialApp(home: InviteQrView(room: room)),
+      _buildInviteQrApp(
+        httpService: httpService,
+        home: InviteQrView(room: room),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('Invite to alice, bob'), findsWidgets);
+    expect(_inviteLinkText(tester), contains('/invite/room-token'));
     expect(httpService.createdInviteRoomId, 7);
   });
 
-  testWidgets('room invite QR view can be restored from a room id route', (
-    tester,
-  ) async {
-    final httpService = _FakeInviteHttpService()
-      ..inviteToCreate = InviteLink(
-        token: 'room-token',
-        expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+  testWidgets(
+    'room invite QR view reuses the cached invite for the same room',
+    (tester) async {
+      final httpService = _FakeInviteHttpService()
+        ..inviteToCreate = InviteLink(
+          token: 'token-123',
+          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+          roomId: 7,
+        );
+      final inviteQrCache = InviteQrCache()
+        ..syncSession(
+          const SessionUser(authenticated: true, id: 1, username: 'me'),
+        );
+
+      await tester.pumpWidget(
+        _buildInviteQrApp(
+          httpService: httpService,
+          inviteQrCache: inviteQrCache,
+          home: const InviteQrView(roomId: 7),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_inviteLinkText(tester), contains('/invite/token-123'));
+      expect(httpService.createInviteCalls, 1);
+
+      httpService.inviteToCreate = InviteLink(
+        token: 'token-456',
+        expiresAt: DateTime.parse('2030-04-05T11:00:00.000Z'),
         roomId: 7,
       );
 
-    await tester.pumpWidget(
-      Provider<HttpService>.value(
-        value: httpService,
-        child: const MaterialApp(home: InviteQrView(roomId: 7)),
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _buildInviteQrApp(
+          httpService: httpService,
+          inviteQrCache: inviteQrCache,
+          home: const InviteQrView(roomId: 7),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Invite to this room'), findsWidgets);
-    expect(httpService.createdInviteRoomId, 7);
-  });
+      expect(_inviteLinkText(tester), contains('/invite/token-123'));
+      expect(_inviteLinkText(tester), isNot(contains('/invite/token-456')));
+      expect(httpService.createInviteCalls, 1);
+    },
+  );
 
-  testWidgets('invite QR view reuses the cached invite for the same scope', (
+  testWidgets('refresh code replaces the cached invite for the current room', (
     tester,
   ) async {
     final httpService = _FakeInviteHttpService()
       ..inviteToCreate = InviteLink(
         token: 'token-123',
         expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
+        roomId: 7,
       );
     final inviteQrCache = InviteQrCache()
       ..syncSession(
@@ -161,206 +194,24 @@ void main() {
       );
 
     await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          Provider<InviteQrCache>.value(value: inviteQrCache),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: const MaterialApp(home: InviteQrView()),
+      _buildInviteQrApp(
+        httpService: httpService,
+        inviteQrCache: inviteQrCache,
+        home: const InviteQrView(roomId: 7),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(_inviteLinkText(tester), contains('/invite/token-123'));
-    expect(httpService.createInviteCalls, 1);
 
     httpService.inviteToCreate = InviteLink(
       token: 'token-456',
       expiresAt: DateTime.parse('2030-04-05T11:00:00.000Z'),
-    );
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          Provider<InviteQrCache>.value(value: inviteQrCache),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: const MaterialApp(home: InviteQrView()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(_inviteLinkText(tester), contains('/invite/token-123'));
-    expect(_inviteLinkText(tester), isNot(contains('/invite/token-456')));
-    expect(httpService.createInviteCalls, 1);
-  });
-
-  test(
-    'invite QR cache keeps separate invites for global and room pages',
-    () async {
-      final httpService = _FakeInviteHttpService()
-        ..inviteToCreate = InviteLink(
-          token: 'global-token',
-          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-        );
-      final inviteQrCache = InviteQrCache()
-        ..syncSession(
-          const SessionUser(authenticated: true, id: 1, username: 'me'),
-        );
-
-      final globalInvite = await inviteQrCache.loadInvite(
-        httpService: httpService,
-      );
-
-      expect(globalInvite.token, 'global-token');
-      expect(httpService.createInviteCalls, 1);
-      expect(httpService.createdInviteRoomId, isNull);
-
-      httpService.inviteToCreate = InviteLink(
-        token: 'room-token',
-        expiresAt: DateTime.parse('2030-04-05T11:00:00.000Z'),
-        roomId: 7,
-      );
-
-      final roomInvite = await inviteQrCache.loadInvite(
-        httpService: httpService,
-        roomId: 7,
-      );
-
-      expect(roomInvite.token, 'room-token');
-      expect(httpService.createInviteCalls, 2);
-      expect(httpService.createdInviteRoomId, 7);
-
-      httpService.inviteToCreate = InviteLink(
-        token: 'unused-token',
-        expiresAt: DateTime.parse('2030-04-05T12:00:00.000Z'),
-        roomId: 7,
-      );
-
-      final cachedGlobalInvite = await inviteQrCache.loadInvite(
-        httpService: httpService,
-      );
-      final cachedRoomInvite = await inviteQrCache.loadInvite(
-        httpService: httpService,
-        roomId: 7,
-      );
-
-      expect(cachedGlobalInvite.token, 'global-token');
-      expect(cachedRoomInvite.token, 'room-token');
-      expect(httpService.createInviteCalls, 2);
-    },
-  );
-
-  test(
-    'invite QR cache clears stored invites when the session changes',
-    () async {
-      final httpService = _FakeInviteHttpService()
-        ..inviteToCreate = InviteLink(
-          token: 'first-user-token',
-          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-        );
-      final inviteQrCache = InviteQrCache()
-        ..syncSession(
-          const SessionUser(authenticated: true, id: 1, username: 'me'),
-        );
-
-      final firstInvite = await inviteQrCache.loadInvite(
-        httpService: httpService,
-      );
-
-      expect(firstInvite.token, 'first-user-token');
-      expect(httpService.createInviteCalls, 1);
-
-      inviteQrCache.syncSession(
-        const SessionUser(authenticated: true, id: 2, username: 'other'),
-      );
-      httpService.inviteToCreate = InviteLink(
-        token: 'second-user-token',
-        expiresAt: DateTime.parse('2030-04-05T11:00:00.000Z'),
-      );
-
-      final secondInvite = await inviteQrCache.loadInvite(
-        httpService: httpService,
-      );
-
-      expect(secondInvite.token, 'second-user-token');
-      expect(httpService.createInviteCalls, 2);
-    },
-  );
-
-  testWidgets('refresh code replaces the cached invite for the current scope', (
-    tester,
-  ) async {
-    final httpService = _FakeInviteHttpService()
-      ..inviteToCreate = InviteLink(
-        token: 'token-123',
-        expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-      );
-    final inviteQrCache = InviteQrCache()
-      ..syncSession(
-        const SessionUser(authenticated: true, id: 1, username: 'me'),
-      );
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          Provider<InviteQrCache>.value(value: inviteQrCache),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: const MaterialApp(home: InviteQrView()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(_inviteLinkText(tester), contains('/invite/token-123'));
-    expect(httpService.createInviteCalls, 1);
-
-    httpService.inviteToCreate = InviteLink(
-      token: 'token-456',
-      expiresAt: DateTime.parse('2030-04-05T11:00:00.000Z'),
+      roomId: 7,
     );
 
     await tester.ensureVisible(find.text('Refresh code'));
     await tester.tap(find.text('Refresh code'), warnIfMissed: false);
-    await tester.pumpAndSettle();
-
-    expect(_inviteLinkText(tester), contains('/invite/token-456'));
-    expect(_inviteLinkText(tester), isNot(contains('/invite/token-123')));
-    expect(httpService.createInviteCalls, 2);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<HttpService>.value(value: httpService),
-          Provider<InviteQrCache>.value(value: inviteQrCache),
-          ChangeNotifierProvider(
-            create: (_) => MeModel()
-              ..setData(
-                const SessionUser(authenticated: true, id: 1, username: 'me'),
-              ),
-          ),
-        ],
-        child: const MaterialApp(home: InviteQrView()),
-      ),
-    );
     await tester.pumpAndSettle();
 
     expect(_inviteLinkText(tester), contains('/invite/token-456'));
@@ -370,11 +221,7 @@ void main() {
   testWidgets('invite QR view back button pops to the previous route', (
     tester,
   ) async {
-    final httpService = _FakeInviteHttpService()
-      ..inviteToCreate = InviteLink(
-        token: 'token-123',
-        expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-      );
+    final httpService = _FakeInviteHttpService();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -433,137 +280,19 @@ void main() {
     await tester.tap(find.text('Open rooms'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Rooms page'), findsOneWidget);
-
     final roomsContext = tester.element(find.text('Rooms page'));
     Navigator.of(
       roomsContext,
     ).pushNamed(inviteQrRouteWithBackTo(backTo: '/rooms'), arguments: true);
     await tester.pumpAndSettle();
 
-    expect(find.text('Invite someone'), findsWidgets);
+    expect(find.text('Open Nearby'), findsWidgets);
 
     await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
 
     expect(find.text('Rooms page'), findsOneWidget);
   });
-
-  testWidgets(
-    'invite QR view falls back to the configured route when it cannot pop',
-    (tester) async {
-      final httpService = _FakeInviteHttpService()
-        ..inviteToCreate = InviteLink(
-          token: 'token-123',
-          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-        );
-
-      await tester.pumpWidget(
-        MultiProvider(
-          providers: [
-            Provider<HttpService>.value(value: httpService),
-            ChangeNotifierProvider(
-              create: (_) => MeModel()
-                ..setData(
-                  const SessionUser(authenticated: true, id: 1, username: 'me'),
-                ),
-            ),
-          ],
-          child: MaterialApp(
-            initialRoute: '/invite?back_to=%2Frooms',
-            onGenerateRoute: (settings) {
-              final uri = Uri.parse(settings.name ?? '/');
-              if (uri.path == '/') {
-                return MaterialPageRoute(
-                  settings: settings,
-                  builder: (_) => const SizedBox.shrink(),
-                );
-              }
-              if (uri.path == '/invite') {
-                return MaterialPageRoute(
-                  settings: settings,
-                  builder: (_) =>
-                      InviteQrView(backToRoute: uri.queryParameters['back_to']),
-                );
-              }
-              if (uri.path == '/rooms') {
-                return MaterialPageRoute(
-                  settings: settings,
-                  builder: (_) => const Scaffold(body: Text('Rooms fallback')),
-                );
-              }
-              throw StateError('Unexpected route ${settings.name}');
-            },
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Invite someone'), findsWidgets);
-
-      await tester.tap(find.byIcon(Icons.arrow_back));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Rooms fallback'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'invite QR view ignores invite-shaped fallback routes and recovers to home',
-    (tester) async {
-      final httpService = _FakeInviteHttpService()
-        ..inviteToCreate = InviteLink(
-          token: 'token-123',
-          expiresAt: DateTime.parse('2030-04-05T10:00:00.000Z'),
-        );
-
-      await tester.pumpWidget(
-        MultiProvider(
-          providers: [
-            Provider<HttpService>.value(value: httpService),
-            ChangeNotifierProvider(
-              create: (_) => MeModel()
-                ..setData(
-                  const SessionUser(authenticated: true, id: 1, username: 'me'),
-                ),
-            ),
-          ],
-          child: MaterialApp(
-            initialRoute: '/invite?back_to=%2Finvite%3Froom_id%3D7',
-            onGenerateRoute: (settings) {
-              final uri = Uri.parse(settings.name ?? '/');
-              if (uri.path == '/') {
-                return MaterialPageRoute(
-                  settings: settings,
-                  builder: (_) => const SizedBox.shrink(),
-                );
-              }
-              if (uri.path == '/invite') {
-                return MaterialPageRoute(
-                  settings: settings,
-                  builder: (_) =>
-                      InviteQrView(backToRoute: uri.queryParameters['back_to']),
-                );
-              }
-              if (uri.path == '/home') {
-                return MaterialPageRoute(
-                  settings: settings,
-                  builder: (_) => const Scaffold(body: Text('Home fallback')),
-                );
-              }
-              throw StateError('Unexpected route ${settings.name}');
-            },
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byIcon(Icons.arrow_back));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Home fallback'), findsOneWidget);
-    },
-  );
 
   testWidgets(
     'invite QR view falls back to the room route when opened directly for a room',

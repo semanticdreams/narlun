@@ -280,14 +280,13 @@ async def test_cleanup_inactive_users_deletes_stale_accounts_and_their_rooms(cli
     result = await cli.app['store'].cleanup_inactive_data(current_ts=stale_now)
 
     assert result['deleted_user_ids'] == [users[1]['user']['id']]
-    assert room['id'] in result['deleted_room_ids']
+    assert result['deleted_room_ids'] == []
     assert await cli.app['store']._load_user_hash(users[1]['user']['id']) is None
 
     remaining_rooms = await get_rooms(cli, users[0]['jwt'])
-    assert remaining_rooms == []
+    assert [candidate['id'] for candidate in remaining_rooms] == [room['id']]
 
-
-async def test_cleanup_prunes_historical_group_rooms_with_fewer_than_two_members(cli):
+async def test_cleanup_marks_historical_single_user_rooms_for_expiry(cli, monkeypatch):
     users = [await signup(cli) for _ in range(2)]
     room = await create_group_room(
         cli,
@@ -302,10 +301,11 @@ async def test_cleanup_prunes_historical_group_rooms_with_fewer_than_two_members
     result = await cli.app['store'].cleanup_inactive_data()
 
     assert result['deleted_user_ids'] == []
-    assert result['deleted_room_ids'] == [room['id']]
-    assert await cli.app['store'].get_room(room['id']) is None
+    assert result['deleted_room_ids'] == []
+    room_meta = await cli.app['store']._load_room_meta(room['id'])
+    assert int(room_meta['solo_expires_at']) > redis_store.now_ms()
     remaining_rooms = await get_rooms(cli, users[0]['jwt'])
-    assert remaining_rooms == []
+    assert [candidate['id'] for candidate in remaining_rooms] == [room['id']]
 
 
 async def test_push_subscription_routes_store_and_remove_browser_subscription(

@@ -26,6 +26,7 @@ class ConversationsView extends StatefulWidget {
   final int? initialRoomIdToOpen;
   final RoomsFeedModel? roomsFeedModel;
   final bool enableRealtimeRoomSummarySync;
+  final VoidCallback? onCreateRoom;
 
   const ConversationsView({
     super.key,
@@ -36,6 +37,7 @@ class ConversationsView extends StatefulWidget {
     this.initialRoomIdToOpen,
     this.roomsFeedModel,
     this.enableRealtimeRoomSummarySync = true,
+    this.onCreateRoom,
   });
 
   @override
@@ -331,19 +333,29 @@ class _ConversationsState extends State<ConversationsView> {
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Start from Nearby to discover people around you and open your first room.',
+                              'Create a room with the button below, or browse nearby rooms to request access.',
                             ),
                             const SizedBox(height: 16),
-                            FilledButton(
-                              onPressed:
-                                  widget.onOpenNearby ??
-                                  () {
-                                    Navigator.pushReplacementNamed(
-                                      context,
-                                      '/nearby',
-                                    );
-                                  },
-                              child: const Text('Find people nearby'),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton(
+                                  onPressed: widget.onCreateRoom,
+                                  child: const Text('Create room'),
+                                ),
+                                OutlinedButton(
+                                  onPressed:
+                                      widget.onOpenNearby ??
+                                      () {
+                                        Navigator.pushReplacementNamed(
+                                          context,
+                                          '/nearby',
+                                        );
+                                      },
+                                  child: const Text('Browse nearby'),
+                                ),
+                              ],
                             ),
                           ],
                         ),

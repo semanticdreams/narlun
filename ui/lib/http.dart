@@ -409,6 +409,17 @@ class HttpService {
     return body['id'] as int;
   }
 
+  Future<RoomSummary> create_room({
+    String name = '',
+    List<int> userIds = const [],
+  }) async {
+    final resp = await client.post(
+      Uri.parse(baseurl + '/social/create-room'),
+      body: jsonEncode({'name': name, 'user_ids': userIds}),
+    );
+    return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
   Future<RoomSummary> request_room_join(room_id) async {
     final resp = await client.post(
       Uri.parse(baseurl + '/social/request-room-join'),

@@ -55,6 +55,10 @@ class InvalidRoomSettingsError(InvalidUsage):
     code = 1005
     message = 'Invalid room settings'
 
+    def __init__(self, message=None):
+        if message is not None:
+            self.message = message
+
 
 class InvalidJoinRequestError(InvalidUsage):
     code = 1006
@@ -509,27 +513,48 @@ async def update_room_settings(req):
         raise InvalidRoomSettingsError()
 
     push_muted = req.data.get('push_muted')
-    if not isinstance(push_muted, bool):
+    room_name = req.data.get('name')
+
+    has_push_muted = push_muted is not None
+    has_room_name = room_name is not None
+    if not has_push_muted and not has_room_name:
+        raise InvalidRoomSettingsError()
+    if has_push_muted and not isinstance(push_muted, bool):
+        raise InvalidRoomSettingsError()
+    if has_room_name and not isinstance(room_name, str):
         raise InvalidRoomSettingsError()
 
     try:
-        room = await req.store.set_room_push_muted(
-            req.user['id'],
-            room_id,
-            push_muted=push_muted,
-        )
+        if has_room_name:
+            room = await req.store.set_room_name(
+                req.user['id'],
+                room_id,
+                name=room_name,
+            )
+        if has_push_muted:
+            room = await req.store.set_room_push_muted(
+                req.user['id'],
+                room_id,
+                push_muted=push_muted,
+            )
     except PermissionDenied:
         raise NoSuchRoomError()
+    except ValueError as exc:
+        raise InvalidRoomSettingsError(message=str(exc))
     except RoomNotFound:
         raise NoSuchRoomError()
 
-    await req.store.publish_rooms_changed([req.user['id']])
+    room_members = await req.store.get_room_members(room_id)
+    await req.store.publish_rooms_changed(
+        room_members if has_room_name else [req.user['id']],
+    )
     logger.info(
         'Updated room settings',
         extra=request_log_context(
             req,
             room_id=room_id,
-            push_muted=push_muted,
+            push_muted=push_muted if has_push_muted else None,
+            room_name=room_name.strip() if has_room_name else None,
         ),
     )
     return jsonify(room)

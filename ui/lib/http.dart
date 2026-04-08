@@ -491,11 +491,19 @@ class HttpService {
 
   Future<RoomSummary> update_room_settings(
     room_id, {
-    required bool pushMuted,
+    bool? pushMuted,
+    String? name,
   }) async {
+    final data = <String, Object?>{'room_id': room_id};
+    if (pushMuted != null) {
+      data['push_muted'] = pushMuted;
+    }
+    if (name != null) {
+      data['name'] = name;
+    }
     final resp = await client.post(
       Uri.parse(baseurl + '/social/update-room-settings'),
-      body: jsonEncode({'room_id': room_id, 'push_muted': pushMuted}),
+      body: jsonEncode(data),
     );
     return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }

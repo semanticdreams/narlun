@@ -371,6 +371,28 @@ async def test_profile_update_broadcasts_rooms_changed_to_room_members(cli):
         }
 
 
+async def test_room_rename_broadcasts_rooms_changed_to_other_members(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[1]['jwt']),
+    ) as ws:
+        response = await cli.post(
+            '/api/social/update-room-settings',
+            json={'room_id': room['id'], 'name': 'Night walk'},
+            headers=auth_headers(users[0]['jwt']),
+        )
+        assert response.status == 200
+
+        event = await ws.receive_json()
+        assert event == {
+            'type': 'rooms-changed',
+            'data': {'type': 'rooms-changed'},
+        }
+
+
 async def test_profile_update_broadcasts_nearby_changed_to_nearby_viewers(cli):
     users = [await signup(cli) for _ in range(2)]
     await checkin(cli, users[0]['jwt'], HAMBURG)

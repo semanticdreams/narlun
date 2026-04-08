@@ -47,6 +47,13 @@ String roomsRouteWithOpenRoom(int roomId) {
   return roomsRoute(openRoom: roomId);
 }
 
+String roomDetailsRoute(int roomId) {
+  return Uri(
+    path: '/rooms/details',
+    queryParameters: {'room_id': '$roomId'},
+  ).toString();
+}
+
 bool isPrimaryAppShellRoute(Uri uri) {
   return uri.path == '/home' || uri.path == '/nearby' || uri.path == '/rooms';
 }

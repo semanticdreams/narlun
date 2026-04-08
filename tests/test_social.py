@@ -728,6 +728,39 @@ async def test_room_push_mute_settings_round_trip(cli):
     assert other_rooms[0]['push_muted'] is False
 
 
+async def test_room_name_updates_for_all_members(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/update-room-settings',
+        json={'room_id': room['id'], 'name': 'Night walk'},
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+    assert response.status == 200
+    updated_room = await response.json()
+    assert updated_room['name'] == 'Night walk'
+
+    owner_rooms = await get_rooms(cli, users[0]['jwt'])
+    other_rooms = await get_rooms(cli, users[1]['jwt'])
+    assert owner_rooms[0]['name'] == 'Night walk'
+    assert other_rooms[0]['name'] == 'Night walk'
+
+
+async def test_room_name_cannot_be_cleared(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/update-room-settings',
+        json={'room_id': room['id'], 'name': '   '},
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1005
+
+
 async def test_send_message_requests_push_delivery(cli_factory):
     fake_push = FakePushService()
     cli = await cli_factory(push_service=fake_push)

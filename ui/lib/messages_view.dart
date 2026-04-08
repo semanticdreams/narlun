@@ -15,7 +15,9 @@ import 'leave_room_notice_storage.dart';
 import 'locator.dart';
 import 'models.dart';
 import 'push_notifications_service.dart';
+import 'room_details_view.dart';
 import 'room_messages_cache.dart';
+import 'route_utils.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
 
@@ -524,10 +526,7 @@ class MessagesState extends State<MessagesView> {
         await _handleRoomDeleted();
         return;
       }
-      setState(() {
-        room = updatedRoom!;
-        _resyncMessageParticipants();
-      });
+      _applyRoomSummaryUpdate(updatedRoom);
     } on UnauthorizedResponse {
       if (!mounted || _roomClosed) {
         return;
@@ -544,6 +543,16 @@ class MessagesState extends State<MessagesView> {
       }
       _showRefreshFailure('Could not refresh this room. Trying again soon.');
     }
+  }
+
+  void _applyRoomSummaryUpdate(RoomSummary updatedRoom) {
+    if (updatedRoom.updatedAt.isBefore(room.updatedAt)) {
+      return;
+    }
+    setState(() {
+      room = updatedRoom;
+      _resyncMessageParticipants();
+    });
   }
 
   Future<void> _refreshJoinRequests({bool silentErrors = false}) async {
@@ -605,66 +614,6 @@ class MessagesState extends State<MessagesView> {
       context,
     ).showSnackBar(const SnackBar(content: Text('Your session has ended.')));
     Navigator.pop(context);
-  }
-
-  Future<void> _updatePushMuted(bool pushMuted) async {
-    try {
-      final updatedRoom = await httpService.update_room_settings(
-        room.id,
-        pushMuted: pushMuted,
-      );
-      if (!mounted || _roomClosed) {
-        return;
-      }
-      setState(() {
-        room = updatedRoom;
-      });
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          content: Text(
-            pushMuted
-                ? 'Notifications muted for this room.'
-                : 'Notifications restored for this room.',
-          ),
-        ),
-      );
-    } on UnauthorizedResponse {
-      if (_roomClosed || !mounted) {
-        return;
-      }
-      _roomClosed = true;
-      await expireSession(
-        context,
-        httpService: httpService,
-        description: 'Your session has ended. Please sign in again.',
-      );
-    } on InvalidUsage catch (e) {
-      if (e.code == 1000) {
-        await _handleRoomDeleted();
-      } else {
-        rethrow;
-      }
-    } catch (error) {
-      if (!mounted || _roomClosed) {
-        return;
-      }
-      if (isAlreadyPresentedActionError(error)) {
-        return;
-      }
-      ScaffoldMessenger.maybeOf(context)
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              describeActionError(
-                error,
-                fallbackDescription:
-                    'Could not update notification settings right now.',
-              ),
-            ),
-          ),
-        );
-    }
   }
 
   Future<void> _updateJoinRequest(
@@ -982,36 +931,114 @@ class MessagesState extends State<MessagesView> {
     return '$memberCount members';
   }
 
-  Widget _buildAppBarTitle() {
-    return Row(
-      children: [
-        AvatarImage(picture: room.displayPictureFor(widget.me), radius: 18),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                room.displayTitleFor(widget.me),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              Text(
-                _roomSubtitle(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+  Future<void> _openRoomDetails() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        settings: RouteSettings(name: roomDetailsRoute(room.id)),
+        builder: (context) => RoomDetailsView(
+          room: room,
+          me: widget.me,
+          httpService: httpService,
+          websocketService: websocketService,
+          onRoomChanged: _applyRoomSummaryUpdate,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _updatePushMuted(bool pushMuted) async {
+    try {
+      final updatedRoom = await httpService.update_room_settings(
+        room.id,
+        pushMuted: pushMuted,
+      );
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      _applyRoomSummaryUpdate(updatedRoom);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            pushMuted
+                ? 'Notifications muted for this room.'
+                : 'Notifications restored for this room.',
           ),
         ),
-      ],
+      );
+    } on UnauthorizedResponse {
+      if (_roomClosed || !mounted) {
+        return;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+    } on InvalidUsage catch (e) {
+      if (e.code == 1000) {
+        await _handleRoomDeleted();
+      } else {
+        rethrow;
+      }
+    } catch (error) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription:
+                    'Could not update notification settings right now.',
+              ),
+            ),
+          ),
+        );
+    }
+  }
+
+  Widget _buildAppBarTitle() {
+    return InkWell(
+      key: const Key('room-details-open-button'),
+      borderRadius: BorderRadius.circular(12),
+      onTap: _openRoomDetails,
+      child: Row(
+        children: [
+          AvatarImage(picture: room.displayPictureFor(widget.me), radius: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  room.displayTitleFor(widget.me),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  _roomSubtitle(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

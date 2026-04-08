@@ -1281,6 +1281,36 @@ class RedisStore:
             await self.redis.hdel(prefs_key, room_id)
         return await self._serialize_room(room_id, viewer_user_id=user_id)
 
+    async def set_room_name(self, user_id, room_id, *, name):
+        room_id = await self._require_active_room_membership(user_id, room_id)
+        resolved_name = (name or '').strip()
+        if not resolved_name:
+            raise ValueError('Room name cannot be empty')
+
+        meta_key = self._room_meta_key(room_id)
+        meta = await self._get_room_meta_if_active(room_id)
+        if meta is None:
+            raise RoomNotFound()
+        if (meta.get('name') or '').strip() == resolved_name:
+            room = await self._serialize_room(room_id, viewer_user_id=user_id)
+            if room is None:
+                raise RoomNotFound()
+            return room
+
+        timestamp_ms = now_ms()
+        await self.redis.hset(
+            meta_key,
+            mapping={'name': resolved_name, 'updated_at': timestamp_ms},
+        )
+        member_ids = await self.get_room_members(room_id)
+        for member_id in member_ids:
+            await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
+
+        room = await self._serialize_room(room_id, viewer_user_id=user_id)
+        if room is None:
+            raise RoomNotFound()
+        return room
+
     async def mark_active_websocket(self, user_id, connection_id, *, client_id=None):
         key = (
             self._user_client_websocket_presence_key(user_id, client_id)

@@ -26,7 +26,17 @@ void main() {
         const RoomParticipant(id: 2, username: 'Bob'),
         const RoomParticipant(id: 3, username: 'Charlie'),
       ]),
-      'Bob, Charlie, and 1 others are typing...',
+      'Bob, Charlie, and 1 other are typing...',
+    );
+
+    expect(
+      describeTypingParticipants([
+        const RoomParticipant(id: 5, username: 'Eli'),
+        const RoomParticipant(id: 4, username: 'Dana'),
+        const RoomParticipant(id: 2, username: 'Bob'),
+        const RoomParticipant(id: 3, username: 'Charlie'),
+      ]),
+      'Bob, Charlie, and 2 others are typing...',
     );
   });
 }

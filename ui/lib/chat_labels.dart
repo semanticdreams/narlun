@@ -12,5 +12,7 @@ String? describeTypingParticipants(Iterable<RoomParticipant> participants) {
   if (activeParticipants.length == 2) {
     return '${activeParticipants[0].username} and ${activeParticipants[1].username} are typing...';
   }
-  return '${activeParticipants[0].username}, ${activeParticipants[1].username}, and ${activeParticipants.length - 2} others are typing...';
+  final remainingCount = activeParticipants.length - 2;
+  final otherLabel = remainingCount == 1 ? 'other' : 'others';
+  return '${activeParticipants[0].username}, ${activeParticipants[1].username}, and $remainingCount $otherLabel are typing...';
 }

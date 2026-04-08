@@ -232,10 +232,12 @@ class MessagesState extends State<MessagesView> {
     if (_typingActive == isTyping || _roomClosed) {
       return;
     }
+    final previousTypingState = _typingActive;
     _typingActive = isTyping;
     try {
       await websocketService.sendTypingState(room.id, isTyping: isTyping);
     } catch (_) {
+      _typingActive = previousTypingState;
       return;
     }
   }

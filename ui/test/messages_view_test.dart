@@ -348,6 +348,9 @@ class FakeWebsocketService extends WebsocketService {
   final subscribedRooms = <int>[];
   final unsubscribedRooms = <int>[];
   final typingStates = <Map<String, dynamic>>[];
+  final Queue<Future<void> Function(int roomId, bool isTyping)>
+  _sendTypingStateHandlers =
+      Queue<Future<void> Function(int roomId, bool isTyping)>();
   var ensureConnectedCalls = 0;
   Object? subscribeError;
 
@@ -413,6 +416,15 @@ class FakeWebsocketService extends WebsocketService {
   @override
   Future<void> sendTypingState(roomId, {required bool isTyping}) async {
     typingStates.add({'room_id': roomId, 'is_typing': isTyping});
+    if (_sendTypingStateHandlers.isNotEmpty) {
+      await _sendTypingStateHandlers.removeFirst()(roomId as int, isTyping);
+    }
+  }
+
+  void enqueueSendTypingState(
+    Future<void> Function(int roomId, bool isTyping) handler,
+  ) {
+    _sendTypingStateHandlers.add(handler);
   }
 
   void emitMessage(int roomId, List<dynamic> messages) {
@@ -1785,6 +1797,52 @@ void main() {
       'room_id': 1,
       'is_typing': false,
     });
+  });
+
+  testWidgets('composer retries typing state after a failed send', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    websocketService.enqueueSendTypingState((_, __) async {
+      throw StateError('socket unavailable');
+    });
+    websocketService.enqueueSendTypingState((_, __) async {});
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          name: 'Coffee crew',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'Bob'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final messageField = find.byKey(const Key('message-input-field'));
+    await tester.enterText(messageField, 'typing now');
+    await tester.pump();
+    await tester.enterText(messageField, 'typing now again');
+    await tester.pump();
+
+    expect(
+      websocketService.typingStates.where(
+        (state) => state['is_typing'] == true,
+      ),
+      hasLength(2),
+    );
   });
 
   testWidgets('composer toggles between emoji panel and keyboard button', (

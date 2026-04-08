@@ -500,10 +500,23 @@ class HttpService {
     return RoomSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future<ChatMessage> send_message(room_id, message_body) async {
-    final data = {'room_id': room_id, 'body': message_body};
+  Future<ChatMessage> send_message(
+    room_id,
+    message_body, {
+    ChatMessageKind kind = ChatMessageKind.text,
+    String? whatsappInviteUrl,
+  }) async {
+    final data = <String, Object?>{
+      'room_id': room_id,
+      'body': message_body,
+      'kind': chatMessageKindToJson(kind),
+    };
+    if (whatsappInviteUrl != null && whatsappInviteUrl.isNotEmpty) {
+      data['whatsapp_group'] = {'invite_url': whatsappInviteUrl};
+    }
     final resp = await client.post(
       Uri.parse(baseurl + '/social/send-message'),
+      headers: _requestHeaders(silentErrors: true),
       body: jsonEncode(data),
     );
     return ChatMessage.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);

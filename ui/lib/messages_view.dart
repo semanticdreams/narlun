@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'add_whatsapp_group_view.dart';
 import 'avatar_image.dart';
 import 'chat_labels.dart';
+import 'external_link_opener.dart';
 import 'frontend_error_reporter.dart';
 import 'http.dart';
 import 'invite_qr_button.dart';
@@ -23,6 +25,7 @@ class MessagesView extends StatefulWidget {
   final HttpService? httpService;
   final RoomMessagesCache? roomMessagesCache;
   final WebsocketService? websocketService;
+  final Future<bool> Function(String url)? externalLinkOpener;
 
   const MessagesView({
     super.key,
@@ -31,10 +34,38 @@ class MessagesView extends StatefulWidget {
     this.httpService,
     this.roomMessagesCache,
     this.websocketService,
+    this.externalLinkOpener,
   });
 
   @override
   State<MessagesView> createState() => MessagesState();
+}
+
+class _OutgoingMessageDraft {
+  const _OutgoingMessageDraft._({
+    required this.kind,
+    required this.body,
+    this.whatsappGroup,
+  });
+
+  factory _OutgoingMessageDraft.text(String body) {
+    return _OutgoingMessageDraft._(
+      kind: ChatMessageKind.text,
+      body: body.trim(),
+    );
+  }
+
+  factory _OutgoingMessageDraft.whatsappGroup(String inviteUrl) {
+    return _OutgoingMessageDraft._(
+      kind: ChatMessageKind.whatsappGroup,
+      body: '',
+      whatsappGroup: WhatsappGroupMessageData(inviteUrl: inviteUrl),
+    );
+  }
+
+  final ChatMessageKind kind;
+  final String body;
+  final WhatsappGroupMessageData? whatsappGroup;
 }
 
 class MessagesState extends State<MessagesView> {
@@ -74,6 +105,7 @@ class MessagesState extends State<MessagesView> {
   late final HttpService httpService;
   late final RoomMessagesCache roomMessagesCache;
   late final WebsocketService websocketService;
+  late final Future<bool> Function(String url) externalLinkOpener;
   late RoomSummary room;
 
   final List<ChatMessage> messages = [];
@@ -316,19 +348,21 @@ class MessagesState extends State<MessagesView> {
     return right.id.compareTo(left.id);
   }
 
-  ChatMessage _buildPendingOutgoingMessage(String body) {
+  ChatMessage _buildPendingOutgoingMessage(_OutgoingMessageDraft draft) {
     final clientTag =
         'pending-${DateTime.now().microsecondsSinceEpoch}-${_pendingMessageSequence++}';
     return ChatMessage(
       id: clientTag,
       clientTag: clientTag,
-      body: body,
+      kind: draft.kind,
+      body: draft.body,
       senderId: widget.me.id ?? 0,
       senderUsername: widget.me.username,
       senderPicture: widget.me.picture,
       timestamp: DateTime.now().toUtc(),
       readByUsers: [_meParticipant()],
       deliveryState: MessageDeliveryState.sending,
+      whatsappGroup: draft.whatsappGroup,
     );
   }
 
@@ -342,7 +376,7 @@ class MessagesState extends State<MessagesView> {
               (message) =>
                   message.deliveryState == MessageDeliveryState.sending &&
                   message.senderId == incoming.senderId &&
-                  message.body == incoming.body &&
+                  message.pendingMatchKey == incoming.pendingMatchKey &&
                   !incoming.timestamp.isBefore(
                     message.timestamp.subtract(_pendingMessageMatchClockSkew),
                   ) &&
@@ -799,6 +833,7 @@ class MessagesState extends State<MessagesView> {
         widget.roomMessagesCache ??
         providedRoomMessagesCache ??
         RoomMessagesCache();
+    externalLinkOpener = widget.externalLinkOpener ?? openExternalLink;
     room = widget.room;
     final cachedMessages = roomMessagesCache.cachedMessagesFor(room.id);
     if (cachedMessages != null) {
@@ -1005,84 +1040,171 @@ class MessagesState extends State<MessagesView> {
   }
 
   Future<void> sendMessage() async {
-    final body = messageController.text;
-    if (body.isNotEmpty) {
-      final pendingMessage = _buildPendingOutgoingMessage(body);
-      final pendingClientTag = pendingMessage.clientTag!;
-      setState(() {
-        _mergeMessages([pendingMessage]);
-        _resyncMessageParticipants();
-      });
-      _scrollToBottom();
+    await _sendDraftMessage(
+      _OutgoingMessageDraft.text(messageController.text),
+      restoreComposerOnFailure: true,
+    );
+  }
+
+  Future<bool> _sendDraftMessage(
+    _OutgoingMessageDraft draft, {
+    bool restoreComposerOnFailure = false,
+    bool propagateInvalidUsage = false,
+  }) async {
+    if (draft.kind == ChatMessageKind.text && draft.body.isEmpty) {
+      return false;
+    }
+    final pendingMessage = _buildPendingOutgoingMessage(draft);
+    final pendingClientTag = pendingMessage.clientTag!;
+    setState(() {
+      _mergeMessages([pendingMessage]);
+      _resyncMessageParticipants();
+    });
+    _scrollToBottom();
+    if (draft.kind == ChatMessageKind.text) {
       messageController.text = '';
       _typingIdleTimer?.cancel();
       await _setTypingState(false);
-      try {
-        final sentMessage = await httpService.send_message(room.id, body);
-        if (mounted && !_roomClosed) {
-          setState(() {
-            _replacePendingOutgoingMessage(pendingClientTag, sentMessage);
-            _resyncMessageParticipants();
-          });
-          _scrollToBottom();
-        }
-        _scheduleMarkRoomRead(messageId: sentMessage.id);
-      } on UnauthorizedResponse {
-        if (mounted) {
-          setState(() {
-            _removePendingOutgoingMessage(pendingClientTag);
-          });
-        }
-        if (_roomClosed || !mounted) {
-          return;
-        }
-        _roomClosed = true;
-        await expireSession(
-          context,
-          httpService: httpService,
-          description: 'Your session has ended. Please sign in again.',
-        );
-      } on InvalidUsage catch (e) {
-        if (mounted) {
-          setState(() {
-            _removePendingOutgoingMessage(pendingClientTag);
-          });
-        }
-        if (e.code == 1000) {
-          await _handleRoomDeleted();
-        } else {
-          rethrow;
-        }
-      } catch (error) {
-        if (!mounted || _roomClosed) {
-          return;
-        }
+    }
+    try {
+      final sentMessage = await httpService.send_message(
+        room.id,
+        draft.body,
+        kind: draft.kind,
+        whatsappInviteUrl: draft.whatsappGroup?.inviteUrl,
+      );
+      if (mounted && !_roomClosed) {
+        setState(() {
+          _replacePendingOutgoingMessage(pendingClientTag, sentMessage);
+          _resyncMessageParticipants();
+        });
+        _scrollToBottom();
+      }
+      _scheduleMarkRoomRead(messageId: sentMessage.id);
+      return true;
+    } on UnauthorizedResponse {
+      if (mounted) {
         setState(() {
           _removePendingOutgoingMessage(pendingClientTag);
         });
-        if (messageController.text.isEmpty) {
-          messageController.value = TextEditingValue(
-            text: body,
-            selection: TextSelection.collapsed(offset: body.length),
-          );
-        }
-        if (isAlreadyPresentedActionError(error)) {
-          return;
-        }
-        ScaffoldMessenger.maybeOf(context)
-          ?..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(
-                describeActionError(
-                  error,
-                  fallbackDescription: 'Could not send that message.',
-                ),
+      }
+      if (_roomClosed || !mounted) {
+        return false;
+      }
+      _roomClosed = true;
+      await expireSession(
+        context,
+        httpService: httpService,
+        description: 'Your session has ended. Please sign in again.',
+      );
+      return false;
+    } on InvalidUsage catch (error) {
+      if (mounted) {
+        setState(() {
+          _removePendingOutgoingMessage(pendingClientTag);
+        });
+      }
+      if (error.code == 1000) {
+        await _handleRoomDeleted();
+        return false;
+      }
+      if (restoreComposerOnFailure &&
+          draft.kind == ChatMessageKind.text &&
+          messageController.text.isEmpty) {
+        messageController.value = TextEditingValue(
+          text: draft.body,
+          selection: TextSelection.collapsed(offset: draft.body.length),
+        );
+      }
+      if (propagateInvalidUsage) {
+        rethrow;
+      }
+      if (!mounted || _roomClosed) {
+        return false;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription: 'Could not send that message.',
               ),
             ),
-          );
+          ),
+        );
+      return false;
+    } catch (error) {
+      if (!mounted || _roomClosed) {
+        return false;
       }
+      setState(() {
+        _removePendingOutgoingMessage(pendingClientTag);
+      });
+      if (restoreComposerOnFailure &&
+          draft.kind == ChatMessageKind.text &&
+          messageController.text.isEmpty) {
+        messageController.value = TextEditingValue(
+          text: draft.body,
+          selection: TextSelection.collapsed(offset: draft.body.length),
+        );
+      }
+      if (isAlreadyPresentedActionError(error)) {
+        return false;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription: 'Could not send that message.',
+              ),
+            ),
+          ),
+        );
+      return false;
     }
+  }
+
+  Future<void> _openWhatsappGroupComposer() async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/rooms/add-whatsapp-group'),
+        builder: (_) => AddWhatsappGroupView(
+          onAdd: (inviteUrl) {
+            return _sendDraftMessage(
+              _OutgoingMessageDraft.whatsappGroup(inviteUrl),
+              propagateInvalidUsage: true,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openWhatsappInvite(String inviteUrl) async {
+    final opened = await externalLinkOpener(inviteUrl);
+    if (opened || !mounted) {
+      return;
+    }
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Could not open this WhatsApp group right now.'),
+        ),
+      );
   }
 
   void _toggleComposerInputMode() {
@@ -1455,6 +1577,36 @@ class MessagesState extends State<MessagesView> {
                               ),
                             ),
                           ),
+                          SizedBox(
+                            width: 52,
+                            height: 56,
+                            child: PopupMenuButton<String>(
+                              key: const Key('message-add-button'),
+                              tooltip: 'Add',
+                              icon: const Icon(
+                                Icons.add_circle_outline_rounded,
+                                color: Color(0xFF61706E),
+                              ),
+                              onSelected: (value) {
+                                if (value == 'whatsapp-group') {
+                                  unawaited(_openWhatsappGroupComposer());
+                                }
+                              },
+                              itemBuilder: (context) => const [
+                                PopupMenuItem<String>(
+                                  key: Key('message-add-whatsapp-group'),
+                                  value: 'whatsapp-group',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.group_add_rounded),
+                                      SizedBox(width: 10),
+                                      Text('WhatsApp group'),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1581,6 +1733,7 @@ class MessagesState extends State<MessagesView> {
               key: ValueKey('chat-message-${message.id}'),
               message: message,
               me: widget.me,
+              onOpenWhatsappInvite: _openWhatsappInvite,
               showAuthorLabel: _otherParticipantCount > 1,
               startsCluster: startsCluster,
               endsCluster: endsCluster,
@@ -1611,6 +1764,7 @@ class MessagesState extends State<MessagesView> {
         actions: [
           InviteQrButton(room: room),
           PopupMenuButton<String>(
+            key: const Key('room-menu-button'),
             itemBuilder: (context) => [
               PopupMenuItem<String>(
                 value: 'toggle-push',
@@ -1799,6 +1953,7 @@ class _MessageBubbleRow extends StatelessWidget {
     super.key,
     required this.message,
     required this.me,
+    required this.onOpenWhatsappInvite,
     required this.showAuthorLabel,
     required this.startsCluster,
     required this.endsCluster,
@@ -1808,11 +1963,67 @@ class _MessageBubbleRow extends StatelessWidget {
 
   final ChatMessage message;
   final SessionUser me;
+  final Future<void> Function(String inviteUrl) onOpenWhatsappInvite;
   final bool showAuthorLabel;
   final bool startsCluster;
   final bool endsCluster;
   final String timeLabel;
   final BorderRadius bubbleRadius;
+
+  Widget _buildMessageContent(BuildContext context) {
+    switch (message.kind) {
+      case ChatMessageKind.text:
+        return SelectableText(
+          message.displayText,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: const Color(0xFF1F2528),
+            height: 1.25,
+          ),
+        );
+      case ChatMessageKind.whatsappGroup:
+        final inviteUrl = message.whatsappGroup?.inviteUrl ?? '';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFE6F6EA),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.groups_rounded,
+                    size: 18,
+                    color: Color(0xFF1F8A46),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'WhatsApp group',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: const Color(0xFF1F2528),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            FilledButton.tonalIcon(
+              key: Key('whatsapp-group-join-button-${message.id}'),
+              onPressed: inviteUrl.isEmpty
+                  ? null
+                  : () => onOpenWhatsappInvite(inviteUrl),
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Join WhatsApp group'),
+            ),
+          ],
+        );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1823,7 +2034,6 @@ class _MessageBubbleRow extends StatelessWidget {
     final bubbleColor = isSender
         ? const Color(0xFFDCF7C5)
         : Colors.white.withValues(alpha: 0.96);
-    const textColor = Color(0xFF1F2528);
     final statusColor = isSender && hasBeenRead
         ? const Color(0xFF1D8F8C)
         : const Color(0xFF7A7E80);
@@ -1883,11 +2093,7 @@ class _MessageBubbleRow extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SelectableText(
-                          message.body,
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(color: textColor, height: 1.25),
-                        ),
+                        _buildMessageContent(context),
                         const SizedBox(height: 4),
                         Row(
                           mainAxisSize: MainAxisSize.min,

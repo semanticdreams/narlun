@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import web
 
@@ -67,6 +68,60 @@ class InvalidJoinRequestError(InvalidUsage):
 class InvalidReadReceiptError(InvalidUsage):
     code = 1007
     message = 'Invalid read receipt'
+
+
+class InvalidMessageContentError(InvalidUsage):
+    code = 1008
+    message = 'Invalid message content'
+
+    def __init__(self, message=None):
+        if message is not None:
+            self.message = message
+
+
+def _normalize_whatsapp_invite_url(raw_value):
+    value = (raw_value or '').strip()
+    if not value:
+        return None
+    candidate = value if '://' in value else f'https://{value}'
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in ('http', 'https'):
+        return None
+    if parsed.hostname != 'chat.whatsapp.com':
+        return None
+    path_parts = [part for part in parsed.path.split('/') if part]
+    if len(path_parts) != 1:
+        return None
+    return urlunsplit(('https', 'chat.whatsapp.com', f'/{path_parts[0]}', '', ''))
+
+
+def _parse_outgoing_message_payload(data):
+    kind = data.get('kind') or 'text'
+    if kind == 'text':
+        body = data.get('body', '')
+        if not body.strip():
+            raise EmptyBodyError()
+        return {
+            'kind': 'text',
+            'body': body,
+            'whatsapp_group': None,
+        }
+    if kind == 'whatsapp_group':
+        whatsapp_group = data.get('whatsapp_group')
+        invite_url = ''
+        if isinstance(whatsapp_group, dict):
+            invite_url = whatsapp_group.get('invite_url', '')
+        normalized_url = _normalize_whatsapp_invite_url(invite_url)
+        if normalized_url is None:
+            raise InvalidMessageContentError(
+                message='WhatsApp invite link must use chat.whatsapp.com.',
+            )
+        return {
+            'kind': 'whatsapp_group',
+            'body': '',
+            'whatsapp_group': {'invite_url': normalized_url},
+        }
+    raise InvalidMessageContentError(message='Unknown message type.')
 
 
 @routes.post('/checkin')
@@ -298,12 +353,16 @@ async def leave_room(req):
 @routes.post('/send-message')
 @authenticated
 async def send_message(req):
-    body = req.data.get('body', '')
-    if not body.strip():
-        raise EmptyBodyError()
+    payload = _parse_outgoing_message_payload(req.data)
 
     try:
-        message = await req.store.send_message(req.user['id'], req.data['room_id'], body)
+        message = await req.store.send_message(
+            req.user['id'],
+            req.data['room_id'],
+            payload['body'],
+            kind=payload['kind'],
+            whatsapp_group=payload['whatsapp_group'],
+        )
     except PermissionDenied:
         raise NoSuchRoomError()
     except RoomNotFound:
@@ -321,7 +380,8 @@ async def send_message(req):
             req,
             room_id=req.data['room_id'],
             message_id=message['id'],
-            message_body_length=len(body.strip()),
+            message_kind=payload['kind'],
+            message_body_length=len(payload['body'].strip()),
         ),
     )
     return jsonify(message)

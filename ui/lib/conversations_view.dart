@@ -57,7 +57,7 @@ class _ConversationsState extends State<ConversationsView> {
 
   String _lastMessagePreview(RoomSummary room, SessionUser? currentUser) {
     final preview = room.lastMessage;
-    if (preview == null || preview.body.isEmpty) {
+    if (preview == null || preview.previewText.isEmpty) {
       return '';
     }
     final shouldShowSender = currentUser == null
@@ -67,9 +67,9 @@ class _ConversationsState extends State<ConversationsView> {
         preview.senderUsername != null &&
         preview.senderUsername!.isNotEmpty &&
         preview.senderId != currentUser?.id) {
-      return '${preview.senderUsername}: ${preview.body}';
+      return '${preview.senderUsername}: ${preview.previewText}';
     }
-    return preview.body;
+    return preview.previewText;
   }
 
   void _showRefreshFailure(String message) {

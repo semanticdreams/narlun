@@ -156,10 +156,21 @@ async def leave_room(cli, jwt, room_id):
     return response
 
 
-async def send_message(cli, jwt, room_id, body):
+async def send_message(
+    cli,
+    jwt,
+    room_id,
+    body='',
+    *,
+    kind='text',
+    whatsapp_group=None,
+):
+    payload = {'room_id': room_id, 'body': body, 'kind': kind}
+    if whatsapp_group is not None:
+        payload['whatsapp_group'] = whatsapp_group
     response = await cli.post(
         '/api/social/send-message',
-        json={'room_id': room_id, 'body': body},
+        json=payload,
         headers=auth_headers(jwt),
     )
     assert response.status == 200

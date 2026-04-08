@@ -60,4 +60,31 @@ void main() {
 
     expect(room.pushMuted, isTrue);
   });
+
+  test('whatsapp group previews use the specialized label', () {
+    final preview = MessagePreview.fromJson({
+      'kind': 'whatsapp_group',
+      'body': '',
+      'whatsapp_group': {
+        'invite_url': 'https://chat.whatsapp.com/InviteToken123',
+      },
+    });
+    final message = ChatMessage.fromJson({
+      'id': 'm-1',
+      'kind': 'whatsapp_group',
+      'body': '',
+      'sender_id': 1,
+      'timestamp': '2026-04-04T10:00:00.000Z',
+      'whatsapp_group': {
+        'invite_url': 'https://chat.whatsapp.com/InviteToken123',
+      },
+    });
+
+    expect(preview.previewText, 'Join WhatsApp group');
+    expect(message.displayText, 'Join WhatsApp group');
+    expect(
+      message.pendingMatchKey,
+      'whatsapp:https://chat.whatsapp.com/InviteToken123',
+    );
+  });
 }

@@ -1,4 +1,45 @@
+import 'whatsapp_group_links.dart';
+
 enum MessageDeliveryState { sending, sent }
+
+enum ChatMessageKind { text, whatsappGroup }
+
+ChatMessageKind chatMessageKindFromJson(Object? raw) {
+  return switch (raw) {
+    'whatsapp_group' => ChatMessageKind.whatsappGroup,
+    _ => ChatMessageKind.text,
+  };
+}
+
+String chatMessageKindToJson(ChatMessageKind kind) {
+  return switch (kind) {
+    ChatMessageKind.text => 'text',
+    ChatMessageKind.whatsappGroup => 'whatsapp_group',
+  };
+}
+
+class WhatsappGroupMessageData {
+  final String inviteUrl;
+
+  const WhatsappGroupMessageData({required this.inviteUrl});
+
+  factory WhatsappGroupMessageData.fromJson(Map<String, dynamic> json) {
+    return WhatsappGroupMessageData(
+      inviteUrl: json['invite_url'] as String? ?? '',
+    );
+  }
+}
+
+String messagePreviewText({
+  required ChatMessageKind kind,
+  required String body,
+  WhatsappGroupMessageData? whatsappGroup,
+}) {
+  return switch (kind) {
+    ChatMessageKind.text => body,
+    ChatMessageKind.whatsappGroup => whatsappGroupPreviewLabel,
+  };
+}
 
 class SessionUser {
   final bool authenticated;
@@ -87,25 +128,38 @@ class RoomParticipant {
 }
 
 class MessagePreview {
+  final ChatMessageKind kind;
   final String body;
   final int? senderId;
   final String? senderUsername;
+  final WhatsappGroupMessageData? whatsappGroup;
 
   const MessagePreview({
+    this.kind = ChatMessageKind.text,
     required this.body,
     this.senderId,
     this.senderUsername,
+    this.whatsappGroup,
   });
 
   factory MessagePreview.fromJson(Map<String, dynamic> json) {
     final sender = json['sender'] as Map<String, dynamic>?;
     return MessagePreview(
+      kind: chatMessageKindFromJson(json['kind']),
       body: json['body'] as String? ?? '',
       senderId: json['sender_id'] as int? ?? sender?['id'] as int?,
       senderUsername:
           json['sender_username'] as String? ?? sender?['username'] as String?,
+      whatsappGroup: json['whatsapp_group'] is Map<String, dynamic>
+          ? WhatsappGroupMessageData.fromJson(
+              json['whatsapp_group'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
+
+  String get previewText =>
+      messagePreviewText(kind: kind, body: body, whatsappGroup: whatsappGroup);
 }
 
 class RoomSummary {
@@ -218,6 +272,7 @@ class InviteLink {
 
 class ChatMessage {
   final String id;
+  final ChatMessageKind kind;
   final String body;
   final int senderId;
   final String? senderUsername;
@@ -226,9 +281,11 @@ class ChatMessage {
   final List<RoomParticipant> readByUsers;
   final MessageDeliveryState deliveryState;
   final String? clientTag;
+  final WhatsappGroupMessageData? whatsappGroup;
 
   const ChatMessage({
     required this.id,
+    this.kind = ChatMessageKind.text,
     required this.body,
     required this.senderId,
     required this.timestamp,
@@ -237,12 +294,14 @@ class ChatMessage {
     this.readByUsers = const [],
     this.deliveryState = MessageDeliveryState.sent,
     this.clientTag,
+    this.whatsappGroup,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final sender = json['sender'] as Map<String, dynamic>?;
     return ChatMessage(
       id: '${json['id']}',
+      kind: chatMessageKindFromJson(json['kind']),
       body: json['body'] as String? ?? '',
       senderId: json['sender_id'] as int? ?? sender?['id'] as int,
       senderUsername:
@@ -254,6 +313,11 @@ class ChatMessage {
           ? RoomParticipant.listFromJson(json['read_by_users'] as List<dynamic>)
           : const [],
       deliveryState: MessageDeliveryState.sent,
+      whatsappGroup: json['whatsapp_group'] is Map<String, dynamic>
+          ? WhatsappGroupMessageData.fromJson(
+              json['whatsapp_group'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
 
@@ -266,6 +330,7 @@ class ChatMessage {
 
   ChatMessage copyWith({
     String? id,
+    ChatMessageKind? kind,
     String? body,
     int? senderId,
     String? senderUsername,
@@ -274,9 +339,11 @@ class ChatMessage {
     List<RoomParticipant>? readByUsers,
     MessageDeliveryState? deliveryState,
     String? clientTag,
+    WhatsappGroupMessageData? whatsappGroup,
   }) {
     return ChatMessage(
       id: id ?? this.id,
+      kind: kind ?? this.kind,
       body: body ?? this.body,
       senderId: senderId ?? this.senderId,
       senderUsername: senderUsername ?? this.senderUsername,
@@ -285,8 +352,18 @@ class ChatMessage {
       readByUsers: readByUsers ?? this.readByUsers,
       deliveryState: deliveryState ?? this.deliveryState,
       clientTag: clientTag ?? this.clientTag,
+      whatsappGroup: whatsappGroup ?? this.whatsappGroup,
     );
   }
+
+  String get displayText =>
+      messagePreviewText(kind: kind, body: body, whatsappGroup: whatsappGroup);
+
+  String get pendingMatchKey => switch (kind) {
+    ChatMessageKind.text => 'text:$body',
+    ChatMessageKind.whatsappGroup =>
+      'whatsapp:${whatsappGroup?.inviteUrl ?? ''}',
+  };
 }
 
 class NearbyUser {

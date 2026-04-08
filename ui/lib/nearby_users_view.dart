@@ -316,10 +316,10 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         ? 'Waiting'
         : '${room.distance}m away';
     final subtitleLines = <Widget>[];
-    if ((room.room.lastMessage?.body.isNotEmpty ?? false)) {
+    if ((room.room.lastMessage?.previewText.isNotEmpty ?? false)) {
       subtitleLines.add(
         Text(
-          room.room.lastMessage!.body,
+          room.room.lastMessage!.previewText,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),

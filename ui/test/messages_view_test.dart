@@ -173,8 +173,18 @@ class FakeHttpService extends HttpService {
   }
 
   @override
-  Future<ChatMessage> send_message(room_id, message_body) async {
-    sentMessages.add({'room_id': room_id, 'body': message_body});
+  Future<ChatMessage> send_message(
+    room_id,
+    message_body, {
+    ChatMessageKind kind = ChatMessageKind.text,
+    String? whatsappInviteUrl,
+  }) async {
+    sentMessages.add({
+      'room_id': room_id,
+      'body': message_body,
+      'kind': chatMessageKindToJson(kind),
+      if (whatsappInviteUrl != null) 'whatsapp_invite_url': whatsappInviteUrl,
+    });
     if (_sendMessageHandlers.isNotEmpty) {
       return _sendMessageHandlers.removeFirst()(
         room_id as int,
@@ -407,6 +417,7 @@ Widget _buildMessagesApp({
   RoomSummary? room,
   RoomMessagesCache? roomMessagesCache,
   PushNotificationsService? pushNotificationsService,
+  Future<bool> Function(String url)? externalLinkOpener,
   SessionUser me = const SessionUser(
     authenticated: true,
     id: 1,
@@ -427,6 +438,7 @@ Widget _buildMessagesApp({
     httpService: httpService,
     roomMessagesCache: roomMessagesCache,
     websocketService: websocketService,
+    externalLinkOpener: externalLinkOpener,
   );
   final provider = Provider<RoomMessagesCache>.value(
     value: roomMessagesCache ?? RoomMessagesCache(),
@@ -990,7 +1002,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.tap(find.byKey(const Key('room-menu-button')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Mute notifications'));
     await tester.pumpAndSettle();
@@ -1063,7 +1075,9 @@ void main() {
     await tester.pumpAndSettle();
 
     tester
-        .widget<PopupMenuButton<String>>(find.byType(PopupMenuButton<String>))
+        .widget<PopupMenuButton<String>>(
+          find.byKey(const Key('room-menu-button')),
+        )
         .onSelected
         ?.call('leave-room');
     await tester.pumpAndSettle();
@@ -1436,6 +1450,256 @@ void main() {
     expect(input.controller!.text, 'Hi 😀');
   });
 
+  testWidgets('composer can add a WhatsApp group message from the add menu', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+    httpService.enqueueSendMessage((roomId, body) async {
+      return ChatMessage(
+        id: 'wa-1',
+        kind: ChatMessageKind.whatsappGroup,
+        body: '',
+        senderId: 1,
+        senderUsername: 'me',
+        timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+        readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+        whatsappGroup: const WhatsappGroupMessageData(
+          inviteUrl: 'https://chat.whatsapp.com/InviteToken123',
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('message-add-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('message-add-whatsapp-group')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add WhatsApp group'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('whatsapp-group-link-field')),
+      'https://example.com/not-whatsapp',
+    );
+    await tester.tap(find.byKey(const Key('whatsapp-group-add-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Enter a valid WhatsApp invite link from chat.whatsapp.com.'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('whatsapp-group-link-field')),
+      'chat.whatsapp.com/InviteToken123',
+    );
+    await tester.tap(find.byKey(const Key('whatsapp-group-add-submit-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add WhatsApp group'), findsNothing);
+    expect(httpService.sentMessages.last, {
+      'room_id': 1,
+      'body': '',
+      'kind': 'whatsapp_group',
+      'whatsapp_invite_url': 'https://chat.whatsapp.com/InviteToken123',
+    });
+    expect(
+      find.byKey(const Key('whatsapp-group-join-button-wa-1')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('whatsapp group message button opens the invite link', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    final openedUrls = <String>[];
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'wa-1',
+          kind: ChatMessageKind.whatsappGroup,
+          body: '',
+          senderId: 2,
+          senderUsername: 'other',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          whatsappGroup: const WhatsappGroupMessageData(
+            inviteUrl: 'https://chat.whatsapp.com/InviteToken123',
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+        externalLinkOpener: (url) async {
+          openedUrls.add(url);
+          return true;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('whatsapp-group-join-button-wa-1')));
+    await tester.pumpAndSettle();
+
+    expect(openedUrls, ['https://chat.whatsapp.com/InviteToken123']);
+  });
+
+  testWidgets(
+    'whatsapp add screen cannot be dismissed while submit is in flight',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      final sendCompleter = Completer<ChatMessage>();
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
+          ),
+        ],
+      );
+      httpService.enqueueMessages((_) async => []);
+      httpService.enqueueSendMessage((roomId, body) => sendCompleter.future);
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('message-add-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('message-add-whatsapp-group')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('whatsapp-group-link-field')),
+        'chat.whatsapp.com/InviteToken123',
+      );
+      await tester.tap(
+        find.byKey(const Key('whatsapp-group-add-submit-button')),
+      );
+      await tester.pump();
+
+      expect(find.text('Adding...'), findsOneWidget);
+
+      await Navigator.of(
+        tester.element(find.text('Add WhatsApp group')),
+      ).maybePop();
+      await tester.pump();
+
+      expect(find.text('Add WhatsApp group'), findsOneWidget);
+
+      sendCompleter.complete(
+        ChatMessage(
+          id: 'wa-1',
+          kind: ChatMessageKind.whatsappGroup,
+          body: '',
+          senderId: 1,
+          senderUsername: 'me',
+          timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
+          readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+          whatsappGroup: const WhatsappGroupMessageData(
+            inviteUrl: 'https://chat.whatsapp.com/InviteToken123',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Add WhatsApp group'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'text send validation errors stay visible and restore the composer',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
+          ),
+        ],
+      );
+      httpService.enqueueMessages((_) async => []);
+      httpService.enqueueSendMessage((roomId, body) async {
+        throw InvalidUsage(status: 400, message: 'Too long', code: 1999);
+      });
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('message-input-field')),
+        'Hello now',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('message-send-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Too long'), findsOneWidget);
+      final input = tester.widget<TextField>(
+        find.byKey(const Key('message-input-field')),
+      );
+      expect(input.controller!.text, 'Hello now');
+    },
+  );
+
   testWidgets(
     'updates outgoing receipt icon when another member reads the latest message',
     (tester) async {
@@ -1538,7 +1802,7 @@ void main() {
 
     expect(find.text('Hello now'), findsOneWidget);
     expect(httpService.sentMessages, [
-      {'room_id': 1, 'body': 'Hello now'},
+      {'room_id': 1, 'body': 'Hello now', 'kind': 'text'},
     ]);
     var statusIcon = tester.widget<Icon>(
       find.byKey(const Key('message-status-icon')),

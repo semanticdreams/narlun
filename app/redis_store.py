@@ -1033,20 +1033,31 @@ class RedisStore:
             raise PermissionDenied()
         return room_id
 
-    async def send_message(self, sender_id, room_id, body):
+    async def send_message(
+        self,
+        sender_id,
+        room_id,
+        body='',
+        *,
+        kind='text',
+        whatsapp_group=None,
+    ):
         room_id = await self._require_active_room_membership(sender_id, room_id)
         body = body.strip()
-        if not body:
+        if kind == 'text' and not body:
             raise ValueError('Empty message body')
 
         timestamp_ms = now_ms()
         raw_sender = await self._load_user_hash(sender_id)
         message = {
             'id': f'{timestamp_ms}-{secrets.token_hex(4)}',
+            'kind': kind,
             'body': body,
             'sender_id': int(sender_id),
             'timestamp': ts_ms_to_iso(timestamp_ms),
         }
+        if whatsapp_group is not None:
+            message['whatsapp_group'] = whatsapp_group
         encoded = json.dumps(message)
         cutoff_ms = timestamp_ms - (MESSAGE_TTL_SECONDS * 1000)
         room_messages_key = self._room_messages_key(room_id)
@@ -1054,11 +1065,14 @@ class RedisStore:
         await self.redis.zremrangebyscore(room_messages_key, '-inf', cutoff_ms)
 
         last_message = {
+            'kind': kind,
             'body': body,
             'sender_id': int(sender_id),
             'sender_username': raw_sender['username'] if raw_sender is not None else None,
             'timestamp': ts_ms_to_iso(timestamp_ms),
         }
+        if whatsapp_group is not None:
+            last_message['whatsapp_group'] = whatsapp_group
         room_meta_key = self._room_meta_key(room_id)
         await self.redis.hset(room_meta_key, mapping={
             'updated_at': timestamp_ms,

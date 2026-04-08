@@ -616,6 +616,59 @@ async def test_expired_solo_rooms_reject_new_messages_immediately(cli, monkeypat
     assert body['code'] == 1000
 
 
+async def test_send_whatsapp_group_message_returns_structured_payload(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    message = await send_message(
+        cli,
+        users[0]['jwt'],
+        room['id'],
+        kind='whatsapp_group',
+        whatsapp_group={'invite_url': 'chat.whatsapp.com/InviteToken123'},
+    )
+
+    assert message['kind'] == 'whatsapp_group'
+    assert message['body'] == ''
+    assert message['whatsapp_group'] == {
+        'invite_url': 'https://chat.whatsapp.com/InviteToken123',
+    }
+
+    response = await get_messages(cli, users[1]['jwt'], room['id'])
+    assert response.status == 200
+    messages = await response.json()
+    assert messages[0]['kind'] == 'whatsapp_group'
+    assert messages[0]['whatsapp_group'] == {
+        'invite_url': 'https://chat.whatsapp.com/InviteToken123',
+    }
+
+    rooms = await get_rooms(cli, users[1]['jwt'])
+    assert rooms[0]['last_message']['kind'] == 'whatsapp_group'
+    assert rooms[0]['last_message']['whatsapp_group'] == {
+        'invite_url': 'https://chat.whatsapp.com/InviteToken123',
+    }
+
+
+async def test_send_whatsapp_group_message_requires_valid_invite_link(cli):
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/send-message',
+        json={
+            'room_id': room['id'],
+            'kind': 'whatsapp_group',
+            'whatsapp_group': {'invite_url': 'https://example.com/not-whatsapp'},
+        },
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1008
+    assert body['message'] == 'WhatsApp invite link must use chat.whatsapp.com.'
+
+
 async def test_room_invite_requires_room_id(cli):
     created = await signup(cli)
 

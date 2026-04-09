@@ -9,15 +9,13 @@ import 'frontend_error_reporter.dart';
 import 'location_service.dart';
 
 class BrowserLocationService implements LocationService {
-  static const Duration _positionCacheMaxAge = Duration(seconds: 8);
-  static const Duration _positionRequestTimeout = Duration(seconds: 12);
-  static const Duration _positionRefreshWait = Duration(seconds: 2);
+  static const Duration _positionCacheMaxAge = Duration(minutes: 1);
+  static const Duration _positionRequestTimeout = Duration(seconds: 30);
 
+  int _nextDiagnosticOperationId = 0;
   Position? _lastKnownPosition;
   DateTime? _lastKnownPositionAt;
   StreamSubscription<html.Geoposition>? _watchSubscription;
-  Completer<Position>? _nextPositionCompleter;
-  DateTime? _nextPositionAfter;
   bool _grantedThisSession = false;
 
   @override
@@ -42,50 +40,40 @@ class BrowserLocationService implements LocationService {
 
   @override
   Future<Position> getCurrentPosition() async {
+    final operationId = _allocateDiagnosticOperationId();
+    logFrontendDiagnostic(
+      'location_get_current_position_started',
+      'Started resolving the current browser position.',
+      details: {'operation_id': operationId, ..._diagnosticStateDetails()},
+    );
     final cachedPosition = _freshCachedPosition;
     if (cachedPosition != null) {
       logFrontendDiagnostic(
         'location_reuse_cached_position',
         'Reused a recent browser location.',
         details: {
+          'operation_id': operationId,
           'latitude': cachedPosition.latitude,
           'longitude': cachedPosition.longitude,
+          'cached_age_ms': _lastKnownPositionAgeMs(),
+          ..._diagnosticStateDetails(),
         },
       );
       return cachedPosition;
     }
 
     await _ensureWatchActive();
-    final stalePosition = _lastKnownPosition;
-    final stalePositionAt = _lastKnownPositionAt;
-    Position position;
-    if (stalePosition != null && stalePositionAt != null) {
-      try {
-        position = await _awaitNextPosition(
-          after: stalePositionAt,
-          timeout: _positionRefreshWait,
-        );
-      } on TimeoutException {
-        position = stalePosition;
-        logFrontendDiagnostic(
-          'location_reuse_stale_position',
-          'Reused the last known browser location after waiting for a refresh.',
-          details: {
-            'latitude': position.latitude,
-            'longitude': position.longitude,
-            'cached_age_ms': DateTime.now()
-                .difference(stalePositionAt)
-                .inMilliseconds,
-          },
-        );
-      }
-    } else {
-      position = await _requestSinglePosition();
-    }
+    final position = await _requestSinglePosition();
     logFrontendDiagnostic(
       'location_get_current_position',
       'Fetched current browser position.',
-      details: {'latitude': position.latitude, 'longitude': position.longitude},
+      details: {
+        'operation_id': operationId,
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy': position.accuracy,
+        ..._diagnosticStateDetails(),
+      },
     );
     return position;
   }
@@ -173,12 +161,22 @@ class BrowserLocationService implements LocationService {
 
   Future<void> _ensureWatchActive() async {
     if (_watchSubscription != null) {
+      logFrontendDiagnostic(
+        'location_watch_already_active',
+        'Browser geolocation watch was already active.',
+        details: _diagnosticStateDetails(),
+      );
       return;
     }
 
     logFrontendDiagnostic(
       'location_watch_started',
       'Started persistent browser geolocation watch.',
+      details: {
+        'timeout_ms': _positionRequestTimeout.inMilliseconds,
+        'maximum_age_ms': _positionCacheMaxAge.inMilliseconds,
+        ..._diagnosticStateDetails(),
+      },
     );
     _watchSubscription = html.window.navigator.geolocation
         .watchPosition(
@@ -190,27 +188,24 @@ class BrowserLocationService implements LocationService {
           (geoPosition) {
             final position = _toPosition(geoPosition);
             _storePosition(position);
-            final completer = _nextPositionCompleter;
-            if (completer != null && !completer.isCompleted) {
-              final after = _nextPositionAfter;
-              final acquiredAt = _lastKnownPositionAt;
-              if (after == null ||
-                  (acquiredAt != null && acquiredAt.isAfter(after))) {
-                completer.complete(position);
-                _nextPositionCompleter = null;
-                _nextPositionAfter = null;
-              }
-            }
             logFrontendDiagnostic(
               'location_watch_update',
               'Received browser geolocation watch update.',
               details: {
                 'latitude': position.latitude,
                 'longitude': position.longitude,
+                'accuracy': position.accuracy,
+                ..._diagnosticStateDetails(),
               },
             );
           },
           onError: (Object error, StackTrace stackTrace) {
+            final rawErrorCode = error is html.PositionError
+                ? error.code
+                : null;
+            final rawErrorMessage = error is html.PositionError
+                ? error.message
+                : null;
             final mappedError = error is html.PositionError
                 ? _mapPositionError(error)
                 : error;
@@ -219,55 +214,34 @@ class BrowserLocationService implements LocationService {
               _clearCachedPosition();
               unawaited(_stopWatch());
             }
-            final completer = _nextPositionCompleter;
-            if (completer != null && !completer.isCompleted) {
-              completer.completeError(mappedError, stackTrace);
-              _nextPositionCompleter = null;
-              _nextPositionAfter = null;
-            }
             logFrontendDiagnostic(
               'location_watch_failed',
               'Browser geolocation watch failed.',
-              details: {'error': mappedError.toString()},
+              details: {
+                'error': mappedError.toString(),
+                'raw_error_code': rawErrorCode,
+                'raw_error_message': rawErrorMessage,
+                ..._diagnosticStateDetails(),
+              },
             );
           },
           cancelOnError: false,
         );
   }
 
-  Future<Position> _awaitNextPosition({
-    DateTime? after,
-    Duration timeout = _positionRequestTimeout,
-  }) async {
-    if (_lastKnownPosition != null &&
-        (_lastKnownPositionAt != null &&
-            (after == null || _lastKnownPositionAt!.isAfter(after)))) {
-      return _lastKnownPosition!;
-    }
-    final existingCompleter = _nextPositionCompleter;
-    if (existingCompleter != null &&
-        (after == _nextPositionAfter ||
-            (after != null &&
-                _nextPositionAfter != null &&
-                after == _nextPositionAfter))) {
-      return existingCompleter.future.timeout(timeout);
-    }
-
-    final completer = Completer<Position>();
-    _nextPositionCompleter = completer;
-    _nextPositionAfter = after;
-    try {
-      return await completer.future.timeout(timeout);
-    } on TimeoutException {
-      if (identical(_nextPositionCompleter, completer)) {
-        _nextPositionCompleter = null;
-        _nextPositionAfter = null;
-      }
-      throw TimeoutException('Browser geolocation timed out.');
-    }
-  }
-
   Future<Position> _requestSinglePosition() async {
+    final operationId = _allocateDiagnosticOperationId();
+    final startedAt = DateTime.now();
+    logFrontendDiagnostic(
+      'location_single_position_started',
+      'Started a one-shot browser geolocation request.',
+      details: {
+        'operation_id': operationId,
+        'timeout_ms': _positionRequestTimeout.inMilliseconds,
+        'maximum_age_ms': _positionCacheMaxAge.inMilliseconds,
+        ..._diagnosticStateDetails(),
+      },
+    );
     try {
       final geoPosition = await html.window.navigator.geolocation
           .getCurrentPosition(
@@ -277,10 +251,41 @@ class BrowserLocationService implements LocationService {
           );
       final position = _toPosition(geoPosition);
       _storePosition(position);
+      logFrontendDiagnostic(
+        'location_single_position_completed',
+        'Completed a one-shot browser geolocation request.',
+        details: {
+          'operation_id': operationId,
+          'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'accuracy': position.accuracy,
+          ..._diagnosticStateDetails(),
+        },
+      );
       return position;
     } catch (error) {
+      final rawErrorCode = error is html.PositionError ? error.code : null;
+      final rawErrorMessage = error is html.PositionError
+          ? error.message
+          : null;
+      final mappedError = error is html.PositionError
+          ? _mapPositionError(error)
+          : error;
+      logFrontendDiagnostic(
+        'location_single_position_failed',
+        'One-shot browser geolocation request failed.',
+        details: {
+          'operation_id': operationId,
+          'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
+          'error': mappedError.toString(),
+          'raw_error_code': rawErrorCode,
+          'raw_error_message': rawErrorMessage,
+          ..._diagnosticStateDetails(),
+        },
+      );
       if (error is html.PositionError) {
-        throw _mapPositionError(error);
+        throw mappedError;
       }
       rethrow;
     }
@@ -301,6 +306,36 @@ class BrowserLocationService implements LocationService {
     _lastKnownPosition = position;
     _lastKnownPositionAt = DateTime.now();
     _grantedThisSession = true;
+  }
+
+  int _allocateDiagnosticOperationId() {
+    _nextDiagnosticOperationId += 1;
+    return _nextDiagnosticOperationId;
+  }
+
+  Map<String, Object?> _diagnosticStateDetails() {
+    final document = html.document;
+    return {
+      'watch_active': _watchSubscription != null,
+      'has_cached_position': _lastKnownPosition != null,
+      'cached_position_age_ms': _lastKnownPositionAgeMs(),
+      'granted_this_session': _grantedThisSession,
+      'document_visibility': document.visibilityState,
+      'document_hidden': document.hidden,
+      'navigator_online': html.window.navigator.onLine,
+      'route_path': html.window.location.pathname,
+    };
+  }
+
+  int? _lastKnownPositionAgeMs() {
+    return _ageMs(_lastKnownPositionAt);
+  }
+
+  int? _ageMs(DateTime? timestamp) {
+    if (timestamp == null) {
+      return null;
+    }
+    return DateTime.now().difference(timestamp).inMilliseconds;
   }
 
   Position _toPosition(html.Geoposition geoPosition) {

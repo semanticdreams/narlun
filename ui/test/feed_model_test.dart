@@ -168,6 +168,48 @@ class _CountingLocationService implements LocationService {
   }
 }
 
+class _FlakyLocationService implements LocationService {
+  _FlakyLocationService();
+
+  int getCurrentPositionCalls = 0;
+  bool fail = false;
+
+  @override
+  Future<LocationPermission> checkPermission() async {
+    return LocationPermission.whileInUse;
+  }
+
+  @override
+  Future<Position> getCurrentPosition() async {
+    getCurrentPositionCalls += 1;
+    if (fail) {
+      throw TimeoutException('location timed out');
+    }
+    return Position(
+      longitude: 2,
+      latitude: 1,
+      timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      accuracy: 1,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+    );
+  }
+
+  @override
+  Future<bool> isLocationServiceEnabled() async {
+    return true;
+  }
+
+  @override
+  Future<LocationPermission> requestPermission() async {
+    return LocationPermission.whileInUse;
+  }
+}
+
 void main() {
   test(
     'nearby feed ignores stale refresh results after a session change',
@@ -331,6 +373,40 @@ void main() {
 
       expect(httpService.checkinCalls, 3);
       expect(locationService.getCurrentPositionCalls, 2);
+    },
+  );
+
+  test(
+    'automatic nearby refresh reuses stale location when a fresh acquisition fails',
+    () async {
+      final httpService = _CountingNearbyHttpService();
+      final locationService = _FlakyLocationService();
+      var now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final model = NearbyFeedModel(
+        httpService: httpService,
+        locationService: locationService,
+        now: () => now,
+      );
+
+      model.syncSession(
+        const SessionUser(authenticated: true, id: 1, username: 'me'),
+      );
+
+      await model.refresh(userInitiated: true);
+      expect(httpService.checkinCalls, 1);
+      expect(locationService.getCurrentPositionCalls, 1);
+
+      now = now.add(const Duration(minutes: 1, seconds: 1));
+      locationService.fail = true;
+
+      await model.refresh(userInitiated: false);
+
+      expect(httpService.checkinCalls, 2);
+      expect(locationService.getCurrentPositionCalls, 2);
+      expect(
+        model.statusMessage,
+        'Nobody nearby right now. Pull to refresh again soon.',
+      );
     },
   );
 }

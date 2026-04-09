@@ -246,7 +246,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
           content: Text(
             describeActionError(
               error,
-              fallbackDescription: 'Could not refresh nearby activity.',
+              fallbackDescription:
+                  'Could not refresh nearby activity. Try again later.',
             ),
           ),
         ),

@@ -170,7 +170,10 @@ class NearbyFeedModel extends ChangeNotifier {
     }
 
     try {
-      final loc = await _resolvePosition(now: _now());
+      final loc = await _resolvePosition(
+        now: _now(),
+        userInitiated: userInitiated || isInitialLoad,
+      );
       _lastNearbyRequestAt = _now();
       final resp = await httpService.checkin(loc.latitude, loc.longitude);
       if (!_isCurrentRefresh(
@@ -198,12 +201,12 @@ class NearbyFeedModel extends ChangeNotifier {
       if (_nearbyItems.isEmpty) {
         _setLoading(
           false,
-          status: 'Could not refresh nearby activity. Pull to try again.',
+          status: 'Could not refresh nearby activity. Try again later.',
         );
       } else {
         _setLoading(
           false,
-          status: 'Showing saved nearby activity while we reconnect.',
+          status: 'Showing saved nearby activity. Try again later.',
         );
       }
       rethrow;
@@ -231,7 +234,10 @@ class NearbyFeedModel extends ChangeNotifier {
         permission == LocationPermission.whileInUse;
   }
 
-  Future<Position> _resolvePosition({required DateTime now}) async {
+  Future<Position> _resolvePosition({
+    required DateTime now,
+    required bool userInitiated,
+  }) async {
     final lastResolvedPosition = _lastResolvedPosition;
     final lastLocationRequestAt = _lastLocationRequestAt;
     if (lastResolvedPosition != null &&
@@ -240,10 +246,17 @@ class NearbyFeedModel extends ChangeNotifier {
       return lastResolvedPosition;
     }
 
-    final position = await locationService.getCurrentPosition();
-    _lastResolvedPosition = position;
-    _lastLocationRequestAt = _now();
-    return position;
+    try {
+      final position = await locationService.getCurrentPosition();
+      _lastResolvedPosition = position;
+      _lastLocationRequestAt = _now();
+      return position;
+    } catch (_) {
+      if (!userInitiated && lastResolvedPosition != null) {
+        return lastResolvedPosition;
+      }
+      rethrow;
+    }
   }
 
   void markRoomJoinRequested(int roomId) {

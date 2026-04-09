@@ -163,11 +163,6 @@ class BrowserLocationService implements LocationService {
 
   Future<void> _ensureWatchActive() async {
     if (_watchSubscription != null) {
-      logFrontendDiagnostic(
-        'location_watch_already_active',
-        'Browser geolocation watch was already active.',
-        details: _diagnosticStateDetails(),
-      );
       return;
     }
 

@@ -280,6 +280,9 @@ class _HomeScaffoldState extends State<_HomeScaffold> {
             autoCheckin: _activeTabIndex == 0,
             locationService: widget.nearbyLocationService,
             nearbyFeedModel: _nearbyFeedModel,
+            onOpenRooms: () {
+              tabController.animateTo(1);
+            },
           ),
           widget.roomsView ??
               ConversationsView(

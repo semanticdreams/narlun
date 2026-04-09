@@ -34,6 +34,7 @@ class NearbyFeedModel extends ChangeNotifier {
   final List<NearbyItem> _nearbyItems = [];
   bool _loading = false;
   String _statusMessage = 'Checking your location...';
+  bool _showEmptyRoomsState = false;
   DateTime? _lastNearbyRequestAt;
   DateTime? _lastLocationRequestAt;
   Position? _lastResolvedPosition;
@@ -45,6 +46,7 @@ class NearbyFeedModel extends ChangeNotifier {
   List<NearbyItem> get nearbyItems => List.unmodifiable(_nearbyItems);
   bool get loading => _loading;
   String get statusMessage => _statusMessage;
+  bool get showEmptyRoomsState => _showEmptyRoomsState;
   bool get hasCachedData => _nearbyItems.isNotEmpty;
 
   void syncSession(SessionUser? user) {
@@ -60,6 +62,7 @@ class NearbyFeedModel extends ChangeNotifier {
     _nearbyItems.clear();
     _loading = false;
     _statusMessage = 'Checking your location...';
+    _showEmptyRoomsState = false;
     _lastNearbyRequestAt = null;
     _lastLocationRequestAt = null;
     _lastResolvedPosition = null;
@@ -185,10 +188,11 @@ class NearbyFeedModel extends ChangeNotifier {
       _nearbyItems
         ..clear()
         ..addAll(resp);
+      _showEmptyRoomsState = _nearbyItems.isEmpty;
       _setLoading(
         false,
         status: _nearbyItems.isEmpty
-            ? 'Nobody nearby right now. Pull to refresh again soon.'
+            ? 'Pull to refresh to check again.'
             : 'Tap rooms to request access.',
       );
     } catch (_) {
@@ -199,11 +203,13 @@ class NearbyFeedModel extends ChangeNotifier {
         return;
       }
       if (_nearbyItems.isEmpty) {
+        _showEmptyRoomsState = false;
         _setLoading(
           false,
           status: 'Could not refresh nearby activity. Try again later.',
         );
       } else {
+        _showEmptyRoomsState = false;
         _setLoading(
           false,
           status: 'Showing saved nearby activity. Try again later.',
@@ -278,6 +284,7 @@ class NearbyFeedModel extends ChangeNotifier {
   }
 
   void _setLocationProblem(String description) {
+    _showEmptyRoomsState = false;
     _setLoading(
       false,
       status: _nearbyItems.isEmpty

@@ -192,6 +192,7 @@ Widget _buildNearbyApp({
   bool autoCheckin = true,
   Duration backgroundRefreshInterval =
       NearbyUsersView.defaultBackgroundRefreshInterval,
+  VoidCallback? onOpenRooms,
 }) {
   return Provider<HttpService>.value(
     value: httpService,
@@ -211,6 +212,7 @@ Widget _buildNearbyApp({
             nearbyFeedModel: nearbyFeedModel,
             autoCheckin: autoCheckin,
             backgroundRefreshInterval: backgroundRefreshInterval,
+            onOpenRooms: onOpenRooms,
           ),
         ),
       ),
@@ -287,6 +289,38 @@ void main() {
     final httpService = FakeNearbyHttpService()..nearbyItems = const [];
     final locationService = FakeLocationService();
     final websocketService = _FakeWebsocketService();
+    var openedRooms = 0;
+
+    await tester.pumpWidget(
+      _buildNearbyApp(
+        httpService: httpService,
+        locationService: locationService,
+        websocketService: websocketService,
+        onOpenRooms: () {
+          openedRooms += 1;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pull to refresh to check again.'), findsOneWidget);
+    expect(find.text('No rooms yet'), findsOneWidget);
+    expect(find.text('Create a new room from Rooms.'), findsOneWidget);
+    expect(find.text('Go to rooms'), findsOneWidget);
+
+    await tester.tap(find.text('Go to rooms'));
+    await tester.pumpAndSettle();
+
+    expect(openedRooms, 1);
+  });
+
+  testWidgets('refresh failures do not show the no rooms empty state', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService()
+      ..checkinError = ServerError(500);
+    final locationService = FakeLocationService();
+    final websocketService = _FakeWebsocketService();
 
     await tester.pumpWidget(
       _buildNearbyApp(
@@ -298,13 +332,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Nobody nearby right now. Pull to refresh again soon.'),
+      find.text('Could not refresh nearby activity. Try again later.'),
       findsOneWidget,
     );
-    expect(
-      find.text('Tap people to open a room, or rooms to request access.'),
-      findsNothing,
-    );
+    expect(find.text('No rooms yet'), findsNothing);
+    expect(find.text('Go to rooms'), findsNothing);
   });
 
   testWidgets('nearby-changed refreshes room details only after one minute', (

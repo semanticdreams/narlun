@@ -13,6 +13,7 @@ import 'locator.dart';
 import 'me_model.dart';
 import 'models.dart';
 import 'nearby_feed_model.dart';
+import 'route_utils.dart';
 import 'session_actions.dart';
 import 'websocket.dart';
 
@@ -27,6 +28,7 @@ class NearbyUsersView extends StatefulWidget {
   final NearbyFeedModel? nearbyFeedModel;
   final bool autoCheckin;
   final Duration backgroundRefreshInterval;
+  final VoidCallback? onOpenRooms;
 
   const NearbyUsersView({
     super.key,
@@ -37,6 +39,7 @@ class NearbyUsersView extends StatefulWidget {
     this.nearbyFeedModel,
     this.autoCheckin = true,
     this.backgroundRefreshInterval = defaultBackgroundRefreshInterval,
+    this.onOpenRooms,
   });
 
   @override
@@ -382,6 +385,37 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     );
   }
 
+  Widget _buildEmptyStateCard() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'No rooms yet',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              const Text('Create a new room from Rooms.'),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed:
+                    widget.onOpenRooms ??
+                    () {
+                      Navigator.pushReplacementNamed(context, roomsRoute());
+                    },
+                child: const Text('Go to rooms'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -390,6 +424,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
         final nearbyItems = nearbyFeedModel.nearbyItems;
         final loading = nearbyFeedModel.loading;
         final statusMessage = nearbyFeedModel.statusMessage;
+        final showEmptyRoomsState = nearbyFeedModel.showEmptyRoomsState;
         return Material(
           color: Colors.transparent,
           child: RefreshIndicator(
@@ -416,6 +451,7 @@ class _NearbyUsersState extends State<NearbyUsersView> {
                       ],
                     ),
                   ),
+                  if (!loading && showEmptyRoomsState) _buildEmptyStateCard(),
                   for (final item in nearbyItems)
                     if (item.type == 'room' && item.room != null)
                       _buildRoomTile(item.room!),

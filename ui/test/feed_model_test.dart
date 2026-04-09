@@ -403,10 +403,7 @@ void main() {
 
       expect(httpService.checkinCalls, 2);
       expect(locationService.getCurrentPositionCalls, 2);
-      expect(
-        model.statusMessage,
-        'Nobody nearby right now. Pull to refresh again soon.',
-      );
+      expect(model.statusMessage, 'Pull to refresh to check again.');
     },
   );
 }

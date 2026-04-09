@@ -239,45 +239,44 @@ void main() {
     },
   );
 
-  testWidgets(
-    'home view does not warm rooms until the rooms tab is opened',
-    (tester) async {
-      final httpService = FakeNearbyHttpService();
-      final locationService = FakeLocationService();
+  testWidgets('home view does not warm rooms until the rooms tab is opened', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService();
+    final locationService = FakeLocationService();
 
-      await tester.pumpWidget(
-        MultiProvider(
-          providers: [
-            Provider<HttpService>.value(value: httpService),
-            ChangeNotifierProvider<InstallPromptService>(
-              create: (_) => _FakeInstallPromptService(),
-            ),
-            ChangeNotifierProvider(
-              create: (_) => MeModel()
-                ..setData(
-                  const SessionUser(authenticated: true, id: 1, username: 'me'),
-                ),
-            ),
-          ],
-          child: MaterialApp(
-            home: HomeView(
-              initialTabIndex: 0,
-              nearbyLocationService: locationService,
-            ),
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: HomeView(
+            initialTabIndex: 0,
+            nearbyLocationService: locationService,
           ),
         ),
-      );
+      ),
+    );
 
-      await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
 
-      expect(httpService.getRoomsCalls, 0);
+    expect(httpService.getRoomsCalls, 0);
 
-      await tester.tap(find.text('Rooms'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.text('Rooms'));
+    await tester.pumpAndSettle();
 
-      expect(httpService.getRoomsCalls, 1);
-    },
-  );
+    expect(httpService.getRoomsCalls, 1);
+  });
 
   testWidgets('home view remembers the last selected tab', (tester) async {
     writeStoredHomeTabIndex(1);
@@ -420,6 +419,52 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(FloatingActionButton), findsOneWidget);
+  });
+
+  testWidgets('nearby empty state button switches to the rooms tab', (
+    tester,
+  ) async {
+    final httpService = FakeNearbyHttpService();
+    final locationService = FakeLocationService();
+
+    await setupLocator(
+      reset: true,
+      dialogService: DialogService(),
+      websocketService: _FakeWebsocketService(),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>(
+            create: (_) => _FakeInstallPromptService(),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: HomeView(
+            initialTabIndex: 0,
+            nearbyLocationService: locationService,
+            roomsView: const Scaffold(body: Text('Rooms placeholder')),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('No rooms yet'), findsOneWidget);
+    expect(find.text('Go to rooms'), findsOneWidget);
+
+    await tester.tap(find.text('Go to rooms'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rooms placeholder'), findsOneWidget);
   });
 
   testWidgets(

@@ -485,7 +485,7 @@ def _notification_live_views(notification):
 
     if notification_type == 'new-message':
         try:
-            return [f'room:{int(room_id)}', 'rooms']
+            return [f'room:{int(room_id)}']
         except (TypeError, ValueError):
             return []
     if notification_type == 'room-join-request':
@@ -493,10 +493,6 @@ def _notification_live_views(notification):
             return [f'room:{int(room_id)}']
         except (TypeError, ValueError):
             return []
-    if notification_type in {'room-created', 'room-joined'}:
-        return ['rooms']
-    if notification_type in {'room-request-approved', 'room-request-rejected'}:
-        return ['rooms', 'nearby']
     return []
 
 

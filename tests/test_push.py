@@ -49,6 +49,7 @@ async def test_push_delivery_does_not_skip_users_with_active_websocket_presence(
     monkeypatch.setattr('app.push._send_web_push', fake_send_web_push)
 
     push_service = PushService(cli.app['store'])
+    delivered.clear()
     message = await cli.app['store'].send_message(
         users[0]['user']['id'],
         room['id'],
@@ -108,7 +109,7 @@ async def test_join_request_push_respects_room_mute_and_request_approval_notifie
     assert [user_id for user_id, _payload in delivered] == [users[2]['user']['id']]
 
 
-async def test_push_delivery_skips_when_client_is_in_room_or_rooms_view(
+async def test_push_delivery_skips_only_when_client_is_in_exact_room_view(
     cli,
     monkeypatch,
 ):
@@ -135,8 +136,10 @@ async def test_push_delivery_skips_when_client_is_in_room_or_rooms_view(
         delivered.append((subscription['user_id'], payload))
 
     monkeypatch.setattr('app.push._send_web_push', fake_send_web_push)
+    await cli.app['push'].shutdown()
 
     push_service = PushService(cli.app['store'])
+    delivered.clear()
     message = await cli.app['store'].send_message(
         users[0]['user']['id'],
         room['id'],
@@ -168,7 +171,7 @@ async def test_push_delivery_skips_when_client_is_in_room_or_rooms_view(
     delivered.clear()
     await push_service.notify_new_message(users[0]['user']['id'], room['id'], message)
 
-    assert delivered == []
+    assert [user_id for user_id, _payload in delivered] == [users[1]['user']['id']]
 
     await cli.app['store'].clear_live_view(
         users[1]['user']['id'],
@@ -182,6 +185,71 @@ async def test_push_delivery_skips_when_client_is_in_room_or_rooms_view(
         client_id='client-2',
         view_key='nearby',
     )
+    delivered.clear()
     await push_service.notify_new_message(users[0]['user']['id'], room['id'], message)
 
+    assert [user_id for user_id, _payload in delivered] == [users[1]['user']['id']]
+
+
+async def test_request_approval_push_is_not_suppressed_by_rooms_or_nearby_views(
+    cli,
+    monkeypatch,
+):
+    monkeypatch.setattr('config.PUSH_VAPID_PUBLIC_KEY', 'public-key')
+    monkeypatch.setattr('config.PUSH_VAPID_PRIVATE_KEY', 'private-key')
+    monkeypatch.setattr('config.PUSH_VAPID_SUBJECT', 'mailto:test@example.com')
+
+    users = [await signup(cli) for _ in range(2)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    await cli.app['store'].upsert_push_subscription(
+        users[1]['user']['id'],
+        {
+            'endpoint': f'https://push.example.test/{users[1]["user"]["id"]}',
+            'keys': {'p256dh': 'p256dh', 'auth': 'auth'},
+            'client_id': 'client-2',
+        },
+        client_id='client-2',
+    )
+
+    delivered = []
+
+    def fake_send_web_push(subscription, payload):
+        delivered.append((subscription['user_id'], payload))
+
+    monkeypatch.setattr('app.push._send_web_push', fake_send_web_push)
+    await cli.app['push'].shutdown()
+
+    push_service = PushService(cli.app['store'])
+    delivered.clear()
+
+    await cli.app['store'].mark_live_view(
+        users[1]['user']['id'],
+        'socket-1',
+        client_id='client-2',
+        view_key='rooms',
+    )
+    await push_service.notify_room_request_approved(
+        users[1]['user']['id'],
+        room['id'],
+    )
+    assert [user_id for user_id, _payload in delivered] == [users[1]['user']['id']]
+
+    await cli.app['store'].clear_live_view(
+        users[1]['user']['id'],
+        'socket-1',
+        client_id='client-2',
+        view_key='rooms',
+    )
+    await cli.app['store'].mark_live_view(
+        users[1]['user']['id'],
+        'socket-1',
+        client_id='client-2',
+        view_key='nearby',
+    )
+    delivered.clear()
+    await push_service.notify_room_request_rejected(
+        users[1]['user']['id'],
+        room['id'],
+    )
     assert [user_id for user_id, _payload in delivered] == [users[1]['user']['id']]

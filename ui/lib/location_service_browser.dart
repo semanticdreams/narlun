@@ -10,8 +10,7 @@ import 'location_service.dart';
 
 class BrowserLocationService implements LocationService {
   static const Duration _positionCacheMaxAge = Duration(minutes: 1);
-  static const Duration _fastPositionRequestTimeout = Duration(seconds: 5);
-  static const Duration _fallbackPositionRequestTimeout = Duration(seconds: 25);
+  static const Duration _positionRequestTimeout = Duration(seconds: 30);
 
   int _nextDiagnosticOperationId = 0;
   Position? _lastKnownPosition;
@@ -49,6 +48,7 @@ class BrowserLocationService implements LocationService {
     );
     final cachedPosition = _freshCachedPosition;
     if (cachedPosition != null) {
+      unawaited(_ensureWatchActive());
       logFrontendDiagnostic(
         'location_reuse_cached_position',
         'Reused a recent browser location.',
@@ -63,9 +63,11 @@ class BrowserLocationService implements LocationService {
       return cachedPosition;
     }
 
-    final position = await _resolveUncachedPosition(
+    final position = await _requestSinglePosition(
+      timeout: _positionRequestTimeout,
       parentOperationId: operationId,
     );
+    unawaited(_ensureWatchActive());
     logFrontendDiagnostic(
       'location_get_current_position',
       'Fetched current browser position.',
@@ -96,7 +98,6 @@ class BrowserLocationService implements LocationService {
 
     try {
       final position = await getCurrentPosition();
-      _storePosition(position);
       logFrontendDiagnostic(
         'location_request_permission',
         'Browser geolocation permission granted.',
@@ -228,32 +229,8 @@ class BrowserLocationService implements LocationService {
         );
   }
 
-  Future<Position> _resolveUncachedPosition({
-    required int parentOperationId,
-  }) async {
-    try {
-      final position = await _requestSinglePosition(
-        timeout: _fastPositionRequestTimeout,
-        attemptKind: 'fast',
-        parentOperationId: parentOperationId,
-      );
-      unawaited(_ensureWatchActive());
-      return position;
-    } on PermissionDeniedException {
-      rethrow;
-    } catch (_) {
-      await _ensureWatchActive();
-      return _requestSinglePosition(
-        timeout: _fallbackPositionRequestTimeout,
-        attemptKind: 'fallback',
-        parentOperationId: parentOperationId,
-      );
-    }
-  }
-
   Future<Position> _requestSinglePosition({
     required Duration timeout,
-    required String attemptKind,
     int? parentOperationId,
   }) async {
     final operationId = _allocateDiagnosticOperationId();
@@ -264,7 +241,6 @@ class BrowserLocationService implements LocationService {
       details: {
         'operation_id': operationId,
         'parent_operation_id': parentOperationId,
-        'attempt_kind': attemptKind,
         'timeout_ms': timeout.inMilliseconds,
         'maximum_age_ms': _positionCacheMaxAge.inMilliseconds,
         ..._diagnosticStateDetails(),
@@ -285,7 +261,6 @@ class BrowserLocationService implements LocationService {
         details: {
           'operation_id': operationId,
           'parent_operation_id': parentOperationId,
-          'attempt_kind': attemptKind,
           'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
           'latitude': position.latitude,
           'longitude': position.longitude,
@@ -308,7 +283,6 @@ class BrowserLocationService implements LocationService {
         details: {
           'operation_id': operationId,
           'parent_operation_id': parentOperationId,
-          'attempt_kind': attemptKind,
           'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
           'error': mappedError.toString(),
           'raw_error_code': rawErrorCode,

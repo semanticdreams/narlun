@@ -10,7 +10,8 @@ import 'location_service.dart';
 
 class BrowserLocationService implements LocationService {
   static const Duration _positionCacheMaxAge = Duration(minutes: 1);
-  static const Duration _positionRequestTimeout = Duration(seconds: 30);
+  static const Duration _fastPositionRequestTimeout = Duration(seconds: 5);
+  static const Duration _fallbackPositionRequestTimeout = Duration(seconds: 25);
 
   int _nextDiagnosticOperationId = 0;
   Position? _lastKnownPosition;
@@ -62,8 +63,9 @@ class BrowserLocationService implements LocationService {
       return cachedPosition;
     }
 
-    await _ensureWatchActive();
-    final position = await _requestSinglePosition();
+    final position = await _resolveUncachedPosition(
+      parentOperationId: operationId,
+    );
     logFrontendDiagnostic(
       'location_get_current_position',
       'Fetched current browser position.',
@@ -93,8 +95,7 @@ class BrowserLocationService implements LocationService {
     }
 
     try {
-      await _ensureWatchActive();
-      final position = _lastKnownPosition ?? await _requestSinglePosition();
+      final position = await getCurrentPosition();
       _storePosition(position);
       logFrontendDiagnostic(
         'location_request_permission',
@@ -173,7 +174,6 @@ class BrowserLocationService implements LocationService {
       'location_watch_started',
       'Started persistent browser geolocation watch.',
       details: {
-        'timeout_ms': _positionRequestTimeout.inMilliseconds,
         'maximum_age_ms': _positionCacheMaxAge.inMilliseconds,
         ..._diagnosticStateDetails(),
       },
@@ -181,7 +181,6 @@ class BrowserLocationService implements LocationService {
     _watchSubscription = html.window.navigator.geolocation
         .watchPosition(
           enableHighAccuracy: false,
-          timeout: _positionRequestTimeout,
           maximumAge: _positionCacheMaxAge,
         )
         .listen(
@@ -229,7 +228,34 @@ class BrowserLocationService implements LocationService {
         );
   }
 
-  Future<Position> _requestSinglePosition() async {
+  Future<Position> _resolveUncachedPosition({
+    required int parentOperationId,
+  }) async {
+    try {
+      final position = await _requestSinglePosition(
+        timeout: _fastPositionRequestTimeout,
+        attemptKind: 'fast',
+        parentOperationId: parentOperationId,
+      );
+      unawaited(_ensureWatchActive());
+      return position;
+    } on PermissionDeniedException {
+      rethrow;
+    } catch (_) {
+      await _ensureWatchActive();
+      return _requestSinglePosition(
+        timeout: _fallbackPositionRequestTimeout,
+        attemptKind: 'fallback',
+        parentOperationId: parentOperationId,
+      );
+    }
+  }
+
+  Future<Position> _requestSinglePosition({
+    required Duration timeout,
+    required String attemptKind,
+    int? parentOperationId,
+  }) async {
     final operationId = _allocateDiagnosticOperationId();
     final startedAt = DateTime.now();
     logFrontendDiagnostic(
@@ -237,7 +263,9 @@ class BrowserLocationService implements LocationService {
       'Started a one-shot browser geolocation request.',
       details: {
         'operation_id': operationId,
-        'timeout_ms': _positionRequestTimeout.inMilliseconds,
+        'parent_operation_id': parentOperationId,
+        'attempt_kind': attemptKind,
+        'timeout_ms': timeout.inMilliseconds,
         'maximum_age_ms': _positionCacheMaxAge.inMilliseconds,
         ..._diagnosticStateDetails(),
       },
@@ -246,7 +274,7 @@ class BrowserLocationService implements LocationService {
       final geoPosition = await html.window.navigator.geolocation
           .getCurrentPosition(
             enableHighAccuracy: false,
-            timeout: _positionRequestTimeout,
+            timeout: timeout,
             maximumAge: _positionCacheMaxAge,
           );
       final position = _toPosition(geoPosition);
@@ -256,6 +284,8 @@ class BrowserLocationService implements LocationService {
         'Completed a one-shot browser geolocation request.',
         details: {
           'operation_id': operationId,
+          'parent_operation_id': parentOperationId,
+          'attempt_kind': attemptKind,
           'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
           'latitude': position.latitude,
           'longitude': position.longitude,
@@ -277,6 +307,8 @@ class BrowserLocationService implements LocationService {
         'One-shot browser geolocation request failed.',
         details: {
           'operation_id': operationId,
+          'parent_operation_id': parentOperationId,
+          'attempt_kind': attemptKind,
           'duration_ms': DateTime.now().difference(startedAt).inMilliseconds,
           'error': mappedError.toString(),
           'raw_error_code': rawErrorCode,
@@ -304,7 +336,7 @@ class BrowserLocationService implements LocationService {
 
   void _storePosition(Position position) {
     _lastKnownPosition = position;
-    _lastKnownPositionAt = DateTime.now();
+    _lastKnownPositionAt = position.timestamp;
     _grantedThisSession = true;
   }
 

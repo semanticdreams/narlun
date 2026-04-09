@@ -87,13 +87,13 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     _nearbyChangedSubscription = websocketService.nearbyChangedStream().listen((
       _,
     ) {
-      _refreshIfActive();
+      _refreshIfActive(bypassNearbyThrottle: true);
     });
     _connectionEventsSubscription = websocketService.connectionEvents.listen((
       event,
     ) {
       if (event == 'reconnected') {
-        _refreshIfActive();
+        _refreshIfActive(bypassNearbyThrottle: true);
       }
     });
   }
@@ -130,11 +130,18 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     unawaited(_ensureWarmNearby());
   }
 
-  void _refreshIfActive() {
+  void _refreshIfActive({bool bypassNearbyThrottle = false}) {
     if (!widget.autoCheckin || !mounted) {
       return;
     }
-    unawaited(checkin(showErrorFeedback: false, userInitiated: false));
+    unawaited(
+      checkin(
+        showErrorFeedback: false,
+        userInitiated: false,
+        requestPermissionIfDenied: false,
+        bypassNearbyThrottle: bypassNearbyThrottle,
+      ),
+    );
   }
 
   void _handleSessionChanged() {
@@ -190,6 +197,8 @@ class _NearbyUsersState extends State<NearbyUsersView> {
   Future<void> checkin({
     bool showErrorFeedback = true,
     bool userInitiated = true,
+    bool requestPermissionIfDenied = true,
+    bool bypassNearbyThrottle = false,
   }) async {
     final me = Provider.of<MeModel>(context, listen: false);
     if (me.data == null || !me.data!.authenticated) {
@@ -206,7 +215,11 @@ class _NearbyUsersState extends State<NearbyUsersView> {
     );
 
     try {
-      await nearbyFeedModel.refresh(userInitiated: userInitiated);
+      await nearbyFeedModel.refresh(
+        userInitiated: userInitiated,
+        requestPermissionIfDenied: requestPermissionIfDenied,
+        bypassNearbyThrottle: bypassNearbyThrottle,
+      );
       logFrontendDiagnostic(
         'nearby_checkin_completed',
         'Completed nearby check-in.',

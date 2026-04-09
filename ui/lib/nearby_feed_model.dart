@@ -104,6 +104,7 @@ class NearbyFeedModel extends ChangeNotifier {
   Future<void> refresh({
     bool userInitiated = true,
     bool requestPermissionIfDenied = true,
+    bool bypassNearbyThrottle = false,
   }) async {
     if (_sessionUserId == null) {
       return;
@@ -118,6 +119,7 @@ class NearbyFeedModel extends ChangeNotifier {
       refreshSessionUserId: refreshSessionUserId,
       userInitiated: userInitiated,
       requestPermissionIfDenied: requestPermissionIfDenied,
+      bypassNearbyThrottle: bypassNearbyThrottle,
     );
     _refreshTask = task;
     try {
@@ -134,9 +136,10 @@ class NearbyFeedModel extends ChangeNotifier {
     required int? refreshSessionUserId,
     required bool userInitiated,
     required bool requestPermissionIfDenied,
+    required bool bypassNearbyThrottle,
   }) async {
     final now = _now();
-    if (!userInitiated && !_shouldRequestNearby(now)) {
+    if (!userInitiated && !bypassNearbyThrottle && !_shouldRequestNearby(now)) {
       return;
     }
 

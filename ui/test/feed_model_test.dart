@@ -406,4 +406,32 @@ void main() {
       expect(model.statusMessage, 'Pull to refresh to check again.');
     },
   );
+
+  test(
+    'server-triggered nearby refresh bypasses fetch throttling but reuses location',
+    () async {
+      final httpService = _CountingNearbyHttpService();
+      final locationService = _CountingLocationService();
+      final now = DateTime.parse('2026-04-04T10:00:00.000Z');
+      final model = NearbyFeedModel(
+        httpService: httpService,
+        locationService: locationService,
+        now: () => now,
+      );
+
+      model.syncSession(
+        const SessionUser(authenticated: true, id: 1, username: 'me'),
+      );
+
+      await model.refresh(userInitiated: true);
+      await model.refresh(
+        userInitiated: false,
+        requestPermissionIfDenied: false,
+        bypassNearbyThrottle: true,
+      );
+
+      expect(httpService.checkinCalls, 2);
+      expect(locationService.getCurrentPositionCalls, 1);
+    },
+  );
 }

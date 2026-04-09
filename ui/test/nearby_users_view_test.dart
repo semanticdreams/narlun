@@ -339,7 +339,7 @@ void main() {
     expect(find.text('Go to rooms'), findsNothing);
   });
 
-  testWidgets('nearby-changed refreshes room details only after one minute', (
+  testWidgets('nearby-changed refreshes room details immediately', (
     tester,
   ) async {
     final httpService = FakeNearbyHttpService();
@@ -375,13 +375,7 @@ void main() {
     websocketService.emitNearbyChanged();
     await tester.pumpAndSettle();
 
-    expect(find.text('Old room name'), findsOneWidget);
-    expect(find.text('Updated room name'), findsNothing);
-
-    currentTime = currentTime.add(const Duration(minutes: 1, seconds: 1));
-    websocketService.emitNearbyChanged();
-    await tester.pumpAndSettle();
-
+    expect(find.text('Old room name'), findsNothing);
     expect(find.text('Updated room name'), findsOneWidget);
   });
 

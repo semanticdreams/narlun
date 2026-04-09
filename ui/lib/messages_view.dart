@@ -1833,6 +1833,10 @@ class MessagesState extends State<MessagesView> {
   }
 
   bool _isSameMessageCluster(ChatMessage left, ChatMessage right) {
+    if (left.kind == ChatMessageKind.membership ||
+        right.kind == ChatMessageKind.membership) {
+      return false;
+    }
     if (left.senderId != right.senderId) {
       return false;
     }
@@ -2296,25 +2300,32 @@ class MessagesState extends State<MessagesView> {
                 padding: EdgeInsets.only(top: index == 0 ? 0 : 14, bottom: 12),
                 child: _DayDivider(label: _formatDayLabel(message.timestamp)),
               ),
-            _MessageBubbleRow(
-              key: ValueKey('chat-message-${message.id}'),
-              message: message,
-              me: widget.me,
-              hasOtherParticipants: _hasOtherParticipants,
-              onOpenWhatsappInvite: _openWhatsappInvite,
-              onOpenLocationDetails: _showLocationDetails,
-              onJoinOtherRoom: _joinOtherRoom,
-              showAuthorLabel: _otherParticipantCount > 1,
-              startsCluster: startsCluster,
-              endsCluster: endsCluster,
-              timeLabel: _formatMessageTime(message.timestamp),
-              now: DateTime.now().toUtc(),
-              bubbleRadius: _bubbleRadius(
-                isSender: message.senderId == widget.me.id,
+            if (message.kind == ChatMessageKind.membership)
+              _SystemTimelineRow(
+                key: ValueKey('system-message-${message.id}'),
+                message: message,
+                timeLabel: _formatMessageTime(message.timestamp),
+              )
+            else
+              _MessageBubbleRow(
+                key: ValueKey('chat-message-${message.id}'),
+                message: message,
+                me: widget.me,
+                hasOtherParticipants: _hasOtherParticipants,
+                onOpenWhatsappInvite: _openWhatsappInvite,
+                onOpenLocationDetails: _showLocationDetails,
+                onJoinOtherRoom: _joinOtherRoom,
+                showAuthorLabel: _otherParticipantCount > 1,
                 startsCluster: startsCluster,
                 endsCluster: endsCluster,
+                timeLabel: _formatMessageTime(message.timestamp),
+                now: DateTime.now().toUtc(),
+                bubbleRadius: _bubbleRadius(
+                  isSender: message.senderId == widget.me.id,
+                  startsCluster: startsCluster,
+                  endsCluster: endsCluster,
+                ),
               ),
-            ),
           ],
         );
       },
@@ -2461,6 +2472,43 @@ class _DayDivider extends StatelessWidget {
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
               color: const Color(0xFF5D605E),
               fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SystemTimelineRow extends StatelessWidget {
+  const _SystemTimelineRow({
+    super.key,
+    required this.message,
+    required this.timeLabel,
+  });
+
+  final ChatMessage message;
+  final String timeLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Text(
+              '${message.displayText} - $timeLabel',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: const Color(0xFF5D605E),
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -2722,6 +2770,14 @@ class _MessageBubbleRow extends StatelessWidget {
               ),
             ),
           ],
+        );
+      case ChatMessageKind.membership:
+        return Text(
+          message.displayText,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: const Color(0xFF5D605E),
+            fontWeight: FontWeight.w600,
+          ),
         );
     }
   }

@@ -430,6 +430,66 @@ class RedisStore:
             )
         return serialized_message
 
+    async def _store_room_message(self, room_id, message, *, timestamp_ms):
+        room_id = int(room_id)
+        encoded = json.dumps(message)
+        cutoff_ms = timestamp_ms - (MESSAGE_TTL_SECONDS * 1000)
+        room_messages_key = self._room_messages_key(room_id)
+        await self.redis.zadd(room_messages_key, {encoded: timestamp_ms})
+        await self.redis.zremrangebyscore(room_messages_key, '-inf', cutoff_ms)
+
+        last_message = {
+            'kind': message.get('kind', 'text'),
+            'body': message.get('body', ''),
+            'sender_id': int(message['sender_id']),
+            'sender_username': message.get('sender_username'),
+            'timestamp': message['timestamp'],
+        }
+        if message.get('whatsapp_group') is not None:
+            last_message['whatsapp_group'] = message['whatsapp_group']
+        if message.get('location') is not None:
+            last_message['location'] = message['location']
+        if message.get('other_room') is not None:
+            last_message['other_room'] = message['other_room']
+        await self.redis.hset(self._room_meta_key(room_id), mapping={
+            'updated_at': timestamp_ms,
+            'last_message': json.dumps(last_message),
+        })
+
+        members = [int(member) for member in await self.redis.smembers(self._room_members_key(room_id))]
+        for member_id in members:
+            await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
+        return members
+
+    async def _create_membership_message(self, room_id, user_id, *, action):
+        room_id = int(room_id)
+        user_id = int(user_id)
+        raw_user = await self._load_user_hash(user_id)
+        username = raw_user['username'] if raw_user is not None else 'Someone'
+        picture = None
+        if raw_user is not None:
+            picture = avatar_url(user_id, int(raw_user.get('avatar_version', 0)))
+        timestamp_ms = now_ms()
+        message = {
+            'id': f'{timestamp_ms}-{secrets.token_hex(4)}',
+            'kind': 'membership',
+            'body': f'{username} {action}',
+            'sender_id': user_id,
+            'sender_username': username,
+            'sender_picture': picture,
+            'timestamp': ts_ms_to_iso(timestamp_ms),
+        }
+        await self._store_room_message(room_id, message, timestamp_ms=timestamp_ms)
+        participants_by_id = await self._get_room_participants_by_id(room_id)
+        delivery_states = await self._get_room_delivery_states(room_id)
+        read_states = await self._get_room_read_states(room_id)
+        return await self._serialize_message_with_state(
+            message,
+            participants_by_id=participants_by_id,
+            delivery_states=delivery_states,
+            read_states=read_states,
+        )
+
     async def _delete_join_request(self, room_id, user_id):
         room_id = int(room_id)
         user_id = int(user_id)
@@ -1137,34 +1197,8 @@ class RedisStore:
             message['location'] = location
         if other_room is not None:
             message['other_room'] = other_room
-        encoded = json.dumps(message)
-        cutoff_ms = timestamp_ms - (MESSAGE_TTL_SECONDS * 1000)
-        room_messages_key = self._room_messages_key(room_id)
-        await self.redis.zadd(room_messages_key, {encoded: timestamp_ms})
-        await self.redis.zremrangebyscore(room_messages_key, '-inf', cutoff_ms)
-
-        last_message = {
-            'kind': kind,
-            'body': body,
-            'sender_id': int(sender_id),
-            'sender_username': raw_sender['username'] if raw_sender is not None else None,
-            'timestamp': ts_ms_to_iso(timestamp_ms),
-        }
-        if whatsapp_group is not None:
-            last_message['whatsapp_group'] = whatsapp_group
-        if location is not None:
-            last_message['location'] = location
-        if other_room is not None:
-            last_message['other_room'] = other_room
-        room_meta_key = self._room_meta_key(room_id)
-        await self.redis.hset(room_meta_key, mapping={
-            'updated_at': timestamp_ms,
-            'last_message': json.dumps(last_message),
-        })
-
-        members = await self.redis.smembers(self._room_members_key(room_id))
-        for member in members:
-            await self.redis.zadd(self._user_rooms_key(member), {room_id: timestamp_ms})
+        message['sender_username'] = raw_sender['username'] if raw_sender is not None else None
+        await self._store_room_message(room_id, message, timestamp_ms=timestamp_ms)
 
         await self.mark_room_read(sender_id, room_id, message_id=message['id'])
 
@@ -1710,6 +1744,12 @@ class RedisStore:
         for member_id in all_members:
             await self.redis.zadd(self._user_rooms_key(member_id), {room_id: timestamp_ms})
 
+        membership_message = await self._create_membership_message(
+            room_id,
+            user_id,
+            action='joined',
+        )
+
         room = await self._serialize_room(room_id, viewer_user_id=user_id)
         if room is None:
             raise RoomNotFound()
@@ -1717,6 +1757,7 @@ class RedisStore:
         return {
             'room': room,
             'membership_changed': True,
+            'membership_message': membership_message,
         }
 
     async def get_rooms(self, user_id):
@@ -1960,13 +2001,21 @@ class RedisStore:
                 nearby_viewer_ids=nearby_viewer_ids,
             )
             nearby_viewer_ids = set(delete_result['nearby_viewer_ids'])
-        elif len(remaining_members) == 1:
+            membership_message = None
+        else:
             await self.redis.hset(
                 meta_key,
-                mapping={'solo_expires_at': self._solo_room_expiry_ms()},
+                mapping={
+                    'solo_expires_at': self._solo_room_expiry_ms()
+                    if len(remaining_members) == 1
+                    else '',
+                },
             )
-        else:
-            await self.redis.hset(meta_key, mapping={'solo_expires_at': ''})
+            membership_message = await self._create_membership_message(
+                room_id,
+                user_id,
+                action='left',
+            )
         if not should_delete_room:
             await self.publish_shared_room_updates(room_id)
         if nearby_viewer_ids:
@@ -1974,6 +2023,7 @@ class RedisStore:
         return {
             'room_deleted': should_delete_room,
             'remaining_member_ids': remaining_members,
+            'membership_message': membership_message,
         }
 
     def _sample_ids(self, values, *, limit=10):

@@ -858,6 +858,43 @@ void main() {
     expect(find.text('Recovered message'), findsOneWidget);
   });
 
+  testWidgets('renders membership events as centered system timeline rows', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'membership-1',
+          kind: ChatMessageKind.membership,
+          body: 'charlie joined',
+          senderId: 3,
+          senderUsername: 'charlie',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('system-message-membership-1')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('charlie joined'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('chat-message-membership-1')),
+      findsNothing,
+    );
+  });
+
   testWidgets(
     'revisiting messages keeps cached history visible without refreshing again',
     (tester) async {

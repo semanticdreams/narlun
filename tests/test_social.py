@@ -271,6 +271,32 @@ async def test_room_join_request_requires_member_approval(cli):
     assert [candidate['id'] for candidate in user_rooms] == [room['id']]
 
 
+async def test_approved_join_adds_membership_message_to_history_and_room_preview(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await request_room_join(cli, users[2]['jwt'], room['id'])
+    assert response.status == 200
+
+    approve_response = await approve_room_request(
+        cli,
+        users[0]['jwt'],
+        room['id'],
+        users[2]['user']['id'],
+    )
+    assert approve_response.status == 200
+
+    messages_response = await get_messages(cli, users[0]['jwt'], room['id'])
+    assert messages_response.status == 200
+    messages = await messages_response.json()
+    assert messages[0]['kind'] == 'membership'
+    assert messages[0]['body'] == f'{users[2]["username"]} joined'
+
+    rooms = await get_rooms(cli, users[0]['jwt'])
+    assert rooms[0]['last_message']['kind'] == 'membership'
+    assert rooms[0]['last_message']['body'] == f'{users[2]["username"]} joined'
+
+
 async def test_room_join_requests_update_room_summaries_for_members(cli):
     users = [await signup(cli) for _ in range(3)]
     room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
@@ -365,6 +391,29 @@ async def test_leaving_group_room_removes_it_and_allows_requesting_to_rejoin_fro
     request_body = await rejoin_request.json()
     assert request_body['created'] is True
     assert request_body['room']['id'] == room['id']
+
+
+async def test_leaving_room_adds_membership_message_for_remaining_members(cli):
+    users = [await signup(cli) for _ in range(3)]
+    room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        '',
+        [users[1]['user']['id'], users[2]['user']['id']],
+    )
+
+    response = await leave_room(cli, users[1]['jwt'], room['id'])
+    assert response.status == 204
+
+    messages_response = await get_messages(cli, users[0]['jwt'], room['id'])
+    assert messages_response.status == 200
+    messages = await messages_response.json()
+    assert messages[0]['kind'] == 'membership'
+    assert messages[0]['body'] == f'{users[1]["username"]} left'
+
+    rooms = await get_rooms(cli, users[0]['jwt'])
+    assert rooms[0]['last_message']['kind'] == 'membership'
+    assert rooms[0]['last_message']['body'] == f'{users[1]["username"]} left'
 
 
 async def test_expired_join_request_clears_member_count_and_requester_pinned_room(cli, monkeypatch):

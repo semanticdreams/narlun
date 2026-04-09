@@ -62,6 +62,9 @@ class _ConversationsState extends State<ConversationsView> {
     if (preview == null || preview.previewText.isEmpty) {
       return '';
     }
+    if (preview.kind == ChatMessageKind.membership) {
+      return preview.previewText;
+    }
     final shouldShowSender = currentUser == null
         ? room.participants.length > 2
         : room.otherParticipantsFor(currentUser).length > 1;

@@ -357,6 +357,9 @@ async def approve_room_request(req):
     room_members = await req.store.get_room_members(room_id)
     await req.store.publish_room_requests_changed(room_id)
     await req.store.publish_rooms_changed(room_members)
+    membership_message = result.get('membership_message')
+    if membership_message is not None:
+        await req.store.publish_room_message(room_id, membership_message)
     await _publish_room_nearby_changes(
         req,
         room_id,
@@ -427,6 +430,9 @@ async def leave_room(req):
         raise NoSuchRoomError()
 
     await req.store.publish_rooms_changed([req.user['id'], *result['remaining_member_ids']])
+    membership_message = result.get('membership_message')
+    if membership_message is not None:
+        await req.store.publish_room_message(room_id, membership_message)
     logger.info(
         'Left room',
         extra=request_log_context(
@@ -615,6 +621,9 @@ async def accept_invite(req):
     room_members = await req.store.get_room_members(room['id'])
     await req.store.publish_rooms_changed(room_members)
     if invite_result.get('membership_changed') is True:
+        membership_message = invite_result.get('membership_message')
+        if membership_message is not None:
+            await req.store.publish_room_message(room['id'], membership_message)
         await _publish_room_nearby_changes(
             req,
             room['id'],

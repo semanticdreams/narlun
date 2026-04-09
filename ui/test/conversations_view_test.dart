@@ -419,6 +419,66 @@ void main() {
     expect(openNearbyCalls, 1);
   });
 
+  testWidgets('membership previews do not prepend the sender name', (
+    tester,
+  ) async {
+    final websocketService = FakeRoomsWebsocketService();
+    final httpService = FakeRoomsHttpService(
+      websocketService: websocketService,
+      initialResponses: [
+        <RoomSummary>[
+          RoomSummary(
+            id: 5,
+            updatedAt: DateTime.parse('2026-04-04T10:01:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'bob'),
+              RoomParticipant(id: 3, username: 'cara'),
+            ],
+            lastMessage: const MessagePreview(
+              kind: ChatMessageKind.membership,
+              body: 'cara joined',
+              senderId: 3,
+              senderUsername: 'cara',
+            ),
+          ),
+        ],
+      ],
+    );
+    final installPromptService = FakeInstallPromptService();
+    final pushNotificationsService = FakePushNotificationsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<HttpService>.value(value: httpService),
+          ChangeNotifierProvider<InstallPromptService>.value(
+            value: installPromptService,
+          ),
+          ChangeNotifierProvider<PushNotificationsService>.value(
+            value: pushNotificationsService,
+          ),
+          ChangeNotifierProvider(
+            create: (_) => MeModel()
+              ..setData(
+                const SessionUser(authenticated: true, id: 1, username: 'me'),
+              ),
+          ),
+        ],
+        child: MaterialApp(
+          home: ConversationsView(
+            httpService: httpService,
+            websocketService: websocketService,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('cara joined'), findsOneWidget);
+    expect(find.text('cara: cara joined'), findsNothing);
+  });
+
   testWidgets(
     'revisiting empty rooms keeps the empty state visible without reloading',
     (tester) async {

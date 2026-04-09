@@ -2,13 +2,14 @@ import 'whatsapp_group_links.dart';
 
 enum MessageDeliveryState { sending, sent }
 
-enum ChatMessageKind { text, whatsappGroup, location, otherRoom }
+enum ChatMessageKind { text, whatsappGroup, location, otherRoom, membership }
 
 ChatMessageKind chatMessageKindFromJson(Object? raw) {
   return switch (raw) {
     'whatsapp_group' => ChatMessageKind.whatsappGroup,
     'location' => ChatMessageKind.location,
     'other_room' => ChatMessageKind.otherRoom,
+    'membership' => ChatMessageKind.membership,
     _ => ChatMessageKind.text,
   };
 }
@@ -19,6 +20,7 @@ String chatMessageKindToJson(ChatMessageKind kind) {
     ChatMessageKind.whatsappGroup => 'whatsapp_group',
     ChatMessageKind.location => 'location',
     ChatMessageKind.otherRoom => 'other_room',
+    ChatMessageKind.membership => 'membership',
   };
 }
 
@@ -182,6 +184,7 @@ String messagePreviewText({
     ChatMessageKind.whatsappGroup => whatsappGroupPreviewLabel,
     ChatMessageKind.location => 'Shared location',
     ChatMessageKind.otherRoom => 'Other room',
+    ChatMessageKind.membership => body,
   };
 }
 
@@ -545,6 +548,7 @@ class ChatMessage {
     ChatMessageKind.location =>
       'location:${location?.lat.toStringAsFixed(6) ?? ''}:${location?.lon.toStringAsFixed(6) ?? ''}:${location?.accuracyMeters?.toStringAsFixed(1) ?? ''}',
     ChatMessageKind.otherRoom => 'other-room:${otherRoom?.roomId ?? 0}',
+    ChatMessageKind.membership => 'membership:$body',
   };
 }
 

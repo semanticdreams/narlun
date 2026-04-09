@@ -150,6 +150,22 @@ def _parse_location_message(location):
     }
 
 
+def _parse_other_room_message(other_room):
+    if not isinstance(other_room, dict):
+        raise InvalidMessageContentError(
+            message='Other room must include a room id.',
+        )
+
+    try:
+        room_id = int(other_room.get('room_id'))
+    except (TypeError, ValueError) as exc:
+        raise InvalidMessageContentError(
+            message='Other room must include a valid room id.',
+        ) from exc
+
+    return {'room_id': room_id}
+
+
 def _parse_outgoing_message_payload(data):
     kind = data.get('kind') or 'text'
     if kind == 'text':
@@ -184,6 +200,15 @@ def _parse_outgoing_message_payload(data):
             'body': '',
             'whatsapp_group': None,
             'location': _parse_location_message(data.get('location')),
+            'other_room': None,
+        }
+    if kind == 'other_room':
+        return {
+            'kind': 'other_room',
+            'body': '',
+            'whatsapp_group': None,
+            'location': None,
+            'other_room': _parse_other_room_message(data.get('other_room')),
         }
     raise InvalidMessageContentError(message='Unknown message type.')
 
@@ -418,32 +443,56 @@ async def leave_room(req):
 @authenticated
 async def send_message(req):
     payload = _parse_outgoing_message_payload(req.data)
+    source_room_id = int(req.data['room_id'])
+    other_room = None
+    if payload['kind'] == 'other_room':
+        other_room_id = payload['other_room']['room_id']
+        if other_room_id == source_room_id:
+            raise InvalidMessageContentError(
+                message='Choose a different room to share.',
+            )
+        try:
+            invite = await req.store.create_invite(req.user['id'], room_id=other_room_id)
+        except RoomNotFound:
+            raise InvalidMessageContentError(
+                message='Choose one of your rooms to share.',
+            )
+        except PermissionDenied:
+            raise InvalidMessageContentError(
+                message='Choose one of your rooms to share.',
+            )
+        other_room = {
+            'room_id': other_room_id,
+            'invite_token': invite['token'],
+            'expires_at': invite['expires_at'],
+        }
 
     try:
         message = await req.store.send_message(
             req.user['id'],
-            req.data['room_id'],
+            source_room_id,
             payload['body'],
             kind=payload['kind'],
             whatsapp_group=payload['whatsapp_group'],
             location=payload['location'],
+            other_room=other_room,
         )
     except PermissionDenied:
         raise NoSuchRoomError()
     except RoomNotFound:
         raise NoSuchRoomError()
 
-    await req.store.publish_room_message(req.data['room_id'], message)
+    await req.store.publish_room_message(source_room_id, message)
     await req.store.publish_rooms_changed(
-        await req.store.get_room_members(req.data['room_id']),
+        await req.store.get_room_members(source_room_id),
     )
-    await _publish_room_nearby_changes(req, req.data['room_id'])
-    req.push.enqueue_new_message(req.user['id'], req.data['room_id'], message)
+    await _publish_room_nearby_changes(req, source_room_id)
+    req.push.enqueue_new_message(req.user['id'], source_room_id, message)
     logger.info(
         'Sent room message',
         extra=request_log_context(
             req,
-            room_id=req.data['room_id'],
+            room_id=source_room_id,
             message_id=message['id'],
             message_kind=payload['kind'],
             message_body_length=len(payload['body'].strip()),

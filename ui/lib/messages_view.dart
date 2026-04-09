@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'add_location_view.dart';
+import 'add_other_room_view.dart';
 import 'add_whatsapp_group_view.dart';
 import 'avatar_image.dart';
 import 'chat_labels.dart';
@@ -53,6 +54,7 @@ class _OutgoingMessageDraft {
     required this.body,
     this.whatsappGroup,
     this.location,
+    this.otherRoom,
   });
 
   factory _OutgoingMessageDraft.text(String body) {
@@ -78,10 +80,19 @@ class _OutgoingMessageDraft {
     );
   }
 
+  factory _OutgoingMessageDraft.otherRoom(OtherRoomMessageData otherRoom) {
+    return _OutgoingMessageDraft._(
+      kind: ChatMessageKind.otherRoom,
+      body: '',
+      otherRoom: otherRoom,
+    );
+  }
+
   final ChatMessageKind kind;
   final String body;
   final WhatsappGroupMessageData? whatsappGroup;
   final LocationMessageData? location;
+  final OtherRoomMessageData? otherRoom;
 }
 
 class MessagesState extends State<MessagesView> {
@@ -138,6 +149,7 @@ class MessagesState extends State<MessagesView> {
   StreamSubscription? typingStateSubscription;
   StreamSubscription? roomDeliveredSubscription;
   StreamSubscription? roomReadSubscription;
+  StreamSubscription? sharedRoomUpdatedSubscription;
 
   bool _firstAutoscrollExecuted = false;
   bool _shouldAutoscroll = false;
@@ -155,6 +167,7 @@ class MessagesState extends State<MessagesView> {
   bool _showEmojiPicker = false;
   int _pendingMessageSequence = 0;
   bool _reportedPushPromptVisible = false;
+  Timer? _otherRoomExpiryTimer;
 
   void _showRefreshFailure(String message) {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -165,6 +178,36 @@ class MessagesState extends State<MessagesView> {
 
   void _persistMessagesCache() {
     roomMessagesCache.storeMessages(room.id, messages);
+  }
+
+  void _rescheduleOtherRoomExpiryTimer() {
+    _otherRoomExpiryTimer?.cancel();
+    DateTime? nextExpiry;
+    for (final message in messages) {
+      final expiresAt = message.otherRoom?.expiresAt;
+      if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
+        continue;
+      }
+      if (nextExpiry == null || expiresAt.isBefore(nextExpiry)) {
+        nextExpiry = expiresAt;
+      }
+    }
+    if (nextExpiry == null) {
+      return;
+    }
+    final delay = nextExpiry.difference(DateTime.now().toUtc());
+    _otherRoomExpiryTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      setState(() {});
+      _rescheduleOtherRoomExpiryTimer();
+    });
+  }
+
+  void _handleMessagesUpdated() {
+    _persistMessagesCache();
+    _rescheduleOtherRoomExpiryTimer();
   }
 
   Map<int, RoomParticipant> get _participantsById => {
@@ -384,7 +427,7 @@ class MessagesState extends State<MessagesView> {
       messages
         ..clear()
         ..addAll(updatedMessages);
-      _persistMessagesCache();
+      _handleMessagesUpdated();
     });
   }
 
@@ -430,7 +473,41 @@ class MessagesState extends State<MessagesView> {
       messages
         ..clear()
         ..addAll(updatedMessages);
-      _persistMessagesCache();
+      _handleMessagesUpdated();
+    });
+  }
+
+  void _applySharedRoomUpdate(Map<String, dynamic> data) {
+    final sharedRoom = OtherRoomMessageData.maybeFromJson(data['shared_room']);
+    if (sharedRoom == null) {
+      return;
+    }
+    var changed = false;
+    final updatedMessages = messages
+        .map((message) {
+          final otherRoom = message.otherRoom;
+          if (otherRoom == null || otherRoom.roomId != sharedRoom.roomId) {
+            return message;
+          }
+          changed = true;
+          return message.copyWith(
+            otherRoom: otherRoom.copyWith(
+              name: sharedRoom.name,
+              picture: sharedRoom.picture,
+              memberCount: sharedRoom.memberCount,
+              roomActive: sharedRoom.roomActive,
+            ),
+          );
+        })
+        .toList(growable: false);
+    if (!changed || !mounted) {
+      return;
+    }
+    setState(() {
+      messages
+        ..clear()
+        ..addAll(updatedMessages);
+      _handleMessagesUpdated();
     });
   }
 
@@ -470,6 +547,7 @@ class MessagesState extends State<MessagesView> {
       deliveryState: MessageDeliveryState.sending,
       whatsappGroup: draft.whatsappGroup,
       location: draft.location,
+      otherRoom: draft.otherRoom,
     );
   }
 
@@ -521,12 +599,12 @@ class MessagesState extends State<MessagesView> {
     }
     messages[pendingIndex] = sentMessage;
     messages.sort(_compareMessages);
-    _persistMessagesCache();
+    _handleMessagesUpdated();
   }
 
   void _removePendingOutgoingMessage(String clientTag) {
     messages.removeWhere((message) => message.clientTag == clientTag);
-    _persistMessagesCache();
+    _handleMessagesUpdated();
   }
 
   ChatMessage _syncMessageParticipantMetadata(ChatMessage message) {
@@ -574,7 +652,7 @@ class MessagesState extends State<MessagesView> {
     messages
       ..clear()
       ..addAll(existingMessages.map(_syncMessageParticipantMetadata));
-    _persistMessagesCache();
+    _handleMessagesUpdated();
   }
 
   String? _typingIndicatorLabel() {
@@ -597,7 +675,7 @@ class MessagesState extends State<MessagesView> {
         _mergeMessages(resp);
         _resyncMessageParticipants();
         _scrollToBottom();
-        _persistMessagesCache();
+        _handleMessagesUpdated();
       });
       _scheduleMarkRoomDelivered();
       _scheduleMarkRoomRead();
@@ -908,6 +986,7 @@ class MessagesState extends State<MessagesView> {
     if (cachedMessages != null) {
       messages.addAll(cachedMessages);
       _initialHistoryLoaded = roomMessagesCache.hasLoadedRoom(room.id);
+      _rescheduleOtherRoomExpiryTimer();
     }
 
     _scrollController.addListener(_scrollListener);
@@ -941,7 +1020,7 @@ class MessagesState extends State<MessagesView> {
             _mergeMessages(incomingMessages);
             _resyncMessageParticipants();
             _scrollToBottom();
-            _persistMessagesCache();
+            _handleMessagesUpdated();
           });
           if (incomingMessages.isNotEmpty) {
             _scheduleMarkRoomDelivered(messageId: incomingMessages.first.id);
@@ -971,6 +1050,14 @@ class MessagesState extends State<MessagesView> {
             return;
           }
           _applyRoomRead(value['data'] as Map<String, dynamic>);
+        });
+    sharedRoomUpdatedSubscription = websocketService
+        .sharedRoomUpdatedStream(widget.room.id)
+        .listen((value) {
+          if (!mounted || _roomClosed) {
+            return;
+          }
+          _applySharedRoomUpdate(value['data'] as Map<String, dynamic>);
         });
     roomDeletedSubscription = websocketService
         .roomDeletedStream(widget.room.id)
@@ -1188,6 +1275,8 @@ class MessagesState extends State<MessagesView> {
     typingStateSubscription?.cancel();
     roomDeliveredSubscription?.cancel();
     roomReadSubscription?.cancel();
+    sharedRoomUpdatedSubscription?.cancel();
+    _otherRoomExpiryTimer?.cancel();
     _scrollController.removeListener(_scrollListener);
     messageController.removeListener(_handleComposerChanged);
     messageController.dispose();
@@ -1230,6 +1319,7 @@ class MessagesState extends State<MessagesView> {
         kind: draft.kind,
         whatsappInviteUrl: draft.whatsappGroup?.inviteUrl,
         location: draft.location,
+        otherRoomId: draft.otherRoom?.roomId,
       );
       if (mounted && !_roomClosed) {
         setState(() {
@@ -1376,6 +1466,43 @@ class MessagesState extends State<MessagesView> {
     );
   }
 
+  Future<void> _openOtherRoomComposer() async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/rooms/add-other-room'),
+        builder: (_) => AddOtherRoomView(
+          httpService: httpService,
+          me: widget.me,
+          currentRoomId: room.id,
+          onAdd: (sharedRoom) {
+            return _sendDraftMessage(
+              _OutgoingMessageDraft.otherRoom(
+                OtherRoomMessageData(
+                  roomId: sharedRoom.id,
+                  inviteToken: '',
+                  expiresAt: null,
+                  name: sharedRoom.displayTitleFor(widget.me),
+                  picture: sharedRoom.displayPictureFor(widget.me),
+                  memberCount: sharedRoom.memberCount,
+                  roomActive: true,
+                ),
+              ),
+              propagateInvalidUsage: true,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _showComposerAddSheet() async {
     if (_roomClosed || !mounted) {
       return;
@@ -1414,6 +1541,15 @@ class MessagesState extends State<MessagesView> {
                   ),
                   onTap: () => Navigator.of(sheetContext).pop('whatsapp-group'),
                 ),
+                ListTile(
+                  key: const Key('message-add-other-room'),
+                  leading: const Icon(Icons.meeting_room_rounded),
+                  title: const Text('Other room'),
+                  subtitle: const Text(
+                    'Invite people straight into another room you are in',
+                  ),
+                  onTap: () => Navigator.of(sheetContext).pop('other-room'),
+                ),
               ],
             ),
           ),
@@ -1427,6 +1563,8 @@ class MessagesState extends State<MessagesView> {
       await _openWhatsappGroupComposer();
     } else if (selection == 'location') {
       await _openLocationComposer();
+    } else if (selection == 'other-room') {
+      await _openOtherRoomComposer();
     }
   }
 
@@ -1442,6 +1580,114 @@ class MessagesState extends State<MessagesView> {
           content: Text('Could not open this WhatsApp group right now.'),
         ),
       );
+  }
+
+  Future<bool> _openExistingRoomIfMember(int targetRoomId) async {
+    try {
+      final rooms = await httpService.get_rooms(silentErrors: true);
+      if (!mounted || _roomClosed) {
+        return false;
+      }
+      RoomSummary? targetRoom;
+      for (final candidate in rooms) {
+        if (candidate.id == targetRoomId) {
+          targetRoom = candidate;
+          break;
+        }
+      }
+      if (targetRoom == null) {
+        return false;
+      }
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          settings: RouteSettings(name: roomsRouteWithOpenRoom(targetRoom.id)),
+          builder: (context) => MessagesView(
+            room: targetRoom!,
+            me: widget.me,
+            httpService: httpService,
+            roomMessagesCache: roomMessagesCache,
+            websocketService: websocketService,
+            externalLinkOpener: externalLinkOpener,
+            locationService: locationService,
+          ),
+        ),
+      );
+      return true;
+    } on UnauthorizedResponse {
+      await _handleSessionEnded();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _joinOtherRoom(OtherRoomMessageData otherRoom) async {
+    if (_roomClosed || !mounted) {
+      return;
+    }
+    if (!otherRoom.roomActive) {
+      if (await _openExistingRoomIfMember(otherRoom.roomId)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('That room is no longer available.')),
+        );
+      return;
+    }
+    if (otherRoom.isExpiredAt(DateTime.now().toUtc())) {
+      if (await _openExistingRoomIfMember(otherRoom.roomId)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('That room invite has expired.')),
+        );
+      return;
+    }
+    try {
+      final joinedRoom = await httpService.accept_invite(otherRoom.inviteToken);
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          settings: RouteSettings(name: roomsRouteWithOpenRoom(joinedRoom.id)),
+          builder: (context) => MessagesView(
+            room: joinedRoom,
+            me: widget.me,
+            httpService: httpService,
+            roomMessagesCache: roomMessagesCache,
+            websocketService: websocketService,
+            externalLinkOpener: externalLinkOpener,
+            locationService: locationService,
+          ),
+        ),
+      );
+    } on UnauthorizedResponse {
+      await _handleSessionEnded();
+    } catch (error) {
+      if (!mounted || _roomClosed) {
+        return;
+      }
+      if (await _openExistingRoomIfMember(otherRoom.roomId)) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeActionError(
+                error,
+                fallbackDescription: 'Could not join that room right now.',
+              ),
+            ),
+          ),
+        );
+    }
   }
 
   Future<bool> _openLocationInGoogleMaps(LocationMessageData location) async {
@@ -2057,10 +2303,12 @@ class MessagesState extends State<MessagesView> {
               hasOtherParticipants: _hasOtherParticipants,
               onOpenWhatsappInvite: _openWhatsappInvite,
               onOpenLocationDetails: _showLocationDetails,
+              onJoinOtherRoom: _joinOtherRoom,
               showAuthorLabel: _otherParticipantCount > 1,
               startsCluster: startsCluster,
               endsCluster: endsCluster,
               timeLabel: _formatMessageTime(message.timestamp),
+              now: DateTime.now().toUtc(),
               bubbleRadius: _bubbleRadius(
                 isSender: message.senderId == widget.me.id,
                 startsCluster: startsCluster,
@@ -2279,10 +2527,12 @@ class _MessageBubbleRow extends StatelessWidget {
     required this.hasOtherParticipants,
     required this.onOpenWhatsappInvite,
     required this.onOpenLocationDetails,
+    required this.onJoinOtherRoom,
     required this.showAuthorLabel,
     required this.startsCluster,
     required this.endsCluster,
     required this.timeLabel,
+    required this.now,
     required this.bubbleRadius,
   });
 
@@ -2292,10 +2542,12 @@ class _MessageBubbleRow extends StatelessWidget {
   final Future<void> Function(String inviteUrl) onOpenWhatsappInvite;
   final Future<void> Function(LocationMessageData location)
   onOpenLocationDetails;
+  final Future<void> Function(OtherRoomMessageData otherRoom) onJoinOtherRoom;
   final bool showAuthorLabel;
   final bool startsCluster;
   final bool endsCluster;
   final String timeLabel;
+  final DateTime now;
   final BorderRadius bubbleRadius;
 
   Widget _buildMessageContent(BuildContext context) {
@@ -2406,6 +2658,68 @@ class _MessageBubbleRow extends StatelessWidget {
               onPressed: () => onOpenLocationDetails(location),
               icon: const Icon(Icons.map_outlined),
               label: const Text('View location'),
+            ),
+          ],
+        );
+      case ChatMessageKind.otherRoom:
+        final otherRoom = message.otherRoom;
+        if (otherRoom == null) {
+          return const Text('Other room');
+        }
+        final isExpired = otherRoom.isExpiredAt(now);
+        final canJoin =
+            otherRoom.roomActive &&
+            !isExpired &&
+            otherRoom.inviteToken.isNotEmpty;
+        final statusLabel = !otherRoom.roomActive
+            ? 'Room unavailable'
+            : isExpired
+            ? 'Invite expired'
+            : '${otherRoom.memberCount} member${otherRoom.memberCount == 1 ? '' : 's'}';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                AvatarImage(picture: otherRoom.picture, radius: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        otherRoom.title,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: const Color(0xFF1F2528),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        statusLabel,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF5E6967),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            FilledButton.tonalIcon(
+              key: Key('other-room-join-button-${message.id}'),
+              onPressed: canJoin ? () => onJoinOtherRoom(otherRoom) : null,
+              icon: Icon(
+                canJoin ? Icons.login_rounded : Icons.schedule_rounded,
+              ),
+              label: Text(
+                canJoin
+                    ? 'Join room'
+                    : !otherRoom.roomActive
+                    ? 'Room unavailable'
+                    : 'Invite expired',
+              ),
             ),
           ],
         );

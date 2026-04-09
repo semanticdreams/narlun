@@ -68,6 +68,57 @@ async def test_room_subscription_and_signout_disconnect(cli):
                 await asyncio.sleep(0.05)
 
 
+async def test_shared_room_updates_broadcast_into_source_room(cli):
+    users = [await signup(cli) for _ in range(3)]
+    source_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    target_room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        'Before',
+        [users[2]['user']['id']],
+    )
+
+    async with cli.ws_connect(
+        '/api/ws',
+        headers=websocket_cookie_headers(users[1]['jwt']),
+    ) as ws:
+        await ws.send_str(
+            json.dumps({'type': 'subscribe-room', 'data': {'room_id': source_room['id']}}),
+        )
+        subscribed = await ws.receive_json()
+        assert subscribed == {
+            'type': 'subscribed-room',
+            'data': {'room_id': source_room['id']},
+        }
+
+        await send_message(
+            cli,
+            users[0]['jwt'],
+            source_room['id'],
+            kind='other_room',
+            other_room={'room_id': target_room['id']},
+        )
+        rename_response = await cli.post(
+            '/api/social/update-room-settings',
+            json={'room_id': target_room['id'], 'name': 'After'},
+            headers=auth_headers(users[0]['jwt']),
+        )
+        assert rename_response.status == 200
+
+        seen_shared_room_update = False
+        async with async_timeout.timeout(2):
+            while not seen_shared_room_update:
+                payload = await ws.receive_json()
+                if payload['type'] != 'shared-room-updated':
+                    continue
+                assert payload['data']['room_id'] == source_room['id']
+                assert payload['data']['shared_room']['room_id'] == target_room['id']
+                assert payload['data']['shared_room']['name'] == 'After'
+                assert payload['data']['shared_room']['member_count'] == 2
+                assert payload['data']['shared_room']['room_active'] is True
+                seen_shared_room_update = True
+
+
 async def test_signout_closes_local_socket_even_if_pubsub_publish_fails(cli):
     created = await signup(cli)
     original_publish_signout = cli.app['store'].publish_signout

@@ -746,6 +746,121 @@ async def test_send_location_message_requires_valid_coordinates(cli):
     assert body['message'] == 'Location latitude must be between -90 and 90.'
 
 
+async def test_send_other_room_message_returns_structured_payload(cli):
+    users = [await signup(cli) for _ in range(3)]
+    source_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    target_room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        'Board games',
+        [users[2]['user']['id']],
+    )
+
+    message = await send_message(
+        cli,
+        users[0]['jwt'],
+        source_room['id'],
+        kind='other_room',
+        other_room={'room_id': target_room['id']},
+    )
+
+    assert message['kind'] == 'other_room'
+    assert message['body'] == ''
+    assert message['other_room']['room_id'] == target_room['id']
+    assert message['other_room']['invite_token']
+    assert message['other_room']['expires_at']
+    assert message['other_room']['name'] == 'Board games'
+    assert message['other_room']['member_count'] == 2
+    assert message['other_room']['room_active'] is True
+
+    messages_response = await get_messages(cli, users[1]['jwt'], source_room['id'])
+    messages = await messages_response.json()
+    assert messages[0]['kind'] == 'other_room'
+    assert messages[0]['other_room']['room_id'] == target_room['id']
+    assert messages[0]['other_room']['name'] == 'Board games'
+    assert messages[0]['other_room']['member_count'] == 2
+    assert messages[0]['other_room']['room_active'] is True
+
+    rooms = await get_rooms(cli, users[1]['jwt'])
+    assert rooms[0]['last_message']['kind'] == 'other_room'
+    assert rooms[0]['last_message']['other_room']['room_id'] == target_room['id']
+    assert rooms[0]['last_message']['other_room']['invite_token']
+
+
+async def test_send_other_room_message_requires_membership_in_target_room(cli):
+    users = [await signup(cli) for _ in range(3)]
+    source_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    target_room = await join_user(cli, users[1]['jwt'], users[2]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/send-message',
+        json={
+            'room_id': source_room['id'],
+            'kind': 'other_room',
+            'other_room': {'room_id': target_room['id']},
+        },
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1008
+    assert body['message'] == 'Choose one of your rooms to share.'
+
+
+async def test_send_other_room_message_requires_different_room(cli):
+    users = [await signup(cli) for _ in range(2)]
+    source_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+
+    response = await cli.post(
+        '/api/social/send-message',
+        json={
+            'room_id': source_room['id'],
+            'kind': 'other_room',
+            'other_room': {'room_id': source_room['id']},
+        },
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body['code'] == 1008
+    assert body['message'] == 'Choose a different room to share.'
+
+
+async def test_other_room_message_fetch_reflects_latest_room_data(cli):
+    users = [await signup(cli) for _ in range(3)]
+    source_room = await join_user(cli, users[0]['jwt'], users[1]['user']['id'])
+    target_room = await create_group_room(
+        cli,
+        users[0]['jwt'],
+        'Before',
+        [users[2]['user']['id']],
+    )
+    message = await send_message(
+        cli,
+        users[0]['jwt'],
+        source_room['id'],
+        kind='other_room',
+        other_room={'room_id': target_room['id']},
+    )
+
+    rename_response = await cli.post(
+        '/api/social/update-room-settings',
+        json={'room_id': target_room['id'], 'name': 'After'},
+        headers={'Cookie': f'jwt={users[0]["jwt"]}'},
+    )
+    assert rename_response.status == 200
+
+    await accept_invite(cli, users[1]['jwt'], message['other_room']['invite_token'])
+
+    messages_response = await get_messages(cli, users[1]['jwt'], source_room['id'])
+    messages = await messages_response.json()
+    assert messages[0]['other_room']['name'] == 'After'
+    assert messages[0]['other_room']['member_count'] == 3
+    assert messages[0]['other_room']['room_active'] is True
+
+
 async def test_room_invite_requires_room_id(cli):
     created = await signup(cli)
 

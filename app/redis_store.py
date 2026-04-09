@@ -146,6 +146,9 @@ class RedisStore:
     def _room_join_requests_key(self, room_id):
         return f'room:{{{room_id}}}:join_requests'
 
+    def _shared_room_sources_key(self, room_id):
+        return f'room:{{{room_id}}}:shared_sources'
+
     def _user_push_subscriptions_key(self, user_id):
         return f'user:{{{user_id}}}:push_subscriptions'
 
@@ -355,7 +358,37 @@ class RedisStore:
             }
         return delivery_states
 
-    def _serialize_message_with_state(self, message, *, participants_by_id, delivery_states, read_states):
+    async def _serialize_other_room_message(self, other_room):
+        room_id = int(other_room.get('room_id'))
+        meta = await self._get_room_meta_if_active(room_id)
+        if meta is None:
+            return {
+                'room_id': room_id,
+                'invite_token': other_room.get('invite_token', ''),
+                'expires_at': other_room.get('expires_at'),
+                'name': None,
+                'picture': None,
+                'member_count': 0,
+                'room_active': False,
+            }
+        return {
+            'room_id': room_id,
+            'invite_token': other_room.get('invite_token', ''),
+            'expires_at': other_room.get('expires_at'),
+            'name': meta.get('name') or None,
+            'picture': meta.get('picture') or None,
+            'member_count': len(await self.redis.smembers(self._room_members_key(room_id))),
+            'room_active': True,
+        }
+
+    async def _serialize_message_with_state(
+        self,
+        message,
+        *,
+        participants_by_id,
+        delivery_states,
+        read_states,
+    ):
         sender_id = int(message['sender_id'])
         sender = participants_by_id.get(sender_id) or {
             'id': sender_id,
@@ -384,12 +417,18 @@ class RedisStore:
                     delivered_user_ids.add(int(user_id))
         delivered_by_users.sort(key=lambda participant: participant['username'])
         read_by_users.sort(key=lambda participant: participant['username'])
-        return {
+        serialized_message = {
             **message,
             'sender': sender,
             'delivered_by_users': delivered_by_users,
             'read_by_users': read_by_users,
         }
+        other_room = message.get('other_room')
+        if other_room is not None:
+            serialized_message['other_room'] = await self._serialize_other_room_message(
+                other_room,
+            )
+        return serialized_message
 
     async def _delete_join_request(self, room_id, user_id):
         room_id = int(room_id)
@@ -1076,6 +1115,7 @@ class RedisStore:
         kind='text',
         whatsapp_group=None,
         location=None,
+        other_room=None,
     ):
         room_id = await self._require_active_room_membership(sender_id, room_id)
         body = body.strip()
@@ -1095,6 +1135,8 @@ class RedisStore:
             message['whatsapp_group'] = whatsapp_group
         if location is not None:
             message['location'] = location
+        if other_room is not None:
+            message['other_room'] = other_room
         encoded = json.dumps(message)
         cutoff_ms = timestamp_ms - (MESSAGE_TTL_SECONDS * 1000)
         room_messages_key = self._room_messages_key(room_id)
@@ -1112,6 +1154,8 @@ class RedisStore:
             last_message['whatsapp_group'] = whatsapp_group
         if location is not None:
             last_message['location'] = location
+        if other_room is not None:
+            last_message['other_room'] = other_room
         room_meta_key = self._room_meta_key(room_id)
         await self.redis.hset(room_meta_key, mapping={
             'updated_at': timestamp_ms,
@@ -1127,7 +1171,9 @@ class RedisStore:
         participants_by_id = await self._get_room_participants_by_id(room_id)
         delivery_states = await self._get_room_delivery_states(room_id)
         read_states = await self._get_room_read_states(room_id)
-        return self._serialize_message_with_state(
+        if other_room is not None:
+            await self.track_shared_room_reference(other_room['room_id'], room_id)
+        return await self._serialize_message_with_state(
             message,
             participants_by_id=participants_by_id,
             delivery_states=delivery_states,
@@ -1229,6 +1275,45 @@ class RedisStore:
             extra={
                 'target_user_count': len(normalized_user_ids),
                 'target_user_ids': self._sample_ids(normalized_user_ids),
+            },
+        )
+
+    async def track_shared_room_reference(self, target_room_id, source_room_id):
+        target_room_id = int(target_room_id)
+        source_room_id = int(source_room_id)
+        key = self._shared_room_sources_key(target_room_id)
+        await self.redis.sadd(key, source_room_id)
+        await self.redis.expire(key, MESSAGE_TTL_SECONDS)
+
+    async def publish_shared_room_updates(self, target_room_id):
+        target_room_id = int(target_room_id)
+        source_room_ids = sorted(
+            int(room_id)
+            for room_id in await self.redis.smembers(
+                self._shared_room_sources_key(target_room_id),
+            )
+        )
+        if not source_room_ids:
+            return
+        shared_room = await self._serialize_other_room_message({
+            'room_id': target_room_id,
+            'invite_token': '',
+            'expires_at': None,
+        })
+        for source_room_id in source_room_ids:
+            await self.redis.publish(
+                f'room:{source_room_id}',
+                json.dumps({
+                    'type': 'shared-room-updated',
+                    'room_id': source_room_id,
+                    'shared_room': shared_room,
+                }),
+            )
+        logger.debug(
+            'Published shared room update event',
+            extra={
+                'target_room_id': target_room_id,
+                'source_room_ids': source_room_ids,
             },
         )
 
@@ -1366,6 +1451,7 @@ class RedisStore:
         room = await self._serialize_room(room_id, viewer_user_id=user_id)
         if room is None:
             raise RoomNotFound()
+        await self.publish_shared_room_updates(room_id)
         return room
 
     async def mark_active_websocket(self, user_id, connection_id, *, client_id=None):
@@ -1491,6 +1577,7 @@ class RedisStore:
         await self.redis.delete(self._room_messages_key(room_id))
         await self.redis.delete(self._room_delivery_states_key(room_id))
         await self.redis.delete(self._room_read_states_key(room_id))
+        await self.publish_shared_room_updates(room_id)
         return {
             'room_deleted': True,
             'remaining_member_ids': [],
@@ -1526,6 +1613,8 @@ class RedisStore:
                 if valid_member_ids:
                     await self.publish_rooms_changed(valid_member_ids)
                 await self.redis.srem(self._room_members_key(room_id), *stale_member_ids)
+                if valid_member_ids:
+                    await self.publish_shared_room_updates(room_id)
             if len(valid_member_ids) >= 2:
                 continue
             if len(valid_member_ids) == 1:
@@ -1535,6 +1624,7 @@ class RedisStore:
                         'solo_expires_at': self._solo_room_expiry_ms(),
                     },
                 )
+                await self.publish_shared_room_updates(room_id)
                 continue
             nearby_viewer_ids = set(await self.get_room_nearby_update_targets(room_id))
             nearby_viewer_ids.update(stale_member_ids)
@@ -1623,6 +1713,7 @@ class RedisStore:
         room = await self._serialize_room(room_id, viewer_user_id=user_id)
         if room is None:
             raise RoomNotFound()
+        await self.publish_shared_room_updates(room_id)
         return {
             'room': room,
             'membership_changed': True,
@@ -1688,7 +1779,7 @@ class RedisStore:
         delivery_states = await self._get_room_delivery_states(room_id)
         read_states = await self._get_room_read_states(room_id)
         return [
-            self._serialize_message_with_state(
+            await self._serialize_message_with_state(
                 message,
                 participants_by_id=participants_by_id,
                 delivery_states=delivery_states,
@@ -1876,6 +1967,8 @@ class RedisStore:
             )
         else:
             await self.redis.hset(meta_key, mapping={'solo_expires_at': ''})
+        if not should_delete_room:
+            await self.publish_shared_room_updates(room_id)
         if nearby_viewer_ids:
             await self.publish_nearby_changed(nearby_viewer_ids)
         return {

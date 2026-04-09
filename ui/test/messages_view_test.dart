@@ -58,15 +58,19 @@ class FakeHttpService extends HttpService {
   final Queue<Future<ChatMessage> Function(int roomId, String body)>
   _sendMessageHandlers =
       Queue<Future<ChatMessage> Function(int roomId, String body)>();
+  final Queue<Future<RoomSummary> Function(String token)>
+  _acceptInviteHandlers = Queue<Future<RoomSummary> Function(String token)>();
   var getMessagesCalls = 0;
   var getRoomsCalls = 0;
   var getRoomRequestsCalls = 0;
   var clearedLocalSession = false;
+  RoomSummary? acceptedInviteRoom;
   final updatedRoomSettings = <Map<String, dynamic>>[];
   final approvedRoomRequests = <Map<String, dynamic>>[];
   final rejectedRoomRequests = <Map<String, dynamic>>[];
   final leftRooms = <int>[];
   final sentMessages = <Map<String, dynamic>>[];
+  final acceptedInvites = <String>[];
   final markedDeliveries = <Map<String, dynamic>>[];
   final markedReads = <Map<String, dynamic>>[];
 
@@ -99,6 +103,10 @@ class FakeHttpService extends HttpService {
     Future<ChatMessage> Function(int roomId, String body) handler,
   ) {
     _sendMessageHandlers.add(handler);
+  }
+
+  void enqueueAcceptInvite(Future<RoomSummary> Function(String token) handler) {
+    _acceptInviteHandlers.add(handler);
   }
 
   @override
@@ -210,6 +218,7 @@ class FakeHttpService extends HttpService {
     ChatMessageKind kind = ChatMessageKind.text,
     String? whatsappInviteUrl,
     LocationMessageData? location,
+    int? otherRoomId,
   }) async {
     sentMessages.add({
       'room_id': room_id,
@@ -223,6 +232,7 @@ class FakeHttpService extends HttpService {
           if (location.accuracyMeters != null)
             'accuracy_meters': location.accuracyMeters,
         },
+      if (otherRoomId != null) 'other_room_id': otherRoomId,
     });
     if (_sendMessageHandlers.isNotEmpty) {
       return _sendMessageHandlers.removeFirst()(
@@ -232,12 +242,46 @@ class FakeHttpService extends HttpService {
     }
     return ChatMessage(
       id: 'local-${sentMessages.length}',
+      kind: kind,
       body: message_body as String,
       senderId: 1,
       senderUsername: 'me',
       timestamp: DateTime.parse('2026-04-04T10:00:10.000Z'),
       readByUsers: const [RoomParticipant(id: 1, username: 'me')],
+      whatsappGroup: whatsappInviteUrl == null
+          ? null
+          : WhatsappGroupMessageData(inviteUrl: whatsappInviteUrl),
+      location: location,
+      otherRoom: otherRoomId == null
+          ? null
+          : OtherRoomMessageData(
+              roomId: otherRoomId,
+              inviteToken: 'token-$otherRoomId',
+              expiresAt: DateTime.parse('2026-04-05T10:00:00.000Z'),
+              name: 'Room $otherRoomId',
+              picture: null,
+              memberCount: 2,
+              roomActive: true,
+            ),
     );
+  }
+
+  @override
+  Future<RoomSummary> accept_invite(String token) async {
+    acceptedInvites.add(token);
+    if (_acceptInviteHandlers.isNotEmpty) {
+      return _acceptInviteHandlers.removeFirst()(token);
+    }
+    return acceptedInviteRoom ??
+        RoomSummary(
+          id: 42,
+          name: 'Joined room',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        );
   }
 
   @override
@@ -343,6 +387,8 @@ class FakeWebsocketService extends WebsocketService {
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _roomReadController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _sharedRoomUpdatedController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _connectionController =
       StreamController<String>.broadcast();
   final subscribedRooms = <int>[];
@@ -409,6 +455,12 @@ class FakeWebsocketService extends WebsocketService {
   Stream<Map<String, dynamic>> roomReadStream(roomId) => _roomReadController
       .stream
       .where((event) => event['data']['room_id'] == roomId);
+
+  @override
+  Stream<Map<String, dynamic>> sharedRoomUpdatedStream(roomId) =>
+      _sharedRoomUpdatedController.stream.where(
+        (event) => event['data']['room_id'] == roomId,
+      );
 
   @override
   Stream<String> get connectionEvents => _connectionController.stream;
@@ -504,6 +556,16 @@ class FakeWebsocketService extends WebsocketService {
         'message_id': messageId,
         'user': {'id': userId, 'username': username},
       },
+    });
+  }
+
+  void emitSharedRoomUpdated({
+    required int roomId,
+    required Map<String, dynamic> sharedRoom,
+  }) {
+    _sharedRoomUpdatedController.add({
+      'type': 'shared-room-updated',
+      'data': {'room_id': roomId, 'shared_room': sharedRoom},
     });
   }
 }
@@ -2080,6 +2142,351 @@ void main() {
     );
     expect(locationService.getCurrentPositionCalls, 1);
   });
+
+  testWidgets('composer can add an other room message from the add menu', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+        RoomSummary(
+          id: 7,
+          name: 'Board games',
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 3, username: 'alex'),
+            RoomParticipant(id: 4, username: 'sam'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('message-add-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('message-add-other-room')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Share another room'), findsOneWidget);
+    expect(find.byKey(const Key('other-room-option-7')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('other-room-option-7')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Share another room'), findsNothing);
+    expect(httpService.sentMessages.last, {
+      'room_id': 1,
+      'body': '',
+      'kind': 'other_room',
+      'other_room_id': 7,
+    });
+  });
+
+  testWidgets('other room message button joins the room directly', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.acceptedInviteRoom = RoomSummary(
+      id: 7,
+      name: 'Joined room',
+      updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+      participants: const [
+        RoomParticipant(id: 1, username: 'me'),
+        RoomParticipant(id: 2, username: 'other'),
+        RoomParticipant(id: 3, username: 'alex'),
+      ],
+    );
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+        httpService.acceptedInviteRoom!,
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'share-1',
+          kind: ChatMessageKind.otherRoom,
+          body: '',
+          senderId: 2,
+          senderUsername: 'other',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          otherRoom: OtherRoomMessageData(
+            roomId: 7,
+            inviteToken: 'token-7',
+            expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+            name: 'Board games',
+            picture: null,
+            memberCount: 3,
+            roomActive: true,
+          ),
+        ),
+      ],
+    );
+    httpService.enqueueMessages((_) async => []);
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('other-room-join-button-share-1')));
+    await tester.pumpAndSettle();
+
+    expect(httpService.acceptedInvites, ['token-7']);
+    expect(find.text('Joined room'), findsOneWidget);
+  });
+
+  testWidgets('shared room updates refresh the existing bubble', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'share-1',
+          kind: ChatMessageKind.otherRoom,
+          body: '',
+          senderId: 2,
+          senderUsername: 'other',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          otherRoom: OtherRoomMessageData(
+            roomId: 7,
+            inviteToken: 'token-7',
+            expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+            name: 'Before',
+            picture: null,
+            memberCount: 2,
+            roomActive: true,
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Before'), findsOneWidget);
+    expect(find.text('2 members'), findsWidgets);
+
+    websocketService.emitSharedRoomUpdated(
+      roomId: 1,
+      sharedRoom: {
+        'room_id': 7,
+        'name': 'After',
+        'picture': null,
+        'member_count': 3,
+        'room_active': true,
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('After'), findsOneWidget);
+    expect(find.text('3 members'), findsWidgets);
+  });
+
+  testWidgets('other room message disables itself when the invite expires', (
+    tester,
+  ) async {
+    final websocketService = FakeWebsocketService();
+    final httpService = FakeHttpService(websocketService: websocketService);
+    httpService.enqueueRooms(
+      () async => [
+        RoomSummary(
+          id: 1,
+          updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          participants: const [
+            RoomParticipant(id: 1, username: 'me'),
+            RoomParticipant(id: 2, username: 'other'),
+          ],
+        ),
+      ],
+    );
+    httpService.enqueueMessages(
+      (_) async => [
+        ChatMessage(
+          id: 'share-1',
+          kind: ChatMessageKind.otherRoom,
+          body: '',
+          senderId: 2,
+          senderUsername: 'other',
+          timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+          otherRoom: OtherRoomMessageData(
+            roomId: 7,
+            inviteToken: 'token-7',
+            expiresAt: DateTime.now().toUtc().subtract(
+              const Duration(minutes: 1),
+            ),
+            name: 'Board games',
+            picture: null,
+            memberCount: 2,
+            roomActive: true,
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildMessagesApp(
+        httpService: httpService,
+        websocketService: websocketService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invite expired'), findsWidgets);
+    final button = tester.widget<FilledButton>(
+      find.byKey(const Key('other-room-join-button-share-1')),
+    );
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets(
+    'invalid other room invite falls back to opening the room if the viewer is already a member',
+    (tester) async {
+      final websocketService = FakeWebsocketService();
+      final httpService = FakeHttpService(websocketService: websocketService);
+      final joinedRoom = RoomSummary(
+        id: 7,
+        name: 'Board games',
+        updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+        participants: const [
+          RoomParticipant(id: 1, username: 'me'),
+          RoomParticipant(id: 2, username: 'other'),
+          RoomParticipant(id: 3, username: 'alex'),
+        ],
+      );
+      httpService.enqueueAcceptInvite((_) async {
+        throw InvalidUsage(
+          status: 400,
+          message: 'Invite is invalid or has expired',
+          code: 1004,
+        );
+      });
+      httpService.enqueueRooms(
+        () async => [
+          RoomSummary(
+            id: 1,
+            updatedAt: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            participants: const [
+              RoomParticipant(id: 1, username: 'me'),
+              RoomParticipant(id: 2, username: 'other'),
+            ],
+          ),
+        ],
+      );
+      httpService.enqueueRooms(() async => [joinedRoom]);
+      httpService.enqueueMessages(
+        (_) async => [
+          ChatMessage(
+            id: 'share-1',
+            kind: ChatMessageKind.otherRoom,
+            body: '',
+            senderId: 2,
+            senderUsername: 'other',
+            timestamp: DateTime.parse('2026-04-04T10:00:00.000Z'),
+            otherRoom: OtherRoomMessageData(
+              roomId: 7,
+              inviteToken: 'token-7',
+              expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+              name: 'Board games',
+              picture: null,
+              memberCount: 3,
+              roomActive: true,
+            ),
+          ),
+        ],
+      );
+      httpService.enqueueMessages((_) async => []);
+
+      await tester.pumpWidget(
+        _buildMessagesApp(
+          httpService: httpService,
+          websocketService: websocketService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('other-room-join-button-share-1')));
+      await tester.pumpAndSettle();
+
+      expect(httpService.acceptedInvites, ['token-7']);
+      expect(find.text('Board games'), findsWidgets);
+    },
+  );
 
   testWidgets('whatsapp group message button opens the invite link', (
     tester,

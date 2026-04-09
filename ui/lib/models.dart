@@ -2,12 +2,13 @@ import 'whatsapp_group_links.dart';
 
 enum MessageDeliveryState { sending, sent }
 
-enum ChatMessageKind { text, whatsappGroup, location }
+enum ChatMessageKind { text, whatsappGroup, location, otherRoom }
 
 ChatMessageKind chatMessageKindFromJson(Object? raw) {
   return switch (raw) {
     'whatsapp_group' => ChatMessageKind.whatsappGroup,
     'location' => ChatMessageKind.location,
+    'other_room' => ChatMessageKind.otherRoom,
     _ => ChatMessageKind.text,
   };
 }
@@ -17,6 +18,7 @@ String chatMessageKindToJson(ChatMessageKind kind) {
     ChatMessageKind.text => 'text',
     ChatMessageKind.whatsappGroup => 'whatsapp_group',
     ChatMessageKind.location => 'location',
+    ChatMessageKind.otherRoom => 'other_room',
   };
 }
 
@@ -87,16 +89,99 @@ class LocationMessageData {
   }).toString();
 }
 
+class OtherRoomMessageData {
+  final int roomId;
+  final String inviteToken;
+  final DateTime? expiresAt;
+  final String? name;
+  final String? picture;
+  final int memberCount;
+  final bool roomActive;
+
+  const OtherRoomMessageData({
+    required this.roomId,
+    required this.inviteToken,
+    required this.expiresAt,
+    required this.memberCount,
+    required this.roomActive,
+    this.name,
+    this.picture,
+  });
+
+  factory OtherRoomMessageData.fromJson(Map<String, dynamic> json) {
+    return OtherRoomMessageData(
+      roomId: json['room_id'] as int? ?? 0,
+      inviteToken: json['invite_token'] as String? ?? '',
+      expiresAt: json['expires_at'] is String
+          ? DateTime.tryParse(json['expires_at'] as String)
+          : null,
+      name: json['name'] as String?,
+      picture: json['picture'] as String?,
+      memberCount: json['member_count'] as int? ?? 0,
+      roomActive: json['room_active'] != false,
+    );
+  }
+
+  static OtherRoomMessageData? maybeFromJson(Object? raw) {
+    if (raw is! Map<String, dynamic>) {
+      return null;
+    }
+    final roomId = raw['room_id'];
+    if (roomId is! int) {
+      return null;
+    }
+    return OtherRoomMessageData.fromJson(raw);
+  }
+
+  OtherRoomMessageData copyWith({
+    int? roomId,
+    String? inviteToken,
+    DateTime? expiresAt,
+    String? name,
+    String? picture,
+    int? memberCount,
+    bool? roomActive,
+  }) {
+    return OtherRoomMessageData(
+      roomId: roomId ?? this.roomId,
+      inviteToken: inviteToken ?? this.inviteToken,
+      expiresAt: expiresAt ?? this.expiresAt,
+      name: name ?? this.name,
+      picture: picture ?? this.picture,
+      memberCount: memberCount ?? this.memberCount,
+      roomActive: roomActive ?? this.roomActive,
+    );
+  }
+
+  bool isExpiredAt(DateTime now) {
+    final expiresAt = this.expiresAt;
+    if (expiresAt == null) {
+      return false;
+    }
+    return !expiresAt.isAfter(now);
+  }
+
+  String get title {
+    final trimmedName = name?.trim();
+    if (trimmedName != null && trimmedName.isNotEmpty) {
+      return trimmedName;
+    }
+    return 'Other room';
+  }
+}
+
 String messagePreviewText({
   required ChatMessageKind kind,
   required String body,
   WhatsappGroupMessageData? whatsappGroup,
   LocationMessageData? location,
+  OtherRoomMessageData? otherRoom,
 }) {
   return switch (kind) {
     ChatMessageKind.text => body,
     ChatMessageKind.whatsappGroup => whatsappGroupPreviewLabel,
     ChatMessageKind.location => 'Shared location',
+    ChatMessageKind.otherRoom => 'Other room',
   };
 }
 
@@ -193,6 +278,7 @@ class MessagePreview {
   final String? senderUsername;
   final WhatsappGroupMessageData? whatsappGroup;
   final LocationMessageData? location;
+  final OtherRoomMessageData? otherRoom;
 
   const MessagePreview({
     this.kind = ChatMessageKind.text,
@@ -201,6 +287,7 @@ class MessagePreview {
     this.senderUsername,
     this.whatsappGroup,
     this.location,
+    this.otherRoom,
   });
 
   factory MessagePreview.fromJson(Map<String, dynamic> json) {
@@ -217,6 +304,7 @@ class MessagePreview {
             )
           : null,
       location: LocationMessageData.maybeFromJson(json['location']),
+      otherRoom: OtherRoomMessageData.maybeFromJson(json['other_room']),
     );
   }
 
@@ -225,6 +313,7 @@ class MessagePreview {
     body: body,
     whatsappGroup: whatsappGroup,
     location: location,
+    otherRoom: otherRoom,
   );
 }
 
@@ -350,6 +439,7 @@ class ChatMessage {
   final String? clientTag;
   final WhatsappGroupMessageData? whatsappGroup;
   final LocationMessageData? location;
+  final OtherRoomMessageData? otherRoom;
 
   const ChatMessage({
     required this.id,
@@ -365,6 +455,7 @@ class ChatMessage {
     this.clientTag,
     this.whatsappGroup,
     this.location,
+    this.otherRoom,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -394,6 +485,7 @@ class ChatMessage {
             )
           : null,
       location: LocationMessageData.maybeFromJson(json['location']),
+      otherRoom: OtherRoomMessageData.maybeFromJson(json['other_room']),
     );
   }
 
@@ -418,6 +510,7 @@ class ChatMessage {
     String? clientTag,
     WhatsappGroupMessageData? whatsappGroup,
     LocationMessageData? location,
+    OtherRoomMessageData? otherRoom,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -433,6 +526,7 @@ class ChatMessage {
       clientTag: clientTag ?? this.clientTag,
       whatsappGroup: whatsappGroup ?? this.whatsappGroup,
       location: location ?? this.location,
+      otherRoom: otherRoom ?? this.otherRoom,
     );
   }
 
@@ -441,6 +535,7 @@ class ChatMessage {
     body: body,
     whatsappGroup: whatsappGroup,
     location: location,
+    otherRoom: otherRoom,
   );
 
   String get pendingMatchKey => switch (kind) {
@@ -449,6 +544,7 @@ class ChatMessage {
       'whatsapp:${whatsappGroup?.inviteUrl ?? ''}',
     ChatMessageKind.location =>
       'location:${location?.lat.toStringAsFixed(6) ?? ''}:${location?.lon.toStringAsFixed(6) ?? ''}:${location?.accuracyMeters?.toStringAsFixed(1) ?? ''}',
+    ChatMessageKind.otherRoom => 'other-room:${otherRoom?.roomId ?? 0}',
   };
 }
 

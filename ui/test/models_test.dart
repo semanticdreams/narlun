@@ -110,6 +110,41 @@ void main() {
     expect(message.pendingMatchKey, 'location:47.497900:19.040200:12.4');
   });
 
+  test('other room previews use the specialized label', () {
+    final preview = MessagePreview.fromJson({
+      'kind': 'other_room',
+      'body': '',
+      'other_room': {
+        'room_id': 7,
+        'invite_token': 'token-123',
+        'expires_at': '2026-04-05T10:00:00.000Z',
+        'name': 'Board games',
+        'member_count': 3,
+        'room_active': true,
+      },
+    });
+    final message = ChatMessage.fromJson({
+      'id': 'm-4',
+      'kind': 'other_room',
+      'body': '',
+      'sender_id': 1,
+      'timestamp': '2026-04-04T10:00:00.000Z',
+      'other_room': {
+        'room_id': 7,
+        'invite_token': 'token-123',
+        'expires_at': '2026-04-05T10:00:00.000Z',
+        'name': 'Board games',
+        'member_count': 3,
+        'room_active': true,
+      },
+    });
+
+    expect(preview.previewText, 'Other room');
+    expect(message.displayText, 'Other room');
+    expect(message.otherRoom?.title, 'Board games');
+    expect(message.pendingMatchKey, 'other-room:7');
+  });
+
   test('malformed location payloads are ignored instead of becoming 0,0', () {
     final preview = MessagePreview.fromJson({
       'kind': 'location',

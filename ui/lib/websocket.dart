@@ -488,6 +488,10 @@ class WebsocketService {
     'room-delivered',
   ).where((event) => event['data']['room_id'] == roomId);
 
+  Stream<Map<String, dynamic>> sharedRoomUpdatedStream(roomId) => eventsStream(
+    'shared-room-updated',
+  ).where((event) => event['data']['room_id'] == roomId);
+
   Future<void> ensureConnected() async {
     if (_websocket == null) {
       _shouldReconnect = true;
